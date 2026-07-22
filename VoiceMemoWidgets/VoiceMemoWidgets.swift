@@ -15,7 +15,7 @@ struct StartRecordingWidget: Widget {
 
 	var body: some WidgetConfiguration {
 		StaticConfiguration(kind: kind, provider: RecordingWidgetProvider()) { _ in
-			Link(destination: URL(string: "voicememo://record")!) {
+			Link(destination: URL(string: "myvoicememo://record")!) {
 				Image(systemName: "mic.fill")
 					.font(.title3)
 					.widgetAccentable()
@@ -83,7 +83,7 @@ struct RecordingLiveActivity: Widget {
 			} minimal: {
 				Image(systemName: "waveform")
 			}
-			.widgetURL(URL(string: "voicememo://record"))
+			.widgetURL(URL(string: "myvoicememo://record"))
 		}
 	}
 }

@@ -75,7 +75,7 @@ struct RootView: View {
 			SettingsView(store: store)
 		}
 		.onOpenURL { url in
-			guard url.scheme == "voicememo", url.host == "record" else { return }
+			guard url.scheme == "myvoicememo", url.host == "record" else { return }
 			guard recordingContext == nil else { return }
 			presentedEntry = nil
 			showsReview = false

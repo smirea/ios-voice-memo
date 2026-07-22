@@ -1,4 +1,4 @@
-# Voice Memo
+# MyVoiceMemo
 
 An iPhone-only, local-first voice journal inspired by [Slate](https://apps.apple.com/us/app/slate-private-journal/id6787531627). This first milestone reproduces Slate's public recording, journal, entry, and weekly-review experience. Later iterations will add webhooks and integrations for AI agents.
 

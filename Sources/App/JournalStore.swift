@@ -19,7 +19,7 @@ final class JournalStore {
 	init() {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-		rootURL = applicationSupport.appendingPathComponent("VoiceMemo", isDirectory: true)
+		rootURL = applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		entriesURL = rootURL.appendingPathComponent("entries.json")
 

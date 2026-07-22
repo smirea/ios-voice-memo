@@ -36,7 +36,7 @@ struct SettingsView: View {
 					}
 					.disabled(store.entries.isEmpty || store.isDemoMode)
 				} footer: {
-					Text("Your recordings, transcripts, and reflections are stored locally. Voice Memo makes no network requests.")
+					Text("Your recordings, transcripts, and reflections are stored locally. MyVoiceMemo makes no network requests.")
 				}
 			}
 			.scrollContentBackground(.hidden)
