@@ -10,6 +10,8 @@ An iPhone-only, local-first voice journal inspired by [Slate](https://apps.apple
 ## Current baseline
 
 - Record, pause, resume, extend, finish, re-record, and delete voice entries
+- Background recording through screen lock with interruption and microphone-route recovery
+- Local recording checkpoints and automatic recovery after an interrupted app session
 - Live recording state on the Lock Screen and Dynamic Island
 - One-tap Lock Screen recording widget
 - On-device speech transcription with no network fallback
@@ -17,6 +19,7 @@ An iPhone-only, local-first voice journal inspired by [Slate](https://apps.apple
 - Private journal timeline, transcript, observations, tags, added context, and copy action
 - Weekly summaries generated from that week's local entries
 - Local JSON and audio storage protected by iOS file protection
+- Automatic inclusion in iCloud device backups when iCloud Backup is enabled for the iPhone
 - No backend, account, analytics SDK, or app-initiated network requests
 
 ## Requirements
@@ -33,4 +36,4 @@ Add `-demo` to the scheme's launch arguments to load the reference content used 
 
 ## Reference scope
 
-The UI is matched to Slate's four published App Store screens and the behavior described in its listing. The original is iPhone-only and cannot be installed in Simulator, so private onboarding, subscription, settings, and optional encrypted iCloud backup flows could not be inspected and are not included in this baseline.
+The UI is matched to Slate's four published App Store screens and the behavior described in its listing. The original is iPhone-only and cannot be installed in Simulator, so private onboarding and subscription flows could not be inspected. MyVoiceMemo keeps its own storage local-first and relies on automatic iOS device backup rather than adding a separate cloud account or sync service.

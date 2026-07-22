@@ -27,7 +27,8 @@ struct SettingsView: View {
 
 				Section("Journal") {
 					Toggle("Show transcripts", isOn: $draft.showTranscripts)
-					LabeledContent("Storage", value: store.isDemoMode ? "Demo" : "On this device")
+					LabeledContent("Storage", value: store.isDemoMode ? "Demo" : "On this iPhone")
+					LabeledContent("iCloud Backup", value: store.isDemoMode ? "Demo" : "Included")
 				}
 
 				Section {
@@ -36,7 +37,7 @@ struct SettingsView: View {
 					}
 					.disabled(store.entries.isEmpty || store.isDemoMode)
 				} footer: {
-					Text("Your recordings, transcripts, and reflections are stored locally. MyVoiceMemo makes no network requests.")
+					Text("Your journal stays available offline and MyVoiceMemo makes no network requests. iOS includes it in iCloud Backup when backup is enabled for this iPhone.")
 				}
 			}
 			.scrollContentBackground(.hidden)
@@ -66,9 +67,9 @@ struct SettingsView: View {
 				.foregroundStyle(.white)
 				.frame(width: 28)
 			VStack(alignment: .leading, spacing: 5) {
-				Text("Nothing leaves the phone")
+				Text("Local first, automatically backed up")
 					.font(.system(size: 14, weight: .medium))
-				Text("No server, account, analytics, or network calls. Transcription and reflection happen on device.")
+				Text("Recording, transcription, and reflection happen on device. There’s no MyVoiceMemo server, account, analytics, or network traffic.")
 					.font(.system(size: 12))
 					.foregroundStyle(.secondary)
 			}

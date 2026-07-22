@@ -13,6 +13,8 @@ struct RecordView: View {
 	@State private var recordingLimit: TimeInterval = 120
 	@State private var errorMessage: String?
 	@State private var isFinishing = false
+	@State private var activeRecordingURL: URL?
+	@State private var lastCheckpointSecond = 0
 
 	private var isVisualDemo: Bool {
 		ProcessInfo.processInfo.arguments.contains("-demo-recording")
@@ -58,6 +60,15 @@ struct RecordView: View {
 				.buttonStyle(.plain)
 				.offset(y: -40)
 
+				if let statusMessage = recorder.statusMessage {
+					Text(statusMessage)
+						.font(.system(size: 11))
+						.foregroundStyle(Color.white.opacity(0.48))
+						.multilineTextAlignment(.center)
+						.padding(.horizontal, 54)
+						.offset(y: -34)
+				}
+
 				Spacer()
 
 				HStack(spacing: 34) {
@@ -94,7 +105,11 @@ struct RecordView: View {
 		.presentationBackground(.black)
 		.task { await beginRecording() }
 		.onChange(of: recorder.duration) { _, duration in
+			checkpointIfNeeded(duration: duration)
 			if !isVisualDemo, duration >= recordingLimit { finish() }
+		}
+		.onChange(of: recorder.isPaused) { _, isPaused in
+			liveActivity.setPaused(isPaused)
 		}
 		.alert("Recording unavailable", isPresented: Binding(
 			get: { errorMessage != nil },
@@ -129,9 +144,12 @@ struct RecordView: View {
 
 	private func beginRecording() async {
 		guard !isVisualDemo else { return }
+		var destination: URL?
 		do {
-			let url = try store.destinationForNewRecording()
+			let url = try store.destinationForNewRecording(replacing: replacementID)
+			destination = url
 			try await recorder.start(at: url)
+			activeRecordingURL = url
 			liveActivity.start()
 			#if os(iOS)
 			if store.settings.keepScreenAwakeWhileRecording {
@@ -139,6 +157,10 @@ struct RecordView: View {
 			}
 			#endif
 		} catch {
+			if let destination {
+				try? FileManager.default.removeItem(at: destination)
+				store.cancelRecording(at: destination)
+			}
 			errorMessage = error.localizedDescription
 		}
 	}
@@ -146,6 +168,7 @@ struct RecordView: View {
 	private func finish() {
 		guard !isVisualDemo else { return }
 		guard !isFinishing, let recording = recorder.finish() else { return }
+		activeRecordingURL = nil
 		liveActivity.end()
 		isFinishing = true
 		#if os(iOS)
@@ -158,7 +181,10 @@ struct RecordView: View {
 	}
 
 	private func cancel() {
-		recorder.cancel()
+		if let url = recorder.cancel() {
+			store.cancelRecording(at: url)
+		}
+		activeRecordingURL = nil
 		liveActivity.end()
 		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
@@ -168,6 +194,13 @@ struct RecordView: View {
 
 	private func togglePause() {
 		recorder.togglePause()
-		liveActivity.setPaused(recorder.isPaused)
+	}
+
+	private func checkpointIfNeeded(duration: TimeInterval) {
+		guard let activeRecordingURL else { return }
+		let second = Int(duration)
+		guard second >= lastCheckpointSecond + 5 else { return }
+		lastCheckpointSecond = second
+		store.checkpointRecording(at: activeRecordingURL, duration: duration)
 	}
 }

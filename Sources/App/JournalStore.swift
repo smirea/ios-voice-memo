@@ -1,3 +1,4 @@
+@preconcurrency import AVFAudio
 import Foundation
 import Observation
 
@@ -15,6 +16,7 @@ final class JournalStore {
 	private let rootURL: URL
 	private let recordingsURL: URL
 	private let entriesURL: URL
+	private let pendingRecordingURL: URL
 
 	init() {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
@@ -22,6 +24,7 @@ final class JournalStore {
 		rootURL = applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		entriesURL = rootURL.appendingPathComponent("entries.json")
+		pendingRecordingURL = rootURL.appendingPathComponent("pending-recording.json")
 
 		if isDemoMode {
 			entries = JournalEntry.demo
@@ -31,6 +34,7 @@ final class JournalStore {
 			selectedDate = .now
 			prepareStorage()
 			entries = loadEntries()
+			recoverUnreferencedRecordings()
 		}
 	}
 
@@ -53,41 +57,73 @@ final class JournalStore {
 		entry.audioFilename.map { recordingsURL.appendingPathComponent($0) }
 	}
 
-	func destinationForNewRecording() throws -> URL {
+	func destinationForNewRecording(replacing replacementID: UUID? = nil) throws -> URL {
 		prepareStorage()
-		return recordingsURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
+		let url = recordingsURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
+		try writePendingRecording(PendingRecording(
+			filename: url.lastPathComponent,
+			startedAt: .now,
+			duration: 0,
+			replacementID: replacementID
+		))
+		return url
+	}
+
+	func checkpointRecording(at url: URL, duration: TimeInterval) {
+		guard var pending = loadPendingRecording(), pending.filename == url.lastPathComponent else { return }
+		pending.duration = max(pending.duration, duration)
+		try? writePendingRecording(pending)
+	}
+
+	func cancelRecording(at url: URL) {
+		clearPendingRecording(matching: url)
 	}
 
 	func finishRecording(at url: URL, duration: TimeInterval, replacing replacementID: UUID? = nil) async {
 		isProcessing = true
+		defer { isProcessing = false }
+		processingMessage = "Saving your recording…"
+
+		let existingIndex = replacementID.flatMap { id in entries.firstIndex { $0.id == id } }
+		let entryID = existingIndex.map { entries[$0].id } ?? UUID()
+		let createdAt = existingIndex.map { entries[$0].createdAt } ?? .now
+		let previousAudioURL = existingIndex.flatMap { audioURL(for: entries[$0]) }
+		let savedEntry = JournalEntry(
+			id: entryID,
+			createdAt: createdAt,
+			duration: duration,
+			transcript: "Your audio is saved. The private transcript was interrupted.",
+			headline: "Recording saved",
+			observations: ["Your audio was saved locally before transcription began."],
+			tags: [],
+			audioFilename: url.lastPathComponent
+		)
+
+		if let existingIndex {
+			entries[existingIndex] = savedEntry
+		} else {
+			entries.append(savedEntry)
+		}
+		entries.sort { $0.createdAt > $1.createdAt }
+		selectedDate = savedEntry.createdAt
+		if persist() {
+			clearPendingRecording(matching: url)
+			if let previousAudioURL, previousAudioURL != url {
+				try? fileManager.removeItem(at: previousAudioURL)
+			}
+		}
+
 		processingMessage = "Making a private transcript…"
 		let transcript = (try? await LocalTranscriber.transcribe(url: url))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		processingMessage = "Noticing what stayed with you…"
 		let reflection = await ReflectionEngine.reflect(on: transcript)
 
-		let entry = JournalEntry(
-			id: replacementID ?? UUID(),
-			createdAt: replacementID.flatMap { id in entries.first { $0.id == id }?.createdAt } ?? .now,
-			duration: duration,
-			transcript: transcript.isEmpty ? "No transcript was available for this recording." : transcript,
-			headline: reflection.headline,
-			observations: reflection.observations,
-			tags: reflection.tags,
-			audioFilename: url.lastPathComponent
-		)
-
-		if let replacementID, let index = entries.firstIndex(where: { $0.id == replacementID }) {
-			if let oldURL = audioURL(for: entries[index]), oldURL != url {
-				try? fileManager.removeItem(at: oldURL)
-			}
-			entries[index] = entry
-		} else {
-			entries.append(entry)
-		}
-		entries.sort { $0.createdAt > $1.createdAt }
-		selectedDate = entry.createdAt
+		guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
+		entries[index].transcript = transcript.isEmpty ? "No transcript was available for this recording." : transcript
+		entries[index].headline = reflection.headline
+		entries[index].observations = reflection.observations
+		entries[index].tags = reflection.tags
 		persist()
-		isProcessing = false
 	}
 
 	func delete(_ entry: JournalEntry) {
@@ -138,6 +174,8 @@ final class JournalStore {
 			#if os(iOS)
 			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: rootURL.path)
 			#endif
+			try includeInBackup(rootURL)
+			try includeInBackup(recordingsURL)
 		} catch {
 			assertionFailure("Could not prepare local journal storage: \(error)")
 		}
@@ -148,17 +186,101 @@ final class JournalStore {
 		return (try? JSONDecoder().decode([JournalEntry].self, from: data))?.sorted { $0.createdAt > $1.createdAt } ?? []
 	}
 
-	private func persist() {
-		guard !isDemoMode, let data = try? JSONEncoder().encode(entries) else { return }
+	@discardableResult
+	private func persist() -> Bool {
+		guard !isDemoMode, let data = try? JSONEncoder().encode(entries) else { return false }
 		do {
 			try data.write(to: entriesURL, options: [.atomic])
 			#if os(iOS)
 			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: entriesURL.path)
 			#endif
+			try includeInBackup(entriesURL)
+			return true
 		} catch {
 			assertionFailure("Could not save the local journal: \(error)")
+			return false
 		}
 	}
+
+	private func recoverUnreferencedRecordings() {
+		let referenced = Set(entries.compactMap(\.audioFilename))
+		let pending = loadPendingRecording()
+		let urls = (try? fileManager.contentsOfDirectory(
+			at: recordingsURL,
+			includingPropertiesForKeys: [.creationDateKey, .fileSizeKey],
+			options: [.skipsHiddenFiles]
+		)) ?? []
+		var recoveredPendingURL: URL?
+		var didRecover = false
+
+		for url in urls where !referenced.contains(url.lastPathComponent) {
+			let values = try? url.resourceValues(forKeys: [.creationDateKey, .fileSizeKey])
+			guard (values?.fileSize ?? 0) > 0 else { continue }
+			let matchingPending = pending?.filename == url.lastPathComponent ? pending : nil
+			let duration = max(matchingPending?.duration ?? 0, audioDuration(at: url))
+			let createdAt = matchingPending?.startedAt ?? values?.creationDate ?? .now
+			entries.append(JournalEntry(
+				createdAt: createdAt,
+				duration: duration,
+				transcript: "This audio was recovered before transcription completed.",
+				headline: "Recovered recording",
+				observations: ["MyVoiceMemo recovered this audio from an interrupted recording."],
+				tags: ["Recovered"],
+				audioFilename: url.lastPathComponent
+			))
+			didRecover = true
+			try? includeInBackup(url)
+			if matchingPending != nil { recoveredPendingURL = url }
+		}
+
+		guard didRecover else { return }
+		entries.sort { $0.createdAt > $1.createdAt }
+		selectedDate = entries.first?.createdAt ?? selectedDate
+		if persist(), let recoveredPendingURL {
+			clearPendingRecording(matching: recoveredPendingURL)
+		}
+	}
+
+	private func audioDuration(at url: URL) -> TimeInterval {
+		guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { return 0 }
+		return Double(file.length) / file.processingFormat.sampleRate
+	}
+
+	private func loadPendingRecording() -> PendingRecording? {
+		guard let data = try? Data(contentsOf: pendingRecordingURL) else { return nil }
+		return try? JSONDecoder().decode(PendingRecording.self, from: data)
+	}
+
+	private func writePendingRecording(_ pending: PendingRecording) throws {
+		let data = try JSONEncoder().encode(pending)
+		try data.write(to: pendingRecordingURL, options: [.atomic])
+		#if os(iOS)
+		try fileManager.setAttributes(
+			[.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+			ofItemAtPath: pendingRecordingURL.path
+		)
+		#endif
+		try includeInBackup(pendingRecordingURL)
+	}
+
+	private func clearPendingRecording(matching url: URL) {
+		guard loadPendingRecording()?.filename == url.lastPathComponent else { return }
+		try? fileManager.removeItem(at: pendingRecordingURL)
+	}
+
+	private func includeInBackup(_ url: URL) throws {
+		var url = url
+		var values = URLResourceValues()
+		values.isExcludedFromBackup = false
+		try url.setResourceValues(values)
+	}
+}
+
+private struct PendingRecording: Codable {
+	var filename: String
+	var startedAt: Date
+	var duration: TimeInterval
+	var replacementID: UUID?
 }
 
 struct JournalSettings: Codable, Equatable {

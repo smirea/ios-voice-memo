@@ -24,15 +24,29 @@ enum RecordingError: LocalizedError {
 
 @MainActor
 @Observable
-final class AudioRecorder: NSObject {
+final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	private(set) var isRecording = false
 	private(set) var isPaused = false
 	private(set) var duration: TimeInterval = 0
 	private(set) var levels = Array(repeating: 0.08, count: 46)
+	private(set) var statusMessage: String?
 
 	@ObservationIgnored private var recorder: AVAudioRecorder?
 	@ObservationIgnored private var meterTimer: Timer?
 	@ObservationIgnored private var outputURL: URL?
+	@ObservationIgnored private var interruptionTask: Task<Void, Never>?
+	@ObservationIgnored private var routeChangeTask: Task<Void, Never>?
+	@ObservationIgnored private var wasRecordingBeforeInterruption = false
+
+	override init() {
+		super.init()
+		observeAudioSession()
+	}
+
+	deinit {
+		interruptionTask?.cancel()
+		routeChangeTask?.cancel()
+	}
 
 	func start(at url: URL) async throws {
 		guard await requestMicrophonePermission() else {
@@ -52,8 +66,10 @@ final class AudioRecorder: NSObject {
 			AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
 		]
 		let recorder = try AVAudioRecorder(url: url, settings: settings)
+		recorder.delegate = self
 		recorder.isMeteringEnabled = true
 		recorder.prepareToRecord()
+		try makeFileRecoverable(at: url)
 		guard recorder.record() else { throw RecordingError.couldNotStart }
 
 		self.recorder = recorder
@@ -62,43 +78,57 @@ final class AudioRecorder: NSObject {
 		levels = Array(repeating: 0.08, count: 46)
 		isPaused = false
 		isRecording = true
+		statusMessage = nil
 		startMetering()
 	}
 
 	func togglePause() {
 		guard let recorder else { return }
 		if isPaused {
-			recorder.record()
-			isPaused = false
+			do {
+				#if os(iOS)
+				try AVAudioSession.sharedInstance().setActive(true)
+				#endif
+				guard recorder.record() else { return }
+				isPaused = false
+				statusMessage = nil
+				startMetering()
+			} catch {
+				statusMessage = "Recording is safely paused until the microphone is available."
+			}
 		} else {
 			recorder.pause()
 			isPaused = true
+			stopMetering()
 		}
 	}
 
 	func finish() -> FinishedRecording? {
 		guard let recorder, let outputURL else { return nil }
 		let finalDuration = recorder.currentTime
-		recorder.stop()
 		stopMetering()
 		isRecording = false
 		isPaused = false
+		recorder.stop()
 		self.recorder = nil
 		self.outputURL = nil
+		statusMessage = nil
 		deactivateSession()
 		return FinishedRecording(url: outputURL, duration: finalDuration)
 	}
 
-	func cancel() {
+	func cancel() -> URL? {
 		let url = outputURL
-		recorder?.stop()
 		stopMetering()
 		isRecording = false
 		isPaused = false
+		recorder?.stop()
 		recorder = nil
 		outputURL = nil
 		if let url { try? FileManager.default.removeItem(at: url) }
+		statusMessage = nil
 		deactivateSession()
+		return url
 	}
 
 	private func requestMicrophonePermission() async -> Bool {
@@ -130,14 +160,112 @@ final class AudioRecorder: NSObject {
 		levels.append(Double(normalized))
 	}
 
+	private func observeAudioSession() {
+		#if os(iOS)
+		let session = AVAudioSession.sharedInstance()
+		interruptionTask = Task { @MainActor [weak self] in
+			for await notification in NotificationCenter.default.notifications(
+				named: AVAudioSession.interruptionNotification,
+				object: session
+			) {
+				self?.handleInterruption(notification)
+			}
+		}
+		routeChangeTask = Task { @MainActor [weak self] in
+			for await _ in NotificationCenter.default.notifications(
+				named: AVAudioSession.routeChangeNotification,
+				object: session
+			) {
+				await self?.recoverAfterRouteChange()
+			}
+		}
+		#endif
+	}
+
+	#if os(iOS)
+	private func handleInterruption(_ notification: Notification) {
+		guard isRecording,
+			let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+			let type = AVAudioSession.InterruptionType(rawValue: rawType)
+		else { return }
+
+		switch type {
+		case .began:
+			wasRecordingBeforeInterruption = !isPaused
+			isPaused = true
+			statusMessage = "Recording paused. Your audio is saved on this iPhone."
+			stopMetering()
+		case .ended:
+			guard wasRecordingBeforeInterruption else { return }
+			wasRecordingBeforeInterruption = false
+			resumeAfterSystemChange()
+		@unknown default:
+			break
+		}
+	}
+
+	private func recoverAfterRouteChange() async {
+		guard isRecording, !isPaused else { return }
+		try? await Task.sleep(for: .milliseconds(250))
+		guard recorder?.isRecording == false else { return }
+		resumeAfterSystemChange()
+	}
+
+	private func resumeAfterSystemChange() {
+		do {
+			try AVAudioSession.sharedInstance().setActive(true)
+			guard recorder?.record() == true else {
+				statusMessage = "Recording is safely paused until the microphone is available."
+				return
+			}
+			isPaused = false
+			statusMessage = nil
+			startMetering()
+		} catch {
+			statusMessage = "Recording is safely paused until the microphone is available."
+		}
+	}
+	#endif
+
+	private func makeFileRecoverable(at url: URL) throws {
+		#if os(iOS)
+		try FileManager.default.setAttributes(
+			[.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+			ofItemAtPath: url.path
+		)
+		#endif
+		var url = url
+		var values = URLResourceValues()
+		values.isExcludedFromBackup = false
+		try url.setResourceValues(values)
+	}
+
 	private func deactivateSession() {
 		#if os(iOS)
 		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 		#endif
 	}
+
+	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+		guard !flag else { return }
+		Task { @MainActor [weak self] in
+			guard let self, self.isRecording else { return }
+			self.isPaused = true
+			self.stopMetering()
+			self.statusMessage = "Recording stopped unexpectedly, but everything captured so far is saved."
+		}
+	}
+
+	nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: (any Error)?) {
+		Task { @MainActor [weak self] in
+			guard let self, self.isRecording else { return }
+			self.isPaused = true
+			self.stopMetering()
+			self.statusMessage = "Recording stopped unexpectedly, but everything captured so far is saved."
+		}
+	}
 }
 
-@MainActor
 enum LocalTranscriber {
 	static func transcribe(url: URL) async throws -> String {
 		let authorized = await withCheckedContinuation { continuation in
