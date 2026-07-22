@@ -8,7 +8,7 @@ struct VoiceMemoApp: App {
 		WindowGroup {
 			RootView(store: store)
 				.preferredColorScheme(.dark)
-				.tint(.white)
+				.tint(SlateStyle.accent)
 		}
 	}
 }

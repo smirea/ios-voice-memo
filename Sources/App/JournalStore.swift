@@ -6,6 +6,7 @@ import Observation
 @Observable
 final class JournalStore {
 	private(set) var entries: [JournalEntry]
+	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
 	var selectedDate: Date
 	var isProcessing = false
 	var processingMessage = "Listening back…"
@@ -17,6 +18,8 @@ final class JournalStore {
 	private let recordingsURL: URL
 	private let entriesURL: URL
 	private let pendingRecordingURL: URL
+	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
+	@ObservationIgnored private var entryProcessingTokens: [UUID: UUID] = [:]
 
 	init() {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
@@ -57,6 +60,10 @@ final class JournalStore {
 		entry.audioFilename.map { recordingsURL.appendingPathComponent($0) }
 	}
 
+	func processingPhase(for entryID: UUID) -> EntryProcessingPhase? {
+		entryProcessingPhases[entryID]
+	}
+
 	func destinationForNewRecording(replacing replacementID: UUID? = nil) throws -> URL {
 		prepareStorage()
 		let url = recordingsURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
@@ -79,11 +86,8 @@ final class JournalStore {
 		clearPendingRecording(matching: url)
 	}
 
-	func finishRecording(at url: URL, duration: TimeInterval, replacing replacementID: UUID? = nil) async {
-		isProcessing = true
-		defer { isProcessing = false }
-		processingMessage = "Saving your recording…"
-
+	@discardableResult
+	func finishRecording(at url: URL, duration: TimeInterval, replacing replacementID: UUID? = nil) -> UUID {
 		let existingIndex = replacementID.flatMap { id in entries.firstIndex { $0.id == id } }
 		let entryID = existingIndex.map { entries[$0].id } ?? UUID()
 		let createdAt = existingIndex.map { entries[$0].createdAt } ?? .now
@@ -92,9 +96,9 @@ final class JournalStore {
 			id: entryID,
 			createdAt: createdAt,
 			duration: duration,
-			transcript: "Your audio is saved. The private transcript was interrupted.",
-			headline: "Recording saved",
-			observations: ["Your audio was saved locally before transcription began."],
+			transcript: "Your recording is saved. Words will appear here as they’re recognized.",
+			headline: "Listening back…",
+			observations: ["Your recording is safe on this iPhone. The private reflection will appear here when it’s ready."],
 			tags: [],
 			audioFilename: url.lastPathComponent
 		)
@@ -113,20 +117,67 @@ final class JournalStore {
 			}
 		}
 
-		processingMessage = "Making a private transcript…"
-		let transcript = (try? await LocalTranscriber.transcribe(url: url))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		processingMessage = "Noticing what stayed with you…"
-		let reflection = await ReflectionEngine.reflect(on: transcript)
+		entryProcessingTasks[entryID]?.cancel()
+		let processingToken = UUID()
+		entryProcessingTokens[entryID] = processingToken
+		entryProcessingPhases[entryID] = .transcribing
+		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
+			await self?.processRecording(entryID: entryID, url: url, token: processingToken)
+		}
+		return entryID
+	}
 
-		guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
-		entries[index].transcript = transcript.isEmpty ? "No transcript was available for this recording." : transcript
+	private func processRecording(entryID: UUID, url: URL, token: UUID) async {
+		let transcript = (try? await LocalTranscriber.transcribe(url: url) { [weak self] partialTranscript in
+			Task { @MainActor [weak self] in
+				self?.updatePartialTranscript(partialTranscript, for: entryID, token: token)
+			}
+		})?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
+		guard let transcriptIndex = entries.firstIndex(where: { $0.id == entryID }) else {
+			finishProcessing(entryID, token: token)
+			return
+		}
+
+		entries[transcriptIndex].transcript = transcript.isEmpty ? "No transcript was available for this recording." : transcript
+		entries[transcriptIndex].observations = ["Your transcript is ready. The private reflection is still taking shape on this iPhone."]
+		entryProcessingPhases[entryID] = .reflecting
+		persist()
+
+		let reflection = await ReflectionEngine.reflect(on: transcript)
+		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
+		guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
+			finishProcessing(entryID, token: token)
+			return
+		}
 		entries[index].headline = reflection.headline
 		entries[index].observations = reflection.observations
 		entries[index].tags = reflection.tags
 		persist()
+		entryProcessingPhases[entryID] = .complete
+		try? await Task.sleep(for: .seconds(1.4))
+		guard !Task.isCancelled else { return }
+		finishProcessing(entryID, token: token)
+	}
+
+	private func updatePartialTranscript(_ transcript: String, for entryID: UUID, token: UUID) {
+		guard entryProcessingTokens[entryID] == token,
+			entryProcessingPhases[entryID] == .transcribing,
+			let index = entries.firstIndex(where: { $0.id == entryID })
+		else { return }
+		entries[index].transcript = transcript
+	}
+
+	private func finishProcessing(_ entryID: UUID, token: UUID? = nil) {
+		if let token, entryProcessingTokens[entryID] != token { return }
+		entryProcessingPhases.removeValue(forKey: entryID)
+		entryProcessingTasks.removeValue(forKey: entryID)
+		entryProcessingTokens.removeValue(forKey: entryID)
 	}
 
 	func delete(_ entry: JournalEntry) {
+		entryProcessingTasks[entry.id]?.cancel()
+		finishProcessing(entry.id)
 		if let audioURL = audioURL(for: entry) {
 			try? fileManager.removeItem(at: audioURL)
 		}
@@ -149,6 +200,10 @@ final class JournalStore {
 	}
 
 	func clearJournal() {
+		for task in entryProcessingTasks.values { task.cancel() }
+		entryProcessingTasks.removeAll()
+		entryProcessingTokens.removeAll()
+		entryProcessingPhases.removeAll()
 		for entry in entries where entry.audioFilename != nil {
 			if let url = audioURL(for: entry) {
 				try? fileManager.removeItem(at: url)

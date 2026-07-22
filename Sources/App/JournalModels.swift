@@ -48,6 +48,36 @@ struct ReflectionResult: Sendable {
 	var tags: [String]
 }
 
+enum EntryProcessingPhase: Equatable, Sendable {
+	case transcribing
+	case reflecting
+	case complete
+
+	var title: String {
+		switch self {
+		case .transcribing: "Making your transcript"
+		case .reflecting: "Finding the thread"
+		case .complete: "Entry ready"
+		}
+	}
+
+	var detail: String {
+		switch self {
+		case .transcribing: "Words will appear here as they’re recognized on this iPhone."
+		case .reflecting: "Your transcript is ready. The private reflection is taking shape."
+		case .complete: "Transcript and reflection are saved."
+		}
+	}
+
+	var compactTitle: String {
+		switch self {
+		case .transcribing: "Transcribing"
+		case .reflecting: "Reflecting"
+		case .complete: "Ready"
+		}
+	}
+}
+
 extension JournalEntry {
 	static let demo: [JournalEntry] = {
 		let calendar = Calendar(identifier: .gregorian)

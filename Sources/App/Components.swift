@@ -2,6 +2,8 @@ import SwiftUI
 
 enum SlateStyle {
 	static let background = Color.black
+	static let accent = Color(red: 0.04, green: 0.39, blue: 0.98)
+	static let accentSoft = accent.opacity(0.14)
 	static let card = Color.white.opacity(0.035)
 	static let cardBorder = Color.white.opacity(0.075)
 	static let secondary = Color.white.opacity(0.38)
@@ -30,12 +32,13 @@ struct SlateTag: View {
 	var body: some View {
 		Text(text)
 			.font(.system(size: 9, weight: .regular))
-			.foregroundStyle(Color.white.opacity(0.45))
+			.foregroundStyle(Color.white.opacity(0.62))
 			.lineLimit(1)
 			.padding(.horizontal, 8)
 			.padding(.vertical, 4)
+			.background(SlateStyle.accent.opacity(0.08), in: Capsule())
 			.overlay {
-				Capsule().stroke(Color.white.opacity(0.17), lineWidth: 0.7)
+				Capsule().stroke(SlateStyle.accent.opacity(0.30), lineWidth: 0.7)
 			}
 	}
 }
@@ -92,12 +95,45 @@ struct ProcessingOverlay: View {
 		ZStack {
 			Color.black.opacity(0.82).ignoresSafeArea()
 			VStack(spacing: 18) {
-				ProgressView().tint(.white)
+				ProgressView().tint(SlateStyle.accent)
 				Text(message)
 					.font(.system(size: 13))
 					.foregroundStyle(Color.white.opacity(0.62))
 			}
 		}
+	}
+}
+
+private struct SwipeBackModifier: ViewModifier {
+	let action: () -> Void
+	@GestureState private var translation: CGFloat = 0
+
+	func body(content: Content) -> some View {
+		content
+			.offset(x: max(0, translation))
+			.opacity(1 - min(0.22, max(0, translation) / 900))
+			.simultaneousGesture(
+				DragGesture(minimumDistance: 24)
+					.updating($translation) { value, state, _ in
+						guard value.translation.width > 0,
+							abs(value.translation.width) > abs(value.translation.height) * 1.25
+						else { return }
+						state = value.translation.width
+					}
+					.onEnded { value in
+						guard value.translation.width > 90,
+							abs(value.translation.width) > abs(value.translation.height) * 1.25
+						else { return }
+						action()
+					}
+			)
+			.accessibilityAction(.escape, action)
+	}
+}
+
+extension View {
+	func swipeBack(action: @escaping () -> Void) -> some View {
+		modifier(SwipeBackModifier(action: action))
 	}
 }
 

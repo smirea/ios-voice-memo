@@ -43,17 +43,18 @@ struct JournalView: View {
 			Button(action: onNewRecording) {
 				Label("New", systemImage: "mic.fill")
 					.font(.system(size: 14, weight: .medium))
-					.foregroundStyle(.black)
+					.foregroundStyle(.white)
 					.padding(.horizontal, 27)
 					.frame(height: 50)
-					.background(.white, in: Capsule())
-					.shadow(color: .black.opacity(0.45), radius: 16, y: 8)
+					.background(SlateStyle.accent, in: Capsule())
+					.shadow(color: SlateStyle.accent.opacity(0.28), radius: 18, y: 8)
 			}
 			.buttonStyle(.plain)
 			.padding(.trailing, 20)
 			.padding(.bottom, 18)
 			.accessibilityHint("Starts a private voice journal entry")
 		}
+		.simultaneousGesture(weekSwipeGesture)
 	}
 
 	private var header: some View {
@@ -81,8 +82,7 @@ struct JournalView: View {
 					.accessibilityLabel("Settings")
 				}
 				.foregroundStyle(Color.white.opacity(0.68))
-				.background(Color.white.opacity(0.055), in: Capsule())
-				.overlay { Capsule().stroke(Color.white.opacity(0.10), lineWidth: 0.7) }
+				.glassEffect(.regular.interactive(), in: Capsule())
 			}
 
 			Text(store.selectedDate.formatted(Date.FormatStyle.slateHeader))
@@ -118,17 +118,30 @@ struct JournalView: View {
 
 			ForEach(entries) { entry in
 				Button { onSelectEntry(entry) } label: {
-					EntryCard(entry: entry)
+					EntryCard(entry: entry, processingPhase: store.processingPhase(for: entry.id))
 				}
 				.buttonStyle(.plain)
 			}
 		}
 		.padding(.bottom, 7)
 	}
+
+	private var weekSwipeGesture: some Gesture {
+		DragGesture(minimumDistance: 32)
+			.onEnded { value in
+				guard abs(value.translation.width) > 90,
+					abs(value.translation.width) > abs(value.translation.height) * 1.35
+				else { return }
+				let days = value.translation.width < 0 ? 7 : -7
+				guard let date = Calendar.current.date(byAdding: .day, value: days, to: store.selectedDate) else { return }
+				withAnimation(.easeOut(duration: 0.22)) { store.selectedDate = date }
+			}
+	}
 }
 
 private struct EntryCard: View {
 	let entry: JournalEntry
+	let processingPhase: EntryProcessingPhase?
 
 	var body: some View {
 		SlateCard {
@@ -149,6 +162,20 @@ private struct EntryCard: View {
 					.foregroundStyle(.white)
 					.multilineTextAlignment(.leading)
 					.lineLimit(3)
+
+				if let processingPhase {
+					HStack(spacing: 6) {
+						if processingPhase == .complete {
+							Image(systemName: "checkmark.circle.fill")
+						} else {
+							ProgressView().controlSize(.mini)
+						}
+						Text(processingPhase.compactTitle)
+					}
+					.font(.system(size: 9, weight: .semibold))
+					.foregroundStyle(SlateStyle.accent)
+					.tint(SlateStyle.accent)
+				}
 
 				if !entry.tags.isEmpty {
 					FlowLayout(spacing: 5) {
@@ -186,7 +213,7 @@ private struct WeekStrip: View {
 						Text(date.formatted(.dateTime.day()))
 							.font(.system(size: 13, weight: .medium))
 						Circle()
-							.fill(hasEntry ? Color.white.opacity(0.75) : Color.clear)
+							.fill(hasEntry ? SlateStyle.accent : Color.clear)
 							.frame(width: 3, height: 3)
 					}
 					.foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.55))
@@ -195,7 +222,7 @@ private struct WeekStrip: View {
 					.background(Color.white.opacity(isSelected ? 0.06 : 0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
 					.overlay {
 						RoundedRectangle(cornerRadius: 9, style: .continuous)
-							.stroke(Color.white.opacity(isSelected ? 0.23 : 0.055), lineWidth: 0.7)
+							.stroke(isSelected ? SlateStyle.accent.opacity(0.65) : Color.white.opacity(0.055), lineWidth: 0.7)
 					}
 				}
 				.buttonStyle(.plain)

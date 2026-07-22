@@ -7,6 +7,7 @@ struct RecordView: View {
 	@Bindable var store: JournalStore
 	let replacementID: UUID?
 	let onClose: () -> Void
+	let onFinished: (UUID) -> Void
 
 	@State private var recorder = AudioRecorder()
 	@State private var liveActivity = RecordingActivityManager()
@@ -54,7 +55,7 @@ struct RecordView: View {
 				} label: {
 					Text("Add 30 seconds")
 						.font(.system(size: 10))
-						.foregroundStyle(Color.white.opacity(0.18))
+						.foregroundStyle(SlateStyle.accent.opacity(0.72))
 						.padding(.vertical, 16)
 				}
 				.buttonStyle(.plain)
@@ -75,9 +76,9 @@ struct RecordView: View {
 					Button(action: togglePause) {
 						Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
 							.font(.system(size: 13, weight: .semibold))
-							.foregroundStyle(.white)
+							.foregroundStyle(SlateStyle.accent)
 							.frame(width: 48, height: 48)
-							.background(Color.white.opacity(0.055), in: Circle())
+							.glassEffect(.regular.interactive(), in: Circle())
 					}
 					.buttonStyle(.plain)
 					.disabled(!isVisualDemo && !recorder.isRecording)
@@ -86,9 +87,10 @@ struct RecordView: View {
 					Button(action: finish) {
 						Image(systemName: "checkmark")
 							.font(.system(size: 20, weight: .medium))
-							.foregroundStyle(.black)
+							.foregroundStyle(.white)
 							.frame(width: 62, height: 62)
-							.background(.white, in: Circle())
+							.background(SlateStyle.accent, in: Circle())
+							.shadow(color: SlateStyle.accent.opacity(0.32), radius: 18, y: 7)
 					}
 					.buttonStyle(.plain)
 					.disabled(!isVisualDemo && (!recorder.isRecording || isFinishing))
@@ -96,10 +98,6 @@ struct RecordView: View {
 				}
 				.padding(.bottom, 63)
 				.offset(x: -52)
-			}
-
-			if isFinishing || store.isProcessing {
-				ProcessingOverlay(message: store.processingMessage)
 			}
 		}
 		.presentationBackground(.black)
@@ -174,10 +172,8 @@ struct RecordView: View {
 		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
 		#endif
-		Task {
-			await store.finishRecording(at: recording.url, duration: recording.duration, replacing: replacementID)
-			onClose()
-		}
+		let entryID = store.finishRecording(at: recording.url, duration: recording.duration, replacing: replacementID)
+		onFinished(entryID)
 	}
 
 	private func cancel() {

@@ -33,6 +33,11 @@ struct EntryView: View {
 					.padding(.top, 8)
 					.padding(.bottom, 8)
 
+					if let phase = store.processingPhase(for: entry.id) {
+						EntryProcessingStatusView(phase: phase)
+							.transition(.move(edge: .top).combined(with: .opacity))
+					}
+
 					SlateCard {
 						VStack(alignment: .leading, spacing: 17) {
 							ForEach(currentEntry.observations, id: \.self) { observation in
@@ -53,7 +58,7 @@ struct EntryView: View {
 					Button { showsContext = true } label: {
 						Label("Not what you meant? Add context.", systemImage: "arrow.uturn.backward")
 							.font(.system(size: 10))
-							.foregroundStyle(Color.white.opacity(0.20))
+							.foregroundStyle(SlateStyle.accent.opacity(0.66))
 					}
 					.buttonStyle(.plain)
 
@@ -87,6 +92,7 @@ struct EntryView: View {
 							.font(.system(size: 14))
 							.foregroundStyle(Color.white.opacity(0.84))
 							.lineSpacing(6)
+							.contentTransition(.opacity)
 							.textSelection(.enabled)
 					}
 				}
@@ -95,8 +101,10 @@ struct EntryView: View {
 			}
 			.scrollIndicators(.hidden)
 		}
-		.safeAreaInset(edge: .bottom) { bottomBar }
+		.safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
 		.presentationBackground(.black)
+		.swipeBack(action: onClose)
+		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.sheet(isPresented: $showsContext) {
 			ContextSheet(store: store, entryID: entry.id)
 		}
@@ -112,27 +120,92 @@ struct EntryView: View {
 	}
 
 	private var bottomBar: some View {
-		HStack(spacing: 22) {
-			Button(action: onRerecord) {
-				Label("Re-record", systemImage: "mic.fill")
+		HStack {
+			Spacer()
+			HStack(spacing: 2) {
+				actionButton("Re-record", systemImage: "mic.fill", color: SlateStyle.accent, action: onRerecord)
+				actionButton("Delete", systemImage: "trash", color: Color.red.opacity(0.82)) {
+					showsDeleteConfirmation = true
+				}
+				actionButton("Copy", systemImage: "doc.on.doc", color: SlateStyle.accent, action: copyEntry)
 			}
-			Button { showsDeleteConfirmation = true } label: {
-				Label("Delete entry", systemImage: "trash")
-			}
-			Button(action: copyEntry) {
-				Label("Copy", systemImage: "doc.on.doc")
-			}
+			.padding(6)
+			.glassEffect(.regular.tint(SlateStyle.accent.opacity(0.08)).interactive(), in: Capsule())
+			Spacer()
 		}
-		.font(.system(size: 10))
-		.foregroundStyle(Color.white.opacity(0.22))
-		.frame(maxWidth: .infinity)
-		.padding(.vertical, 13)
-		.background(.black.opacity(0.94))
+		.padding(.bottom, 9)
+		.padding(.top, 8)
+	}
+
+	private func actionButton(
+		_ title: String,
+		systemImage: String,
+		color: Color,
+		action: @escaping () -> Void
+	) -> some View {
+		Button(action: action) {
+			VStack(spacing: 4) {
+				Image(systemName: systemImage)
+					.font(.system(size: 14, weight: .medium))
+				Text(title)
+					.font(.system(size: 9, weight: .medium))
+			}
+			.foregroundStyle(color)
+			.frame(width: 76, height: 46)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
 	}
 
 	private func copyEntry() {
 		let text = ([currentEntry.headline] + currentEntry.observations + [currentEntry.transcript]).joined(separator: "\n\n")
 		UIPasteboard.general.string = text
+	}
+}
+
+private struct EntryProcessingStatusView: View {
+	let phase: EntryProcessingPhase
+
+	var body: some View {
+		HStack(spacing: 13) {
+			Group {
+				if phase == .complete {
+					Image(systemName: "checkmark")
+						.font(.system(size: 12, weight: .bold))
+				} else {
+					ProgressView()
+						.controlSize(.small)
+				}
+			}
+			.foregroundStyle(SlateStyle.accent)
+			.tint(SlateStyle.accent)
+			.frame(width: 28, height: 28)
+			.background(SlateStyle.accent.opacity(0.13), in: Circle())
+
+			VStack(alignment: .leading, spacing: 3) {
+				Text(phase.title)
+					.font(.system(size: 12, weight: .semibold))
+					.foregroundStyle(.white)
+				Text(phase.detail)
+					.font(.system(size: 10))
+					.foregroundStyle(Color.white.opacity(0.46))
+					.fixedSize(horizontal: false, vertical: true)
+			}
+
+			Spacer(minLength: 4)
+
+			Text("ON DEVICE")
+				.font(.system(size: 8, weight: .bold))
+				.tracking(0.7)
+				.foregroundStyle(SlateStyle.accent)
+		}
+		.padding(.horizontal, 15)
+		.padding(.vertical, 13)
+		.background(SlateStyle.accentSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+		.overlay {
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.stroke(SlateStyle.accent.opacity(0.30), lineWidth: 0.7)
+		}
 	}
 }
 

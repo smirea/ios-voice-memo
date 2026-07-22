@@ -53,7 +53,7 @@ struct ReviewView: View {
 				.scrollIndicators(.hidden)
 			} else {
 				VStack(spacing: 15) {
-					ProgressView().tint(.white)
+					ProgressView().tint(SlateStyle.accent)
 					Text("Reading the week back…")
 						.font(.system(size: 12))
 						.foregroundStyle(SlateStyle.secondary)
@@ -61,6 +61,7 @@ struct ReviewView: View {
 			}
 		}
 		.presentationBackground(.black)
+		.swipeBack(action: onClose)
 		.task(id: date) { review = await store.weeklyReview(for: date) }
 	}
 }
@@ -77,11 +78,11 @@ private struct TrendGraph: View {
 					path.move(to: first)
 					for point in points.dropFirst() { path.addLine(to: point) }
 				}
-				.stroke(.white, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+				.stroke(SlateStyle.accent, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
 
 				ForEach(Array(points.enumerated()), id: \.offset) { _, point in
 					Circle()
-						.fill(.white)
+						.fill(SlateStyle.accent)
 						.frame(width: 4, height: 4)
 						.position(point)
 				}

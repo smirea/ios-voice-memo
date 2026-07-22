@@ -267,7 +267,10 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 }
 
 enum LocalTranscriber {
-	static func transcribe(url: URL) async throws -> String {
+	static func transcribe(
+		url: URL,
+		onUpdate: @escaping @Sendable (String) -> Void = { _ in }
+	) async throws -> String {
 		let authorized = await withCheckedContinuation { continuation in
 			SFSpeechRecognizer.requestAuthorization { status in
 				continuation.resume(returning: status == .authorized)
@@ -279,15 +282,17 @@ enum LocalTranscriber {
 
 		let request = SFSpeechURLRecognitionRequest(url: url)
 		request.requiresOnDeviceRecognition = true
-		request.shouldReportPartialResults = false
+		request.shouldReportPartialResults = true
 
 		return try await withCheckedThrowingContinuation { continuation in
 			let state = RecognitionState(continuation: continuation)
 			recognizer.recognitionTask(with: request) { result, error in
 				if let error {
 					state.fail(error)
-				} else if let result, result.isFinal {
-					state.finish(result.bestTranscription.formattedString)
+				} else if let result {
+					let transcript = result.bestTranscription.formattedString
+					onUpdate(transcript)
+					if result.isFinal { state.finish(transcript) }
 				}
 			}
 		}

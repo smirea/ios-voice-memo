@@ -50,19 +50,23 @@ struct RootView: View {
 						recordingContext = RecordingContext(replacementID: entry.id)
 					}
 				)
-				.transition(.opacity)
+				.transition(.move(edge: .trailing).combined(with: .opacity))
 			}
 
 			if showsReview {
 				ReviewView(store: store, date: store.selectedDate, onClose: { showsReview = false })
-					.transition(.opacity)
+					.transition(.move(edge: .trailing).combined(with: .opacity))
 			}
 
 			if let context = recordingContext {
 				RecordView(
 					store: store,
 					replacementID: context.replacementID,
-					onClose: { recordingContext = nil }
+					onClose: { recordingContext = nil },
+					onFinished: { entryID in
+						recordingContext = nil
+						presentedEntry = PresentedEntry(id: entryID)
+					}
 				)
 				.transition(.opacity)
 			}
