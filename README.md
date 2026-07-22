@@ -2,6 +2,11 @@
 
 An iPhone-only, local-first voice journal inspired by [Slate](https://apps.apple.com/us/app/slate-private-journal/id6787531627). This first milestone reproduces Slate's public recording, journal, entry, and weekly-review experience. Later iterations will add webhooks and integrations for AI agents.
 
+# Target Functionality
+1. Robust recording: audio is always saved and is consistent, even if the screen turns off, or microphone changes. audio is always saved on device while it's recording
+2. Automatic iCloud backups always enabled
+3. Local first: app should work while fully offline
+
 ## Current baseline
 
 - Record, pause, resume, extend, finish, re-record, and delete voice entries
