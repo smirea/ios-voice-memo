@@ -1,10 +1,1 @@
-# ios-voice-memo
-
-Lean Swift starter.
-
-## Commands
-
-```sh
-swift build
-swift run
-```
+Local first voice memo app inspired by [Slate](https://apps.apple.com/us/app/slate-private-journal/id6787531627) but with my own takes like webhooks and integrations to easily integrate with ai agents
