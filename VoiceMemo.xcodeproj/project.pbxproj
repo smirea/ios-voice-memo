@@ -1,0 +1,444 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* VoiceMemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* VoiceMemoApp.swift */; };
+		A10000000000000000000002 /* JournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* JournalModels.swift */; };
+		A10000000000000000000003 /* JournalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* JournalStore.swift */; };
+		A10000000000000000000004 /* ReflectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* ReflectionEngine.swift */; };
+		A10000000000000000000005 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* AudioRecorder.swift */; };
+		A10000000000000000000006 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* Components.swift */; };
+		A10000000000000000000007 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* RootView.swift */; };
+		A10000000000000000000008 /* JournalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* JournalView.swift */; };
+		A10000000000000000000009 /* RecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* RecordView.swift */; };
+		A1000000000000000000000A /* EntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* EntryView.swift */; };
+		A1000000000000000000000B /* ReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* ReviewView.swift */; };
+		A1000000000000000000000C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* SettingsView.swift */; };
+		A1000000000000000000000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* Assets.xcassets */; };
+		A1000000000000000000000E /* RecordingActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* RecordingActivityManager.swift */; };
+		A1000000000000000000000F /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* RecordingActivityAttributes.swift */; };
+		A10000000000000000000010 /* VoiceMemoWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* VoiceMemoWidgets.swift */; };
+		A10000000000000000000011 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* RecordingActivityAttributes.swift */; };
+		A10000000000000000000012 /* VoiceMemoWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* VoiceMemoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		L10000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = J10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F10000000000000000000002;
+			remoteInfo = VoiceMemoWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		M10000000000000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000012 /* VoiceMemoWidgets.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		B10000000000000000000001 /* VoiceMemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMemoApp.swift; sourceTree = "<group>"; };
+		B10000000000000000000002 /* JournalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalModels.swift; sourceTree = "<group>"; };
+		B10000000000000000000003 /* JournalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalStore.swift; sourceTree = "<group>"; };
+		B10000000000000000000004 /* ReflectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionEngine.swift; sourceTree = "<group>"; };
+		B10000000000000000000005 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		B10000000000000000000008 /* JournalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalView.swift; sourceTree = "<group>"; };
+		B10000000000000000000009 /* RecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A /* EntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntryView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000B /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B1000000000000000000000E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B1000000000000000000000F /* RecordingActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingActivityManager.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* RecordingActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingActivityAttributes.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* VoiceMemoWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMemoWidgets.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C10000000000000000000001 /* VoiceMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C10000000000000000000002 /* VoiceMemoWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VoiceMemoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D10000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		E10000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				E10000000000000000000002 /* Sources */,
+				E10000000000000000000003 /* Resources */,
+				E10000000000000000000005 /* Shared */,
+				E10000000000000000000006 /* VoiceMemoWidgets */,
+				E10000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E10000000000000000000002 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000001 /* VoiceMemoApp.swift */,
+				B10000000000000000000002 /* JournalModels.swift */,
+				B10000000000000000000003 /* JournalStore.swift */,
+				B10000000000000000000004 /* ReflectionEngine.swift */,
+				B10000000000000000000005 /* AudioRecorder.swift */,
+				B10000000000000000000006 /* Components.swift */,
+				B10000000000000000000007 /* RootView.swift */,
+				B10000000000000000000008 /* JournalView.swift */,
+				B10000000000000000000009 /* RecordView.swift */,
+				B1000000000000000000000A /* EntryView.swift */,
+				B1000000000000000000000B /* ReviewView.swift */,
+				B1000000000000000000000C /* SettingsView.swift */,
+				B1000000000000000000000F /* RecordingActivityManager.swift */,
+			);
+			name = Sources;
+			path = Sources/App;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000003 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000000000000000000D /* Info.plist */,
+				B1000000000000000000000E /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C10000000000000000000001 /* VoiceMemo.app */,
+				C10000000000000000000002 /* VoiceMemoWidgets.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000005 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000010 /* RecordingActivityAttributes.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000006 /* VoiceMemoWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000011 /* VoiceMemoWidgets.swift */,
+				B10000000000000000000012 /* Info.plist */,
+			);
+			path = VoiceMemoWidgets;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F10000000000000000000001 /* VoiceMemo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = G10000000000000000000002 /* Build configuration list for PBXNativeTarget "VoiceMemo" */;
+			buildPhases = (
+				H10000000000000000000001 /* Sources */,
+				D10000000000000000000001 /* Frameworks */,
+				I10000000000000000000001 /* Resources */,
+				M10000000000000000000001 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				N10000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = VoiceMemo;
+			productName = VoiceMemo;
+			productReference = C10000000000000000000001 /* VoiceMemo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F10000000000000000000002 /* VoiceMemoWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = G10000000000000000000003 /* Build configuration list for PBXNativeTarget "VoiceMemoWidgets" */;
+			buildPhases = (
+				H10000000000000000000002 /* Sources */,
+				D10000000000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VoiceMemoWidgets;
+			productName = VoiceMemoWidgets;
+			productReference = C10000000000000000000002 /* VoiceMemoWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		J10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					F10000000000000000000001 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+					F10000000000000000000002 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+				};
+			};
+			buildConfigurationList = G10000000000000000000001 /* Build configuration list for PBXProject "VoiceMemo" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E10000000000000000000001;
+			productRefGroup = E10000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F10000000000000000000001 /* VoiceMemo */,
+				F10000000000000000000002 /* VoiceMemoWidgets */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		I10000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000000D /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		H10000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* VoiceMemoApp.swift in Sources */,
+				A10000000000000000000002 /* JournalModels.swift in Sources */,
+				A10000000000000000000003 /* JournalStore.swift in Sources */,
+				A10000000000000000000004 /* ReflectionEngine.swift in Sources */,
+				A10000000000000000000005 /* AudioRecorder.swift in Sources */,
+				A10000000000000000000006 /* Components.swift in Sources */,
+				A10000000000000000000007 /* RootView.swift in Sources */,
+				A10000000000000000000008 /* JournalView.swift in Sources */,
+				A10000000000000000000009 /* RecordView.swift in Sources */,
+				A1000000000000000000000A /* EntryView.swift in Sources */,
+				A1000000000000000000000B /* ReviewView.swift in Sources */,
+				A1000000000000000000000C /* SettingsView.swift in Sources */,
+				A1000000000000000000000E /* RecordingActivityManager.swift in Sources */,
+				A1000000000000000000000F /* RecordingActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		H10000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000010 /* VoiceMemoWidgets.swift in Sources */,
+				A10000000000000000000011 /* RecordingActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		N10000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F10000000000000000000002 /* VoiceMemoWidgets */;
+			targetProxy = L10000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		K10000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		K10000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		K10000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stefan.voicememo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		K10000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stefan.voicememo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		K10000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = VoiceMemoWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stefan.voicememo.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		K10000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = VoiceMemoWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.stefan.voicememo.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		G10000000000000000000001 /* Build configuration list for PBXProject "VoiceMemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K10000000000000000000001 /* Debug */,
+				K10000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		G10000000000000000000002 /* Build configuration list for PBXNativeTarget "VoiceMemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K10000000000000000000003 /* Debug */,
+				K10000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		G10000000000000000000003 /* Build configuration list for PBXNativeTarget "VoiceMemoWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				K10000000000000000000005 /* Debug */,
+				K10000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = J10000000000000000000001 /* Project object */;
+}

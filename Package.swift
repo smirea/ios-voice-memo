@@ -4,8 +4,7 @@ import PackageDescription
 let package = Package(
 	name: "ios-voice-memo",
 	platforms: [
-		.iOS(.v17),
-		.macOS(.v14),
+		.iOS(.v26),
 	],
 	products: [
 		.executable(name: "ios-voice-memo", targets: ["App"]),
