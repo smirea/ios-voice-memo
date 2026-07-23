@@ -10,7 +10,6 @@ struct RecordView: View {
 
 	@State private var recorder = AudioRecorder()
 	@State private var liveActivity = RecordingActivityManager()
-	@State private var recordingLimit: TimeInterval = 120
 	@State private var errorMessage: String?
 	@State private var isFinishing = false
 	@State private var activeRecordingURL: URL?
@@ -31,7 +30,15 @@ struct RecordView: View {
 			VStack(spacing: 0) {
 				HStack {
 					Spacer()
-					CloseControl(action: cancel)
+					Button(action: cancel) {
+						Image(systemName: "trash.fill")
+							.font(.system(size: 15, weight: .semibold))
+							.foregroundStyle(.red)
+							.frame(width: 44, height: 44)
+							.glassEffect(.regular.tint(.red.opacity(0.12)).interactive(), in: Circle())
+					}
+					.buttonStyle(.plain)
+					.accessibilityLabel("Discard recording")
 						.offset(y: 18)
 				}
 				.padding(.trailing, 8)
@@ -48,17 +55,6 @@ struct RecordView: View {
 					.monospacedDigit()
 					.padding(.top, 12)
 					.offset(y: -40)
-
-				Button {
-					recordingLimit += 30
-				} label: {
-					Text("Add 30 seconds")
-						.font(.system(size: 14, weight: .semibold))
-						.foregroundStyle(AppStyle.accent)
-						.padding(.vertical, 16)
-				}
-				.buttonStyle(.plain)
-				.offset(y: -40)
 
 				if let statusMessage = recorder.statusMessage {
 					Text(statusMessage)
@@ -103,7 +99,6 @@ struct RecordView: View {
 		.task { await beginRecording() }
 		.onChange(of: recorder.duration) { _, duration in
 			checkpointIfNeeded(duration: duration)
-			if !isVisualDemo, duration >= recordingLimit { finish() }
 		}
 		.onChange(of: recorder.isPaused) { _, isPaused in
 			liveActivity.setPaused(isPaused)

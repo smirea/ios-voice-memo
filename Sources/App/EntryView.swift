@@ -1,14 +1,22 @@
 import MapKit
 import SwiftUI
+import UIKit
 
 struct EntryView: View {
 	@Bindable var store: JournalStore
 	let entry: JournalEntry
 
-	@State private var showsContext = false
-
 	private var currentEntry: JournalEntry {
 		store.entry(id: entry.id) ?? entry
+	}
+
+	private var headerDate: String {
+		let formatter = DateFormatter()
+		formatter.locale = .current
+		let currentYear = Calendar.current.component(.year, from: .now)
+		let entryYear = Calendar.current.component(.year, from: currentEntry.createdAt)
+		formatter.dateFormat = entryYear == currentYear ? "EEE MMM d" : "EEE MMM d yyyy"
+		return formatter.string(from: currentEntry.createdAt)
 	}
 
 	var body: some View {
@@ -22,11 +30,14 @@ struct EntryView: View {
 							.font(.system(size: 25, weight: .semibold))
 							.foregroundStyle(.white)
 							.lineLimit(1)
-						Spacer(minLength: 12)
-						Text(currentEntry.createdAt.formatted(.dateTime.month(.abbreviated).day().year()))
-							.font(.system(size: 14, weight: .medium))
-							.foregroundStyle(AppStyle.secondary)
+							.truncationMode(.tail)
+						Spacer(minLength: 0)
+						Text(headerDate)
+							.font(.system(size: 25, weight: .semibold))
+							.foregroundStyle(.white)
 							.lineLimit(1)
+							.fixedSize(horizontal: true, vertical: false)
+							.layoutPriority(1)
 					}
 					.padding(.top, 10)
 
@@ -36,10 +47,6 @@ struct EntryView: View {
 					}
 
 					VStack(alignment: .leading, spacing: 16) {
-						Text("Summary")
-							.font(.system(size: 15, weight: .semibold))
-							.foregroundStyle(AppStyle.secondary)
-
 						Text(currentEntry.headline)
 							.font(.system(size: 22, weight: .semibold))
 							.foregroundStyle(.white)
@@ -56,7 +63,7 @@ struct EntryView: View {
 						}
 
 						if let model = currentEntry.summaryModel {
-							ModelAttribution(label: "Summary", model: model)
+							ModelAttribution(model: model)
 						}
 
 						if !currentEntry.tags.isEmpty {
@@ -66,35 +73,13 @@ struct EntryView: View {
 						}
 					}
 
-					Button { showsContext = true } label: {
-						Label("Add context", systemImage: "text.badge.plus")
-							.font(.system(size: 15, weight: .medium))
-							.foregroundStyle(AppStyle.accent)
-					}
-					.buttonStyle(.plain)
-
-					if let context = currentEntry.context, !context.isEmpty {
-						VStack(alignment: .leading, spacing: 9) {
-							Text("Context")
-								.font(.system(size: 15, weight: .semibold))
-								.foregroundStyle(AppStyle.secondary)
-							Text(context)
-								.font(.system(size: 16))
-								.foregroundStyle(Color.white.opacity(0.90))
-								.lineSpacing(4)
-						}
-					}
-
 					if store.settings.showTranscripts, !currentEntry.transcript.isEmpty {
 						VStack(alignment: .leading, spacing: 12) {
-							Text("Transcript")
-								.font(.system(size: 15, weight: .semibold))
-								.foregroundStyle(AppStyle.secondary)
 							ExpandableTranscript(text: currentEntry.transcript)
 								.contentTransition(.opacity)
 
 							if let model = currentEntry.transcriptModel {
-								ModelAttribution(label: "Transcript", model: model)
+								ModelAttribution(model: model)
 							}
 						}
 					}
@@ -114,18 +99,14 @@ struct EntryView: View {
 		.toolbar(.visible, for: .navigationBar)
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
-		.sheet(isPresented: $showsContext) {
-			ContextSheet(store: store, entryID: entry.id)
-		}
 	}
 }
 
 private struct ModelAttribution: View {
-	let label: String
 	let model: String
 
 	var body: some View {
-		Text("\(label) · \(model)")
+		Text(model)
 			.font(.system(size: 12, weight: .medium))
 			.foregroundStyle(AppStyle.tertiary)
 			.frame(maxWidth: .infinity, alignment: .trailing)
@@ -135,9 +116,11 @@ private struct ModelAttribution: View {
 private struct ExpandableTranscript: View {
 	let text: String
 	@State private var isExpanded = false
+	@State private var availableWidth: CGFloat = 0
 
 	private var isTruncated: Bool {
-		text.count > 140 || text.split(separator: "\n").count > 4
+		guard availableWidth > 32 else { return false }
+		return textLineCount(width: availableWidth - 32) > 4
 	}
 
 	var body: some View {
@@ -172,14 +155,57 @@ private struct ExpandableTranscript: View {
 				}
 			}
 			.textSelection(.enabled)
+			.background {
+				GeometryReader { proxy in
+					Color.clear
+						.onAppear { availableWidth = proxy.size.width }
+						.onChange(of: proxy.size.width) { _, width in
+							availableWidth = width
+						}
+				}
+			}
+	}
+
+	private func textLineCount(width: CGFloat) -> Int {
+		let textStorage = NSTextStorage(
+			string: text,
+			attributes: [.font: UIFont.systemFont(ofSize: 16)]
+		)
+		let layoutManager = NSLayoutManager()
+		let textContainer = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+		textContainer.lineFragmentPadding = 0
+		textContainer.maximumNumberOfLines = 0
+		layoutManager.addTextContainer(textContainer)
+		textStorage.addLayoutManager(layoutManager)
+		layoutManager.ensureLayout(for: textContainer)
+
+		var lineCount = 0
+		var glyphIndex = 0
+		while glyphIndex < layoutManager.numberOfGlyphs {
+			var lineRange = NSRange()
+			layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineRange)
+			glyphIndex = NSMaxRange(lineRange)
+			lineCount += 1
+		}
+		return lineCount
 	}
 }
 
 private struct EntryLocationMap: View {
+	@Environment(\.openURL) private var openURL
 	let location: JournalLocation
 
 	private var coordinate: CLLocationCoordinate2D {
 		CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
+	}
+
+	private var googleMapsURL: URL? {
+		var components = URLComponents(string: "https://www.google.com/maps/search/")
+		components?.queryItems = [
+			URLQueryItem(name: "api", value: "1"),
+			URLQueryItem(name: "query", value: "\(location.latitude),\(location.longitude)")
+		]
+		return components?.url
 	}
 
 	var body: some View {
@@ -188,24 +214,33 @@ private struct EntryLocationMap: View {
 				.font(.system(size: 17, weight: .semibold))
 				.foregroundStyle(AppStyle.accent)
 
-			Map(
-				initialPosition: .region(MKCoordinateRegion(
-					center: coordinate,
-					latitudinalMeters: 2_400,
-					longitudinalMeters: 2_400
-				)),
-				interactionModes: [.pan, .zoom]
-			) {
-				Marker(location.displayName, coordinate: coordinate)
-					.tint(AppStyle.accent)
+			Button {
+				if let googleMapsURL {
+					openURL(googleMapsURL)
+				}
+			} label: {
+				Map(
+					initialPosition: .region(MKCoordinateRegion(
+						center: coordinate,
+						latitudinalMeters: 2_400,
+						longitudinalMeters: 2_400
+					)),
+					interactionModes: []
+				) {
+					Marker(location.displayName, coordinate: coordinate)
+						.tint(AppStyle.accent)
+				}
+				.mapStyle(.standard(elevation: .flat))
+				.frame(height: 220)
+				.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+				.overlay {
+					RoundedRectangle(cornerRadius: 18, style: .continuous)
+						.stroke(AppStyle.cardBorder, lineWidth: 0.8)
+				}
+				.allowsHitTesting(false)
 			}
-			.mapStyle(.standard(elevation: .flat))
-			.frame(height: 220)
-			.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-			.overlay {
-				RoundedRectangle(cornerRadius: 18, style: .continuous)
-					.stroke(AppStyle.cardBorder, lineWidth: 0.8)
-			}
+			.buttonStyle(.plain)
+			.accessibilityLabel("Open \(location.displayName) in Google Maps")
 		}
 	}
 }
@@ -241,56 +276,6 @@ private struct EntryProcessingStatusView: View {
 		.overlay {
 			RoundedRectangle(cornerRadius: 14, style: .continuous)
 				.stroke(AppStyle.accent.opacity(0.55), lineWidth: 0.8)
-		}
-	}
-}
-
-private struct ContextSheet: View {
-	@Environment(\.dismiss) private var dismiss
-	@Bindable var store: JournalStore
-	let entryID: UUID
-	@State private var context = ""
-
-	var body: some View {
-		NavigationStack {
-			ZStack {
-				Color.black.ignoresSafeArea()
-				VStack(alignment: .leading, spacing: 14) {
-					Text("Context")
-						.font(.system(size: 15, weight: .semibold))
-						.foregroundStyle(AppStyle.secondary)
-					TextEditor(text: $context)
-						.font(.system(size: 16))
-						.scrollContentBackground(.hidden)
-						.padding(12)
-						.background(AppStyle.card, in: RoundedRectangle(cornerRadius: 13))
-						.overlay {
-							RoundedRectangle(cornerRadius: 13)
-								.stroke(AppStyle.cardBorder, lineWidth: 0.8)
-						}
-						.frame(minHeight: 150)
-				}
-				.padding(20)
-			}
-			.navigationTitle("Add context")
-			.toolbar {
-				ToolbarItem(placement: .cancellationAction) {
-					Button("Cancel") { dismiss() }
-				}
-				ToolbarItem(placement: .confirmationAction) {
-					Button("Update summary") {
-						Task {
-							await store.addContext(context, to: entryID)
-							dismiss()
-						}
-					}
-					.disabled(context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-				}
-			}
-		}
-		.presentationBackground(.black)
-		.overlay {
-			if store.isProcessing { ProcessingOverlay(message: store.processingMessage) }
 		}
 	}
 }

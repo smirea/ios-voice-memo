@@ -43,21 +43,6 @@ struct TagPill: View {
 	}
 }
 
-struct CloseControl: View {
-	let action: () -> Void
-
-	var body: some View {
-		Button(action: action) {
-			Image(systemName: "xmark")
-				.font(.system(size: 15, weight: .semibold))
-				.foregroundStyle(Color.white.opacity(0.88))
-				.frame(width: 44, height: 44)
-		}
-		.buttonStyle(.plain)
-		.accessibilityLabel("Close")
-	}
-}
-
 struct WaveformView: View {
 	let levels: [Double]
 
@@ -74,22 +59,6 @@ struct WaveformView: View {
 				}
 			}
 			.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-		}
-	}
-}
-
-struct ProcessingOverlay: View {
-	let message: String
-
-	var body: some View {
-		ZStack {
-			Color.black.opacity(0.82).ignoresSafeArea()
-			VStack(spacing: 18) {
-				ProgressView().tint(AppStyle.accent)
-				Text(message)
-					.font(.system(size: 15))
-					.foregroundStyle(AppStyle.secondary)
-			}
 		}
 	}
 }

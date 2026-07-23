@@ -8,8 +8,6 @@ final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
 	var selectedDate: Date
-	var isProcessing = false
-	var processingMessage = "Updating summary…"
 	var settings = JournalSettings.load()
 
 	let isDemoMode: Bool
@@ -196,21 +194,6 @@ final class JournalStore {
 		entryProcessingPhases.removeValue(forKey: entryID)
 		entryProcessingTasks.removeValue(forKey: entryID)
 		entryProcessingTokens.removeValue(forKey: entryID)
-	}
-
-	func addContext(_ context: String, to entryID: UUID) async {
-		guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
-		isProcessing = true
-		processingMessage = "Updating summary…"
-		let combined = entries[index].transcript + "\n\nAdditional context: " + context
-		let reflection = await ReflectionEngine.reflect(on: combined)
-		entries[index].context = context
-		entries[index].headline = reflection.headline
-		entries[index].observations = reflection.observations
-		entries[index].tags = reflection.tags
-		entries[index].summaryModel = reflection.modelName
-		persist()
-		isProcessing = false
 	}
 
 	func clearJournal() {

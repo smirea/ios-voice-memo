@@ -10,7 +10,7 @@ An iPhone voice memo app that records, transcribes, summarizes, and organizes sp
 
 ## Features
 
-- Record, pause, resume, extend, and finish voice memos
+- Record, pause, resume, and finish voice memos
 - Background recording with interruption and microphone-route recovery
 - Recording checkpoints and recovery after an interrupted app session
 - Live recording state on the Lock Screen and Dynamic Island
@@ -18,8 +18,12 @@ An iPhone voice memo app that records, transcribes, summarizes, and organizes sp
 - Speech transcription with live partial results
 - Foundation Models summaries with a deterministic fallback
 - Model provenance stored with transcripts and summaries
-- Timeline, tags, context, weekly summaries, and Apple Maps locations
+- Timeline, tags, weekly summaries, and recorded locations
 - Protected JSON and audio storage
+
+## Storage
+
+Audio files and note data live in the app's private `Application Support/MyVoiceMemo` container. iOS includes them in normal device backups, but they are not exposed as a browsable iCloud Drive or Files folder.
 
 ## Requirements
 

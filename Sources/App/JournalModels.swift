@@ -19,7 +19,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var observations: [String]
 	var tags: [String]
 	var audioFilename: String?
-	var context: String?
 	var location: JournalLocation?
 	var summaryModel: String?
 	var transcriptModel: String?
@@ -33,7 +32,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		observations: [String],
 		tags: [String],
 		audioFilename: String? = nil,
-		context: String? = nil,
 		location: JournalLocation? = nil,
 		summaryModel: String? = nil,
 		transcriptModel: String? = nil
@@ -46,7 +44,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.observations = observations
 		self.tags = tags
 		self.audioFilename = audioFilename
-		self.context = context
 		self.location = location
 		self.summaryModel = summaryModel
 		self.transcriptModel = transcriptModel
