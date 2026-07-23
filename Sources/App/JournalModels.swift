@@ -10,6 +10,16 @@ struct JournalLocation: Codable, Hashable, Sendable {
 	}
 }
 
+struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
+	var id: String
+	var calendarIdentifier: String
+	var calendarTitle: String
+	var title: String
+	var startDate: Date
+	var endDate: Date
+	var isAllDay: Bool
+}
+
 struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	let id: UUID
 	var createdAt: Date
@@ -19,6 +29,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var observations: [String]
 	var audioFilename: String?
 	var location: JournalLocation?
+	var calendarEvent: JournalCalendarEvent?
 	var summaryModel: String?
 	var transcriptModel: String?
 
@@ -31,6 +42,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		observations: [String],
 		audioFilename: String? = nil,
 		location: JournalLocation? = nil,
+		calendarEvent: JournalCalendarEvent? = nil,
 		summaryModel: String? = nil,
 		transcriptModel: String? = nil
 	) {
@@ -42,6 +54,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.observations = observations
 		self.audioFilename = audioFilename
 		self.location = location
+		self.calendarEvent = calendarEvent
 		self.summaryModel = summaryModel
 		self.transcriptModel = transcriptModel
 	}
@@ -110,6 +123,15 @@ extension JournalEntry {
 					"One good morning became evidence that something larger may be shifting."
 				],
 				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
+				calendarEvent: JournalCalendarEvent(
+					id: "demo-morning-run",
+					calendarIdentifier: "demo-personal",
+					calendarTitle: "Personal",
+					title: "Morning run",
+					startDate: date(2026, 7, 12, 8, 0),
+					endDate: date(2026, 7, 12, 9, 0),
+					isAllDay: false
+				),
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
 			),

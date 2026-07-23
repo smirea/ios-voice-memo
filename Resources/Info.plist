@@ -28,6 +28,8 @@
 	<string>Record a voice memo.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Your location is saved with this entry so you can remember where it was recorded.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Read calendar events so you can attach a recording to the event it belongs to. MyVoiceMemo never changes calendar data.</string>
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>iCloud.com.stefan.myvoicememo</key>
@@ -50,6 +52,11 @@
 				<string>myvoicememo</string>
 			</array>
 		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+		<string>googlecalendar</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict>

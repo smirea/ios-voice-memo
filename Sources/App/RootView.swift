@@ -7,9 +7,11 @@ private enum AppRoute: Hashable {
 
 private struct RecordingContext: Identifiable {
 	let id = UUID()
+	let startsImmediately: Bool
 }
 
 struct RootView: View {
+	@Environment(\.scenePhase) private var scenePhase
 	@Bindable var store: JournalStore
 	@State private var path: [AppRoute] = []
 	@State private var recordingContext: RecordingContext?
@@ -22,7 +24,7 @@ struct RootView: View {
 			_path = State(initialValue: [.entry(entry.id)])
 		}
 		if arguments.contains("-demo-recording") {
-			_recordingContext = State(initialValue: RecordingContext())
+			_recordingContext = State(initialValue: RecordingContext(startsImmediately: true))
 		}
 		if arguments.contains("-demo-review") {
 			_path = State(initialValue: [.review])
@@ -34,7 +36,7 @@ struct RootView: View {
 			JournalView(
 				store: store,
 				onSelectEntry: { path.append(.entry($0.id)) },
-				onNewRecording: { recordingContext = RecordingContext() },
+				onNewRecording: { recordingContext = RecordingContext(startsImmediately: false) },
 				onReview: { path.append(.review) },
 				onSettings: { showsSettings = true }
 			)
@@ -51,9 +53,10 @@ struct RootView: View {
 			}
 		}
 		.background(AppStyle.background)
-		.fullScreenCover(item: $recordingContext) { _ in
+		.fullScreenCover(item: $recordingContext) { context in
 			RecordView(
 				store: store,
+				startsImmediately: context.startsImmediately,
 				onClose: { recordingContext = nil },
 				onFinished: { entryID in
 					path = [.entry(entryID)]
@@ -68,7 +71,14 @@ struct RootView: View {
 			guard url.scheme == "myvoicememo", url.host == "record" else { return }
 			guard recordingContext == nil else { return }
 			path.removeAll()
-			recordingContext = RecordingContext()
+			recordingContext = RecordingContext(startsImmediately: true)
+		}
+		.task {
+			await store.refreshCalendar()
+		}
+		.onChange(of: scenePhase) { _, phase in
+			guard phase == .active else { return }
+			Task { await store.refreshCalendar() }
 		}
 	}
 }

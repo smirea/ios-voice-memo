@@ -8,6 +8,7 @@ final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
 	var settings = JournalSettings.load()
+	let calendarSync: CalendarSync
 
 	let isDemoMode: Bool
 	private let fileManager = FileManager.default
@@ -25,6 +26,7 @@ final class JournalStore {
 
 	init() {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
+		calendarSync = CalendarSync(isDemoMode: isDemoMode)
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 		rootURL = applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
@@ -36,6 +38,7 @@ final class JournalStore {
 
 		if isDemoMode {
 			entries = JournalEntry.demo
+			settings.calendarSyncEnabled = true
 		} else {
 			entries = []
 			prepareStorage()
@@ -74,13 +77,14 @@ final class JournalStore {
 		return task
 	}
 
-	func destinationForNewRecording() throws -> URL {
+	func destinationForNewRecording(calendarEvent: JournalCalendarEvent?) throws -> URL {
 		prepareStorage()
 		let url = recordingsURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
 		try writePendingRecording(PendingRecording(
 			filename: url.lastPathComponent,
 			startedAt: .now,
-			duration: 0
+			duration: 0,
+			calendarEvent: calendarEvent
 		))
 		return url
 	}
@@ -98,7 +102,11 @@ final class JournalStore {
 	}
 
 	@discardableResult
-	func finishRecording(at url: URL, duration: TimeInterval) -> UUID {
+	func finishRecording(
+		at url: URL,
+		duration: TimeInterval,
+		calendarEvent: JournalCalendarEvent?
+	) -> UUID {
 		let entryID = UUID()
 		let savedEntry = JournalEntry(
 			id: entryID,
@@ -107,7 +115,8 @@ final class JournalStore {
 			transcript: "",
 			headline: "Processing recording",
 			observations: [],
-			audioFilename: url.lastPathComponent
+			audioFilename: url.lastPathComponent,
+			calendarEvent: calendarEvent
 		)
 
 		entries.append(savedEntry)
@@ -249,6 +258,27 @@ final class JournalStore {
 	func updateSettings(_ settings: JournalSettings) {
 		self.settings = settings
 		settings.save()
+		Task { await refreshCalendar() }
+	}
+
+	func requestCalendarAccess() async -> Bool {
+		let granted = await calendarSync.requestAccess()
+		if granted {
+			await calendarSync.refresh(
+				includedCalendarIdentifiers: settings.includedCalendarIdentifiers
+			)
+		}
+		return granted
+	}
+
+	func refreshCalendar() async {
+		guard settings.calendarSyncEnabled else {
+			calendarSync.clear()
+			return
+		}
+		await calendarSync.refresh(
+			includedCalendarIdentifiers: settings.includedCalendarIdentifiers
+		)
 	}
 
 	private func prepareStorage() {
@@ -347,7 +377,8 @@ final class JournalStore {
 				transcript: "",
 				headline: "Processing recording",
 				observations: [],
-				audioFilename: url.lastPathComponent
+				audioFilename: url.lastPathComponent,
+				calendarEvent: matchingPending?.calendarEvent
 			))
 			didRecover = true
 			try? includeInBackup(url)
@@ -402,14 +433,39 @@ private struct PendingRecording: Codable {
 	var filename: String
 	var startedAt: Date
 	var duration: TimeInterval
+	var calendarEvent: JournalCalendarEvent?
 }
 
 struct JournalSettings: Codable, Equatable {
 	var keepScreenAwakeWhileRecording = true
 	var hapticsEnabled = true
 	var showTranscripts = true
+	var calendarSyncEnabled = false
+	var includedCalendarIdentifiers: Set<String>?
+	var preferredCalendarApp = PreferredCalendarApp.google
 
 	private static let key = "journal-settings"
+
+	init() {}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		keepScreenAwakeWhileRecording = try container.decodeIfPresent(
+			Bool.self,
+			forKey: .keepScreenAwakeWhileRecording
+		) ?? true
+		hapticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .hapticsEnabled) ?? true
+		showTranscripts = try container.decodeIfPresent(Bool.self, forKey: .showTranscripts) ?? true
+		calendarSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .calendarSyncEnabled) ?? false
+		includedCalendarIdentifiers = try container.decodeIfPresent(
+			Set<String>.self,
+			forKey: .includedCalendarIdentifiers
+		)
+		preferredCalendarApp = try container.decodeIfPresent(
+			PreferredCalendarApp.self,
+			forKey: .preferredCalendarApp
+		) ?? .google
+	}
 
 	static func load() -> JournalSettings {
 		guard let data = UserDefaults.standard.data(forKey: key) else { return JournalSettings() }

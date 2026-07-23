@@ -42,6 +42,37 @@ struct EntryView: View {
 					}
 					.padding(.top, 10)
 
+					if let calendarEvent = currentEntry.calendarEvent {
+						Button {
+							ExternalLinks.openCalendar(
+								event: calendarEvent,
+								preference: store.settings.preferredCalendarApp
+							)
+						} label: {
+							HStack(spacing: 10) {
+								Image(systemName: "calendar")
+									.foregroundStyle(AppStyle.accent)
+								Text(calendarEvent.title)
+									.font(.system(size: 16, weight: .semibold))
+									.foregroundStyle(.white)
+									.lineLimit(1)
+								Spacer(minLength: 0)
+								Image(systemName: "arrow.up.forward")
+									.font(.system(size: 12, weight: .semibold))
+									.foregroundStyle(AppStyle.secondary)
+							}
+							.padding(.horizontal, 14)
+							.frame(height: 48)
+							.background(AppStyle.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+							.overlay {
+								RoundedRectangle(cornerRadius: 14, style: .continuous)
+									.stroke(AppStyle.cardBorder, lineWidth: 0.8)
+							}
+						}
+						.buttonStyle(.plain)
+						.accessibilityHint("Opens in \(store.settings.preferredCalendarApp.title)")
+					}
+
 					if let phase = store.processingPhase(for: entry.id) {
 						EntryProcessingStatusView(phase: phase)
 							.transition(.move(edge: .top).combined(with: .opacity))
@@ -191,71 +222,95 @@ private struct ScrubbableWaveform: View {
 }
 
 private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
-	func makeUIViewController(context: Context) -> UIViewController {
-		InteractivePopGestureViewController()
+	func makeCoordinator() -> Coordinator {
+		Coordinator()
 	}
 
-	func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
-		(uiViewController as? InteractivePopGestureViewController)?.enableNavigationPop()
+	func makeUIViewController(context: Context) -> InteractivePopGestureViewController {
+		let controller = InteractivePopGestureViewController()
+		controller.popGestureCoordinator = context.coordinator
+		return controller
+	}
+
+	func updateUIViewController(
+		_ uiViewController: InteractivePopGestureViewController,
+		context: Context
+	) {
+		uiViewController.popGestureCoordinator = context.coordinator
+		context.coordinator.enable(from: uiViewController)
+	}
+
+	@MainActor
+	final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+		private weak var navigationController: UINavigationController?
+
+		func enable(from controller: UIViewController) {
+			DispatchQueue.main.async { [weak self, weak controller] in
+				guard let self, let controller,
+					let navigationController = self.findNavigationController(from: controller)
+				else { return }
+				self.navigationController = navigationController
+				navigationController.interactivePopGestureRecognizer?.delegate = self
+				navigationController.interactivePopGestureRecognizer?.isEnabled =
+					navigationController.viewControllers.count > 1
+			}
+		}
+
+		func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+			guard let navigationController else { return false }
+			return navigationController.viewControllers.count > 1
+				&& navigationController.transitionCoordinator == nil
+		}
+
+		private func findNavigationController(from controller: UIViewController) -> UINavigationController? {
+			if let navigationController = controller.navigationController {
+				return navigationController
+			}
+
+			var responder: UIResponder? = controller.view
+			while let current = responder {
+				if let navigationController = current as? UINavigationController {
+					return navigationController
+				}
+				if let controller = current as? UIViewController,
+					let navigationController = controller.navigationController {
+					return navigationController
+				}
+				responder = current.next
+			}
+
+			return findNavigationController(in: controller.view.window?.rootViewController)
+		}
+
+		private func findNavigationController(in controller: UIViewController?) -> UINavigationController? {
+			guard let controller else { return nil }
+			if let navigationController = controller as? UINavigationController {
+				return navigationController
+			}
+			if let navigationController = findNavigationController(in: controller.presentedViewController) {
+				return navigationController
+			}
+			for child in controller.children {
+				if let navigationController = findNavigationController(in: child) {
+					return navigationController
+				}
+			}
+			return nil
+		}
 	}
 }
 
 private final class InteractivePopGestureViewController: UIViewController {
+	weak var popGestureCoordinator: InteractivePopGestureEnabler.Coordinator?
+
 	override func viewDidAppear(_ animated: Bool) {
 		super.viewDidAppear(animated)
-		enableNavigationPop()
+		popGestureCoordinator?.enable(from: self)
 	}
 
 	override func viewDidLayoutSubviews() {
 		super.viewDidLayoutSubviews()
-		enableNavigationPop()
-	}
-
-	func enableNavigationPop() {
-		DispatchQueue.main.async { [weak self] in
-			guard let self, let navigationController = findNavigationController() else { return }
-			let canNavigateBack = navigationController.viewControllers.count > 1
-			navigationController.interactivePopGestureRecognizer?.delegate = nil
-			navigationController.interactivePopGestureRecognizer?.isEnabled = canNavigateBack
-			navigationController.interactiveContentPopGestureRecognizer?.delegate = nil
-			navigationController.interactiveContentPopGestureRecognizer?.isEnabled = canNavigateBack
-		}
-	}
-
-	private func findNavigationController() -> UINavigationController? {
-		if let navigationController {
-			return navigationController
-		}
-
-		var responder: UIResponder? = view
-		while let current = responder {
-			if let navigationController = current as? UINavigationController {
-				return navigationController
-			}
-			if let controller = current as? UIViewController,
-				let navigationController = controller.navigationController {
-				return navigationController
-			}
-			responder = current.next
-		}
-
-		return findNavigationController(in: view.window?.rootViewController)
-	}
-
-	private func findNavigationController(in controller: UIViewController?) -> UINavigationController? {
-		guard let controller else { return nil }
-		if let navigationController = controller as? UINavigationController {
-			return navigationController
-		}
-		if let navigationController = findNavigationController(in: controller.presentedViewController) {
-			return navigationController
-		}
-		for child in controller.children {
-			if let navigationController = findNavigationController(in: child) {
-				return navigationController
-			}
-		}
-		return nil
+		popGestureCoordinator?.enable(from: self)
 	}
 }
 
@@ -349,20 +404,10 @@ private struct ExpandableTranscript: View {
 }
 
 private struct EntryLocationMap: View {
-	@Environment(\.openURL) private var openURL
 	let location: JournalLocation
 
 	private var coordinate: CLLocationCoordinate2D {
 		CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
-	}
-
-	private var googleMapsURL: URL? {
-		var components = URLComponents(string: "https://www.google.com/maps/search/")
-		components?.queryItems = [
-			URLQueryItem(name: "api", value: "1"),
-			URLQueryItem(name: "query", value: "\(location.latitude),\(location.longitude)")
-		]
-		return components?.url
 	}
 
 	var body: some View {
@@ -371,11 +416,7 @@ private struct EntryLocationMap: View {
 				.font(.system(size: 17, weight: .semibold))
 				.foregroundStyle(AppStyle.accent)
 
-			Button {
-				if let googleMapsURL {
-					openURL(googleMapsURL)
-				}
-			} label: {
+			ZStack {
 				Map(
 					initialPosition: .region(MKCoordinateRegion(
 						center: coordinate,
@@ -395,10 +436,72 @@ private struct EntryLocationMap: View {
 						.stroke(AppStyle.cardBorder, lineWidth: 0.8)
 				}
 				.allowsHitTesting(false)
+
+				Button {
+					ExternalLinks.openGoogleMaps(location: location)
+				} label: {
+					RoundedRectangle(cornerRadius: 18, style: .continuous)
+						.fill(.clear)
+						.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Open \(location.displayName) in Google Maps")
 			}
-			.buttonStyle(.plain)
-			.accessibilityLabel("Open \(location.displayName) in Google Maps")
 		}
+	}
+}
+
+@MainActor
+private enum ExternalLinks {
+	static func openGoogleMaps(location: JournalLocation) {
+		let coordinate = "\(location.latitude),\(location.longitude)"
+		var components = URLComponents(string: "https://www.google.com/maps/search/")
+		components?.queryItems = [
+			URLQueryItem(name: "api", value: "1"),
+			URLQueryItem(name: "query", value: coordinate)
+		]
+		guard let webURL = components?.url else { return }
+
+		if let appURL = URL(string: "comgooglemaps://?q=\(coordinate)"),
+			UIApplication.shared.canOpenURL(appURL) {
+			UIApplication.shared.open(appURL) { didOpen in
+				guard !didOpen else { return }
+				Task { @MainActor in UIApplication.shared.open(webURL) }
+			}
+			return
+		}
+
+		UIApplication.shared.open(webURL)
+	}
+
+	static func openCalendar(
+		event: JournalCalendarEvent,
+		preference: PreferredCalendarApp
+	) {
+		switch preference {
+		case .google:
+			if let appURL = URL(string: "googlecalendar://"),
+				UIApplication.shared.canOpenURL(appURL) {
+				let webURL = googleCalendarWebURL(for: event.startDate)
+				UIApplication.shared.open(appURL) { didOpen in
+					guard !didOpen else { return }
+					Task { @MainActor in UIApplication.shared.open(webURL) }
+				}
+				return
+			}
+			UIApplication.shared.open(googleCalendarWebURL(for: event.startDate))
+		case .apple:
+			if let url = URL(string: "calshow:\(event.startDate.timeIntervalSinceReferenceDate)") {
+				UIApplication.shared.open(url)
+			}
+		}
+	}
+
+	private static func googleCalendarWebURL(for date: Date) -> URL {
+		let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+		return URL(
+			string: "https://calendar.google.com/calendar/u/0/r/day/\(components.year ?? 0)/\(components.month ?? 0)/\(components.day ?? 0)"
+		)!
 	}
 }
 

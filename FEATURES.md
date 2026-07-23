@@ -7,7 +7,7 @@
 - Uses a consistent dark interface, saturated blue accent, and Liquid Glass controls.
 - Stores notes and recordings locally for offline access and includes them in device backups.
 - Mirrors each completed recording to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files.
-- Stores the note's transcript, title, generated observations, location, and model details in its matching iCloud Drive JSON file.
+- Stores the note's transcript, title, generated observations, location, attached event, and model details in its matching iCloud Drive JSON file.
 - Backfills existing recordings to iCloud Drive and replaces temporary `Unknown` city filenames after a city resolves.
 - Treats local app data as the source of truth; edits made directly to iCloud Drive exports are not imported.
 - Deleting notes also removes their local audio and matching iCloud Drive exports.
@@ -16,6 +16,8 @@
 - Transcribes recordings on-device, shows partial results live, and records the transcription model.
 - Generates note titles and weekly reviews on-device, with a fallback when the system model is unavailable.
 - Captures the recording location when permitted and asks system location services for the city name.
+- Refreshes the included calendars' events silently when the app opens or returns to the foreground after Calendar sync is enabled.
+- Reads calendar data without creating, changing, or deleting events.
 
 # Home Screen
 
@@ -31,7 +33,13 @@
 
 # Record Screen
 
-- Starts recording immediately after microphone permission is granted.
+- Opens an event-attachment setup before recording when launched from the Home Screen.
+- Shows today's included calendar events in chronological order.
+- Disables event attachment and explains when Calendar sync is off or there are no events today.
+- Selects an ongoing timed event by default, otherwise the event closest to the current time.
+- Attached to event can be turned off to unselect, shrink, and dim the event list.
+- Tapping an event selects it for the new note.
+- Start recording begins the recording with the selected event attached.
 - Shows an error and returns home when recording cannot start.
 - Records continuously until finished or discarded, with no fixed time limit.
 - Shows a live waveform and elapsed recording time.
@@ -51,6 +59,8 @@
 - Shows the city on the left and a date such as `Thu Jul 23` on the right, adding the year only when it is not current.
 - Truncates long city names instead of crowding the date.
 - Uses `Voice memo` and omits the map when no recorded location is available.
+- Shows an attached event below the header with a calendar icon.
+- Tapping an attached event opens the preferred calendar app.
 - Shows the generated note title centered below the header.
 - Shows live transcription and title-generation status after recording finishes; processing continues after navigating away.
 - Provides play/pause, waveform progress, and remaining-time controls for the recording.
@@ -59,7 +69,7 @@
 - Collapses transcripts longer than four lines and only shows expand/collapse controls when content is hidden.
 - Shows the transcription model below the transcript, aligned right.
 - Shows the city with a map pin above a noninteractive Apple map.
-- Tapping the map opens the recorded coordinates in Google Maps.
+- Tapping anywhere on the map opens the recorded coordinates in the Google Maps app, with Google Maps web as a fallback.
 
 # Review Screen
 
@@ -75,6 +85,9 @@
 - Keep Screen Awake prevents automatic screen lock while recording.
 - Haptics enables recording-control feedback.
 - Show Transcripts controls transcript visibility on note screens.
+- Calendar sync requests iOS Full Access so it can read events, while the app itself remains read-only.
+- Calendar settings allow each available calendar to be included or excluded.
+- Calendar settings choose whether event links open in Google Calendar or Apple Calendar, with Google Calendar as the default.
 - Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export.
 
 # Lock Screen and Dynamic Island
