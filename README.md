@@ -14,11 +14,13 @@ An iPhone voice memo app that records, transcribes, summarizes, and organizes sp
 - Background recording with interruption and microphone-route recovery
 - Recording checkpoints and recovery after an interrupted app session
 - Live recording state on the Lock Screen and Dynamic Island
+- Location, date, and elapsed time in the recording Live Activity
 - One-tap Lock Screen recording widget
 - Speech transcription with live partial results
 - Foundation Models summaries with a deterministic fallback
 - Model provenance stored with transcripts and summaries
 - Timeline, tags, weekly summaries, and recorded locations
+- Swipe-to-delete notes with confirmation
 - Protected JSON and audio storage
 
 ## Storage

@@ -7,6 +7,8 @@ struct JournalView: View {
 	let onReview: () -> Void
 	let onSettings: () -> Void
 
+	@State private var entryPendingDeletion: JournalEntry?
+
 	private var visibleEntries: [JournalEntry] {
 		store.entries(onOrBefore: store.selectedDate)
 	}
@@ -20,25 +22,65 @@ struct JournalView: View {
 		ZStack(alignment: .bottomTrailing) {
 			Color.black.ignoresSafeArea()
 
-			ScrollView {
-				LazyVStack(alignment: .leading, spacing: 0) {
+			List {
+				VStack(alignment: .leading, spacing: 0) {
 					header
 					WeekStrip(selectedDate: $store.selectedDate, entries: store.entries)
 						.padding(.top, 16)
 						.padding(.bottom, 18)
+						.contentShape(Rectangle())
+						.simultaneousGesture(weekSwipeGesture)
+				}
+				.padding(.horizontal, 20)
+				.listRowInsets(EdgeInsets())
+				.listRowBackground(Color.black)
+				.listRowSeparator(.hidden)
 
-					if groupedEntries.isEmpty {
-						emptyState
-					} else {
-						ForEach(groupedEntries, id: \.date) { group in
-							entrySection(date: group.date, entries: group.entries)
+				if groupedEntries.isEmpty {
+					emptyState
+						.listRowInsets(EdgeInsets())
+						.listRowBackground(Color.black)
+						.listRowSeparator(.hidden)
+				} else {
+					ForEach(groupedEntries, id: \.date) { group in
+						if !Calendar.current.isDate(group.date, inSameDayAs: store.selectedDate) {
+							Text(group.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+								.font(.system(size: 13, weight: .medium))
+								.foregroundStyle(AppStyle.secondary)
+								.listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+								.listRowBackground(Color.black)
+								.listRowSeparator(.hidden)
+						}
+
+						ForEach(group.entries) { entry in
+							Button { onSelectEntry(entry) } label: {
+								EntryCard(entry: entry, processingPhase: store.processingPhase(for: entry.id))
+							}
+							.buttonStyle(.plain)
+							.listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 9, trailing: 20))
+							.listRowBackground(Color.black)
+							.listRowSeparator(.hidden)
+							.swipeActions(edge: .trailing, allowsFullSwipe: false) {
+								Button(role: .destructive) {
+									entryPendingDeletion = entry
+								} label: {
+									Label("Delete", systemImage: "trash.fill")
+								}
+							}
 						}
 					}
 				}
-				.padding(.horizontal, 20)
-				.padding(.bottom, 104)
+
+				Color.clear
+					.frame(height: 95)
+					.listRowInsets(EdgeInsets())
+					.listRowBackground(Color.black)
+					.listRowSeparator(.hidden)
 			}
+			.listStyle(.plain)
+			.scrollContentBackground(.hidden)
 			.scrollIndicators(.hidden)
+			.environment(\.defaultMinListRowHeight, 0)
 
 			Button(action: onNewRecording) {
 				Label("New", systemImage: "mic.fill")
@@ -54,7 +96,21 @@ struct JournalView: View {
 			.padding(.bottom, 18)
 			.accessibilityHint("Starts a voice memo")
 		}
-		.simultaneousGesture(weekSwipeGesture)
+		.alert(
+			"Delete voice memo?",
+			isPresented: Binding(
+				get: { entryPendingDeletion != nil },
+				set: { if !$0 { entryPendingDeletion = nil } }
+			),
+			presenting: entryPendingDeletion
+		) { entry in
+			Button("Delete", role: .destructive) {
+				store.deleteEntry(id: entry.id)
+			}
+			Button("Cancel", role: .cancel) {}
+		} message: { _ in
+			Text("This permanently deletes the note and its recording.")
+		}
 	}
 
 	private var header: some View {
@@ -105,25 +161,6 @@ struct JournalView: View {
 		}
 		.frame(maxWidth: .infinity)
 		.padding(.top, 112)
-	}
-
-	private func entrySection(date: Date, entries: [JournalEntry]) -> some View {
-		VStack(alignment: .leading, spacing: 9) {
-			if !Calendar.current.isDate(date, inSameDayAs: store.selectedDate) {
-				Text(date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-					.font(.system(size: 13, weight: .medium))
-					.foregroundStyle(AppStyle.secondary)
-					.padding(.top, 9)
-			}
-
-			ForEach(entries) { entry in
-				Button { onSelectEntry(entry) } label: {
-					EntryCard(entry: entry, processingPhase: store.processingPhase(for: entry.id))
-				}
-				.buttonStyle(.plain)
-			}
-		}
-		.padding(.bottom, 7)
 	}
 
 	private var weekSwipeGesture: some Gesture {

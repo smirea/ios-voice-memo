@@ -64,11 +64,14 @@ final class JournalStore {
 		entryProcessingPhases[entryID]
 	}
 
-	func beginRecordingLocationCapture() {
+	@discardableResult
+	func beginRecordingLocationCapture() -> Task<JournalLocation?, Never> {
 		recordingLocationTask?.cancel()
-		recordingLocationTask = Task {
+		let task = Task {
 			await EntryLocationCapture.capture()
 		}
+		recordingLocationTask = task
+		return task
 	}
 
 	func destinationForNewRecording() throws -> URL {
@@ -194,6 +197,19 @@ final class JournalStore {
 		entryProcessingPhases.removeValue(forKey: entryID)
 		entryProcessingTasks.removeValue(forKey: entryID)
 		entryProcessingTokens.removeValue(forKey: entryID)
+	}
+
+	func deleteEntry(id entryID: UUID) {
+		guard let entry = entries.first(where: { $0.id == entryID }) else { return }
+		entryProcessingTasks.removeValue(forKey: entryID)?.cancel()
+		entryProcessingTokens.removeValue(forKey: entryID)
+		entryProcessingPhases.removeValue(forKey: entryID)
+		entryLocationTasks.removeValue(forKey: entryID)?.cancel()
+		if let url = audioURL(for: entry) {
+			try? fileManager.removeItem(at: url)
+		}
+		entries.removeAll { $0.id == entryID }
+		persist()
 	}
 
 	func clearJournal() {

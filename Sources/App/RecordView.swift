@@ -97,11 +97,12 @@ struct RecordView: View {
 		}
 		.presentationBackground(.black)
 		.task { await beginRecording() }
+		.onDisappear { liveActivity.end() }
 		.onChange(of: recorder.duration) { _, duration in
 			checkpointIfNeeded(duration: duration)
 		}
 		.onChange(of: recorder.isPaused) { _, isPaused in
-			liveActivity.setPaused(isPaused)
+			liveActivity.setPaused(isPaused, elapsed: recorder.duration)
 		}
 		.alert("Recording unavailable", isPresented: Binding(
 			get: { errorMessage != nil },
@@ -135,7 +136,10 @@ struct RecordView: View {
 	}
 
 	private func beginRecording() async {
-		guard !isVisualDemo else { return }
+		guard !isVisualDemo else {
+			liveActivity.start(elapsed: shownDuration, locationName: "Chicago")
+			return
+		}
 		var destination: URL?
 		do {
 			let url = try store.destinationForNewRecording()
@@ -143,7 +147,12 @@ struct RecordView: View {
 			try await recorder.start(at: url)
 			activeRecordingURL = url
 			liveActivity.start()
-			store.beginRecordingLocationCapture()
+			let locationTask = store.beginRecordingLocationCapture()
+			Task { @MainActor in
+				let location = await locationTask.value
+				guard activeRecordingURL == url else { return }
+				liveActivity.setLocation(location?.displayName)
+			}
 			#if os(iOS)
 			if store.settings.keepScreenAwakeWhileRecording {
 				UIApplication.shared.isIdleTimerDisabled = true
