@@ -23,7 +23,6 @@ enum ReflectionEngine {
 		}
 		#endif
 
-		let topics = Array(sorted.flatMap(\.tags).uniqued().prefix(3))
 		let title = sorted.last?.headline ?? "No entries this week"
 		let body = sorted.isEmpty
 			? "There are no entries for this week yet."
@@ -31,7 +30,7 @@ enum ReflectionEngine {
 		let trend = sorted.enumerated().map { index, entry in
 			min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
 		}
-		return WeeklyReview(weekStart: weekStart, title: title, body: body, tags: topics, trend: trend)
+		return WeeklyReview(weekStart: weekStart, title: title, body: body, trend: trend)
 	}
 
 	private static func fallbackReflection(on transcript: String) -> ReflectionResult {
@@ -56,20 +55,8 @@ enum ReflectionEngine {
 		return ReflectionResult(
 			headline: headline,
 			observations: observations,
-			tags: extractTags(from: transcript),
 			modelName: "MyVoiceMemo local parser"
 		)
-	}
-
-	private static func extractTags(from text: String) -> [String] {
-		let stopWords: Set<String> = ["about", "after", "again", "also", "because", "been", "before", "could", "from", "have", "into", "just", "like", "really", "that", "their", "there", "they", "this", "today", "want", "were", "what", "when", "with", "would", "your", "youre"]
-		let words = text.lowercased()
-			.components(separatedBy: CharacterSet.letters.inverted)
-			.filter { $0.count > 3 && !stopWords.contains($0) }
-		let counts = Dictionary(grouping: words, by: { $0 }).mapValues(\.count)
-		return counts.sorted { left, right in
-			left.value == right.value ? left.key < right.key : left.value > right.value
-		}.prefix(3).map { $0.key.capitalized }
 	}
 
 	#if canImport(FoundationModels)
@@ -83,7 +70,6 @@ enum ReflectionEngine {
 		- observation
 		- observation
 		- observation
-		TAGS: short tag | short tag | short tag
 		""")
 		let response = try await session.respond(to: transcript)
 		return parseReflection(response.content, modelName: "SystemLanguageModel.default")
@@ -96,17 +82,15 @@ enum ReflectionEngine {
 		Write a weekly reflection for a private voice journal using only the speaker's entries. Notice repetition and change. Never give advice, diagnose, ask questions, or chat. Return plain text in exactly this shape:
 		TITLE: one observation under 12 words
 		BODY: one paragraph, 90 to 140 words
-		TAGS: short tag | short tag | short tag
 		""")
 		let response = try await session.respond(to: transcript)
 		let lines = response.content.components(separatedBy: .newlines)
 		let title = value(after: "TITLE:", in: lines) ?? entries.last!.headline
 		let body = value(after: "BODY:", in: lines) ?? transcript
-		let tags = value(after: "TAGS:", in: lines)?.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) } ?? []
 		let trend = entries.enumerated().map { index, entry in
 			min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
 		}
-		return WeeklyReview(weekStart: weekStart, title: title, body: body, tags: tags, trend: trend)
+		return WeeklyReview(weekStart: weekStart, title: title, body: body, trend: trend)
 	}
 	#endif
 
@@ -117,19 +101,11 @@ enum ReflectionEngine {
 			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 			.filter { $0.hasPrefix("-") }
 			.map { String($0.dropFirst()).trimmingCharacters(in: .whitespaces) }
-		let tags = value(after: "TAGS:", in: lines)?.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) } ?? []
-		return ReflectionResult(headline: title, observations: observations, tags: tags, modelName: modelName)
+		return ReflectionResult(headline: title, observations: observations, modelName: modelName)
 	}
 
 	private static func value(after prefix: String, in lines: [String]) -> String? {
 		lines.first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(prefix) }
 			.map { String($0.dropFirst($0.range(of: prefix)!.upperBound.utf16Offset(in: $0))).trimmingCharacters(in: .whitespaces) }
-	}
-}
-
-private extension Sequence where Element: Hashable {
-	func uniqued() -> [Element] {
-		var seen = Set<Element>()
-		return filter { seen.insert($0).inserted }
 	}
 }

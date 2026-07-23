@@ -17,7 +17,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var transcript: String
 	var headline: String
 	var observations: [String]
-	var tags: [String]
 	var audioFilename: String?
 	var location: JournalLocation?
 	var summaryModel: String?
@@ -30,7 +29,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		transcript: String,
 		headline: String,
 		observations: [String],
-		tags: [String],
 		audioFilename: String? = nil,
 		location: JournalLocation? = nil,
 		summaryModel: String? = nil,
@@ -42,7 +40,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.transcript = transcript
 		self.headline = headline
 		self.observations = observations
-		self.tags = tags
 		self.audioFilename = audioFilename
 		self.location = location
 		self.summaryModel = summaryModel
@@ -54,14 +51,12 @@ struct WeeklyReview: Sendable {
 	var weekStart: Date
 	var title: String
 	var body: String
-	var tags: [String]
 	var trend: [Double]
 }
 
 struct ReflectionResult: Sendable {
 	var headline: String
 	var observations: [String]
-	var tags: [String]
 	var modelName: String
 }
 
@@ -114,7 +109,6 @@ extension JournalEntry {
 					"You sounded relieved to recognize a familiar part of yourself again.",
 					"One good morning became evidence that something larger may be shifting."
 				],
-				tags: ["The Morning Run", "Coming Back To A Habit"],
 				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
@@ -125,7 +119,6 @@ extension JournalEntry {
 				transcript: "I need to plan the day before it gets away from me. The review is first, then lunch, then I can finish the draft.",
 				headline: "Planning the day",
 				observations: ["You were trying to give the day a shape before other people did."],
-				tags: [],
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
 			),
@@ -139,7 +132,6 @@ extension JournalEntry {
 					"Six p.m. arrives in your telling like weather, not like a series of yeses.",
 					"The deck got redone; the work that’s due Friday got talked about."
 				],
-				tags: ["The Figma Review", "Saying Yes Too Much", "Friday Deadline"],
 				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
@@ -150,7 +142,6 @@ extension JournalEntry {
 				transcript: "The apartment stopped being the moment it became a choice you were making together.",
 				headline: "The apartment stopped being the moment it became a choice you were making together.",
 				observations: ["You sounded less interested in the place than in what choosing it would mean."],
-				tags: ["The Apartment", "Choosing Together"],
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
 			)
@@ -163,7 +154,6 @@ extension WeeklyReview {
 		weekStart: Calendar.current.date(from: DateComponents(year: 2026, month: 6, day: 29))!,
 		title: "The week kept disappearing into other people’s asks",
 		body: "You started the week behind and mostly talked about time. Who took it, where it went. The Figma review on Tuesday and the deck revisions on Wednesday were the same story told twice: you said yes, the afternoon vanished, and the work you cared about moved to tomorrow. But Thursday morning sounded different. The run came back, and with it a sentence you haven’t said in a while. Feeling like a person again. The contrast is worth noticing: the days you resented were the ones structured around other people’s requests, and the day you liked started with twenty minutes that were only yours.",
-		tags: ["Time given away, rising through the week", "The run came back, and it mattered", "Friday’s deadline, still circling"],
 		trend: [0.55, 0.38, 0.31, 0.43, 0.68]
 	)
 }

@@ -42,8 +42,6 @@
 	</dict>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Create a transcript of your voice memo.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
