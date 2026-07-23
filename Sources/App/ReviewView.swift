@@ -30,10 +30,6 @@ struct ReviewView: View {
 							.foregroundStyle(Color.white.opacity(0.92))
 							.lineSpacing(7)
 							.fixedSize(horizontal: false, vertical: true)
-
-						FlowLayout(spacing: 6) {
-							ForEach(review.tags, id: \.self) { TagPill(text: $0) }
-						}
 					}
 					.padding(.horizontal, 24)
 					.padding(.top, 12)

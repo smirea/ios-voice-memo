@@ -55,7 +55,11 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
 		#if os(iOS)
 		let session = AVAudioSession.sharedInstance()
-		try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+		try session.setCategory(
+			.playAndRecord,
+			mode: .default,
+			options: [.defaultToSpeaker, .allowBluetoothHFP, .bluetoothHighQualityRecording]
+		)
 		try session.setActive(true)
 		#endif
 
@@ -105,16 +109,17 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
 	func finish() -> FinishedRecording? {
 		guard let recorder, let outputURL else { return nil }
-		let finalDuration = recorder.currentTime
+		let recorderDuration = recorder.currentTime
 		stopMetering()
 		isRecording = false
 		isPaused = false
 		recorder.stop()
+		let fileDuration = try? AVAudioFile(forReading: outputURL).duration
 		self.recorder = nil
 		self.outputURL = nil
 		statusMessage = nil
 		deactivateSession()
-		return FinishedRecording(url: outputURL, duration: finalDuration)
+		return FinishedRecording(url: outputURL, duration: fileDuration ?? recorderDuration)
 	}
 
 	func cancel() -> URL? {
@@ -276,59 +281,136 @@ enum LocalTranscriber {
 		url: URL,
 		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void = { _ in }
 	) async throws -> TranscriptionResult {
-		let authorized = await withCheckedContinuation { continuation in
-			SFSpeechRecognizer.requestAuthorization { status in
-				continuation.resume(returning: status == .authorized)
+		if SpeechTranscriber.isAvailable,
+			let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current)
+		{
+			let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+			do {
+				return try await transcribe(
+					url: url,
+					with: transcriber,
+					modelName: "Apple SpeechTranscriber · \(locale.identifier)",
+					onUpdate: onUpdate
+				)
+			} catch where !Task.isCancelled {}
+		}
+
+		if let locale = await DictationTranscriber.supportedLocale(equivalentTo: .current) {
+			let transcriber = DictationTranscriber(locale: locale, preset: .longDictation)
+			return try await transcribe(
+				url: url,
+				with: transcriber,
+				modelName: "Apple DictationTranscriber · \(locale.identifier)",
+				onUpdate: onUpdate
+			)
+		}
+
+		return TranscriptionResult(transcript: "", modelName: "Apple Speech")
+	}
+
+	private static func transcribe(
+		url: URL,
+		with transcriber: SpeechTranscriber,
+		modelName: String,
+		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void
+	) async throws -> TranscriptionResult {
+		if let installationRequest = try await AssetInventory.assetInstallationRequest(
+			supporting: [transcriber]
+		) {
+			try await installationRequest.downloadAndInstall()
+		}
+
+		let accumulator = TranscriptAccumulator(modelName: modelName, onUpdate: onUpdate)
+		let resultsTask = Task {
+			for try await result in transcriber.results {
+				await accumulator.append(result.text)
 			}
 		}
-		guard authorized, let recognizer = SFSpeechRecognizer(), recognizer.supportsOnDeviceRecognition else {
-			return TranscriptionResult(transcript: "", modelName: "Apple Speech")
+		return try await analyze(
+			url: url,
+			with: transcriber,
+			resultsTask: resultsTask,
+			accumulator: accumulator
+		)
+	}
+
+	private static func transcribe(
+		url: URL,
+		with transcriber: DictationTranscriber,
+		modelName: String,
+		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void
+	) async throws -> TranscriptionResult {
+		if let installationRequest = try await AssetInventory.assetInstallationRequest(
+			supporting: [transcriber]
+		) {
+			try await installationRequest.downloadAndInstall()
 		}
-		let modelName = "Apple Speech · \(recognizer.locale.identifier)"
 
-		let request = SFSpeechURLRecognitionRequest(url: url)
-		request.requiresOnDeviceRecognition = true
-		request.shouldReportPartialResults = true
-
-		return try await withCheckedThrowingContinuation { continuation in
-			let state = RecognitionState(continuation: continuation)
-			recognizer.recognitionTask(with: request) { result, error in
-				if let error {
-					state.fail(error)
-				} else if let result {
-					let value = TranscriptionResult(
-						transcript: result.bestTranscription.formattedString,
-						modelName: modelName
-					)
-					onUpdate(value)
-					if result.isFinal { state.finish(value) }
-				}
+		let accumulator = TranscriptAccumulator(modelName: modelName, onUpdate: onUpdate)
+		let resultsTask = Task {
+			for try await result in transcriber.results {
+				await accumulator.append(result.text)
 			}
+		}
+		return try await analyze(
+			url: url,
+			with: transcriber,
+			resultsTask: resultsTask,
+			accumulator: accumulator
+		)
+	}
+
+	private static func analyze(
+		url: URL,
+		with module: any SpeechModule,
+		resultsTask: Task<Void, any Error>,
+		accumulator: TranscriptAccumulator
+	) async throws -> TranscriptionResult {
+		let file = try AVAudioFile(forReading: url)
+		let analyzer = SpeechAnalyzer(modules: [module])
+
+		do {
+			if let lastSample = try await analyzer.analyzeSequence(from: file) {
+				try await analyzer.finalizeAndFinish(through: lastSample)
+			} else {
+				await analyzer.cancelAndFinishNow()
+			}
+			try await resultsTask.value
+			return await accumulator.result
+		} catch {
+			await analyzer.cancelAndFinishNow()
+			resultsTask.cancel()
+			_ = try? await resultsTask.value
+			let partialResult = await accumulator.result
+			guard partialResult.transcript.isEmpty else { return partialResult }
+			throw error
 		}
 	}
 }
 
-private final class RecognitionState: @unchecked Sendable {
-	private let lock = NSLock()
-	private var continuation: CheckedContinuation<TranscriptionResult, any Error>?
+private actor TranscriptAccumulator {
+	private var transcript = ""
+	private let modelName: String
+	private let onUpdate: @Sendable (TranscriptionResult) -> Void
 
-	init(continuation: CheckedContinuation<TranscriptionResult, any Error>) {
-		self.continuation = continuation
+	init(modelName: String, onUpdate: @escaping @Sendable (TranscriptionResult) -> Void) {
+		self.modelName = modelName
+		self.onUpdate = onUpdate
 	}
 
-	func finish(_ result: TranscriptionResult) {
-		lock.lock()
-		let continuation = self.continuation
-		self.continuation = nil
-		lock.unlock()
-		continuation?.resume(returning: result)
+	var result: TranscriptionResult {
+		TranscriptionResult(transcript: transcript, modelName: modelName)
 	}
 
-	func fail(_ error: any Error) {
-		lock.lock()
-		let continuation = self.continuation
-		self.continuation = nil
-		lock.unlock()
-		continuation?.resume(throwing: error)
+	func append(_ fragment: AttributedString) {
+		transcript += String(fragment.characters)
+		onUpdate(result)
+	}
+}
+
+private extension AVAudioFile {
+	var duration: TimeInterval {
+		guard processingFormat.sampleRate > 0 else { return 0 }
+		return Double(length) / processingFormat.sampleRate
 	}
 }

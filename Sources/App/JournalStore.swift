@@ -44,6 +44,7 @@ final class JournalStore {
 			prepareStorage()
 			entries = loadEntries()
 			recoverUnreferencedRecordings()
+			resumeInterruptedProcessing()
 			scheduleICloudDriveMirror()
 		}
 	}
@@ -114,7 +115,6 @@ final class JournalStore {
 			transcript: "",
 			headline: "Processing recording",
 			observations: [],
-			tags: [],
 			audioFilename: url.lastPathComponent
 		)
 
@@ -125,6 +125,12 @@ final class JournalStore {
 			clearPendingRecording(matching: url)
 		}
 
+		startProcessing(entryID: entryID, url: url)
+		attachRecordedLocation(to: entryID)
+		return entryID
+	}
+
+	private func startProcessing(entryID: UUID, url: URL) {
 		entryProcessingTasks[entryID]?.cancel()
 		let processingToken = UUID()
 		entryProcessingTokens[entryID] = processingToken
@@ -132,8 +138,15 @@ final class JournalStore {
 		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
 			await self?.processRecording(entryID: entryID, url: url, token: processingToken)
 		}
-		attachRecordedLocation(to: entryID)
-		return entryID
+	}
+
+	private func resumeInterruptedProcessing() {
+		for entry in entries where entry.headline == "Processing recording"
+			|| entry.headline == "Recovered recording"
+		{
+			guard let url = audioURL(for: entry), fileManager.fileExists(atPath: url.path) else { continue }
+			startProcessing(entryID: entry.id, url: url)
+		}
 	}
 
 	private func attachRecordedLocation(to entryID: UUID) {
@@ -181,7 +194,6 @@ final class JournalStore {
 		}
 		entries[index].headline = reflection.headline
 		entries[index].observations = reflection.observations
-		entries[index].tags = reflection.tags
 		entries[index].summaryModel = reflection.modelName
 		persist()
 		entryProcessingPhases[entryID] = .complete
@@ -341,10 +353,9 @@ final class JournalStore {
 			entries.append(JournalEntry(
 				createdAt: createdAt,
 				duration: duration,
-				transcript: "This audio was recovered before transcription completed.",
-				headline: "Recovered recording",
-				observations: ["MyVoiceMemo recovered this audio from an interrupted recording."],
-				tags: ["Recovered"],
+				transcript: "",
+				headline: "Processing recording",
+				observations: [],
 				audioFilename: url.lastPathComponent
 			))
 			didRecover = true

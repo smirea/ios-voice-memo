@@ -214,12 +214,6 @@ private struct EntryCard: View {
 					.foregroundStyle(AppStyle.accent)
 					.tint(AppStyle.accent)
 				}
-
-				if !entry.tags.isEmpty {
-					FlowLayout(spacing: 5) {
-						ForEach(entry.tags.prefix(3), id: \.self) { TagPill(text: $0) }
-					}
-				}
 			}
 		}
 	}

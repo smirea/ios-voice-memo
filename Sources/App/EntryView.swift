@@ -5,6 +5,7 @@ import UIKit
 struct EntryView: View {
 	@Bindable var store: JournalStore
 	let entry: JournalEntry
+	@State private var playback = AudioPlayback()
 
 	private var currentEntry: JournalEntry {
 		store.entry(id: entry.id) ?? entry
@@ -50,7 +51,16 @@ struct EntryView: View {
 						Text(currentEntry.headline)
 							.font(.system(size: 22, weight: .semibold))
 							.foregroundStyle(.white)
+							.multilineTextAlignment(.center)
 							.fixedSize(horizontal: false, vertical: true)
+							.frame(maxWidth: .infinity, alignment: .center)
+
+						if let audioURL = store.audioURL(for: currentEntry) {
+							EntryAudioPlayer(playback: playback, duration: currentEntry.duration)
+								.task(id: audioURL) {
+									await playback.load(url: audioURL, fallbackDuration: currentEntry.duration)
+								}
+						}
 
 						VStack(alignment: .leading, spacing: 13) {
 							ForEach(currentEntry.observations.filter { $0 != currentEntry.headline }, id: \.self) { observation in
@@ -64,12 +74,6 @@ struct EntryView: View {
 
 						if let model = currentEntry.summaryModel {
 							ModelAttribution(model: model)
-						}
-
-						if !currentEntry.tags.isEmpty {
-							FlowLayout(spacing: 7) {
-								ForEach(currentEntry.tags, id: \.self) { TagPill(text: $0) }
-							}
 						}
 					}
 
@@ -99,6 +103,102 @@ struct EntryView: View {
 		.toolbar(.visible, for: .navigationBar)
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
+		.onDisappear { playback.stop() }
+	}
+}
+
+private struct EntryAudioPlayer: View {
+	@Bindable var playback: AudioPlayback
+	let duration: TimeInterval
+
+	private var shownDuration: TimeInterval {
+		playback.duration > 0 ? playback.duration : duration
+	}
+
+	private var progress: Double {
+		guard shownDuration > 0 else { return 0 }
+		return playback.currentTime / shownDuration
+	}
+
+	var body: some View {
+		HStack(spacing: 12) {
+			Button(action: playback.togglePlayback) {
+				Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+					.font(.system(size: 13, weight: .semibold))
+					.foregroundStyle(.white)
+					.frame(width: 40, height: 40)
+					.background(AppStyle.accent, in: Circle())
+			}
+			.buttonStyle(.plain)
+			.disabled(!playback.isReady)
+			.accessibilityLabel(playback.isPlaying ? "Pause recording" : "Play recording")
+
+			ScrubbableWaveform(
+				levels: playback.levels,
+				progress: progress,
+				onSeek: playback.seek
+			)
+			.frame(height: 38)
+
+			Text(max(0, shownDuration - playback.currentTime).clockText)
+				.font(.system(size: 13, weight: .medium, design: .monospaced))
+				.monospacedDigit()
+				.foregroundStyle(AppStyle.secondary)
+				.frame(width: 42, alignment: .trailing)
+				.accessibilityLabel("Remaining time")
+		}
+		.padding(.vertical, 2)
+	}
+}
+
+private struct ScrubbableWaveform: View {
+	let levels: [Double]
+	let progress: Double
+	let onSeek: (Double) -> Void
+
+	var body: some View {
+		GeometryReader { geometry in
+			ZStack(alignment: .leading) {
+				bars(color: AppStyle.accent.opacity(0.34), width: geometry.size.width)
+				bars(color: AppStyle.accent, width: geometry.size.width)
+					.mask(alignment: .leading) {
+						Rectangle()
+							.frame(width: geometry.size.width * max(0, min(1, progress)))
+					}
+			}
+			.contentShape(Rectangle())
+			.gesture(
+				DragGesture(minimumDistance: 0)
+					.onChanged { value in
+						guard geometry.size.width > 0 else { return }
+						onSeek(value.location.x / geometry.size.width)
+					}
+			)
+		}
+		.accessibilityElement()
+		.accessibilityLabel("Playback position")
+		.accessibilityValue("\(Int(progress * 100)) percent")
+		.accessibilityAdjustableAction { direction in
+			switch direction {
+			case .increment: onSeek(min(1, progress + 0.05))
+			case .decrement: onSeek(max(0, progress - 0.05))
+			@unknown default: break
+			}
+		}
+	}
+
+	private func bars(color: Color, width: CGFloat) -> some View {
+		HStack(spacing: 2) {
+			ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+				Capsule()
+					.fill(color)
+					.frame(
+						width: max(1, (width - CGFloat(levels.count - 1) * 2) / CGFloat(levels.count)),
+						height: max(3, 34 * level)
+					)
+			}
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 	}
 }
 
