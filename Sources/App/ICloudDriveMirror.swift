@@ -14,7 +14,7 @@ actor ICloudDriveMirror {
 	func sync(
 		entries: [JournalEntry],
 		recordingsURL: URL,
-		deletedAudioFilenames: Set<String>,
+		deletedRecordingReferences: Set<String>,
 		revision: Int
 	) -> Set<String> {
 		let shouldExport = revision > latestRevision
@@ -27,8 +27,8 @@ actor ICloudDriveMirror {
 			return []
 		}
 
-		let completedDeletions = Set(deletedAudioFilenames.filter {
-			deleteExport(audioFilename: $0, from: documentsURL)
+		let completedDeletions = Set(deletedRecordingReferences.filter {
+			deleteExports(matching: $0, from: documentsURL)
 		})
 
 		guard shouldExport else {
@@ -55,15 +55,25 @@ actor ICloudDriveMirror {
 		let sourceAudioURL = recordingsURL.appendingPathComponent(audioFilename)
 		guard fileManager.fileExists(atPath: sourceAudioURL.path) else { return }
 
-		let exportedAudioURL = documentsURL.appendingPathComponent(audioFilename)
+		let exportedAudioFilename = "\(exportStem(for: entry)).\(sourceAudioURL.pathExtension.lowercased())"
+		let exportedAudioURL = documentsURL.appendingPathComponent(exportedAudioFilename)
 		guard mirrorAudio(from: sourceAudioURL, to: exportedAudioURL) else { return }
 
-		let metadataURL = documentsURL
-			.appendingPathComponent(audioFilename)
-			.deletingPathExtension()
-			.appendingPathExtension("json")
-		guard let metadata = try? Self.metadataEncoder.encode(entry) else { return }
-		try? metadata.write(to: metadataURL, options: .atomic)
+		let metadataURL = exportedAudioURL.deletingPathExtension().appendingPathExtension("json")
+		var exportedEntry = entry
+		exportedEntry.audioFilename = exportedAudioFilename
+		guard let metadata = try? Self.metadataEncoder.encode(exportedEntry) else { return }
+		do {
+			try metadata.write(to: metadataURL, options: .atomic)
+		} catch {
+			return
+		}
+
+		removeObsoleteExports(
+			for: entry,
+			keeping: [exportedAudioURL, metadataURL],
+			from: documentsURL
+		)
 	}
 
 	private func mirrorAudio(from sourceURL: URL, to destinationURL: URL) -> Bool {
@@ -93,13 +103,66 @@ actor ICloudDriveMirror {
 		}
 	}
 
-	private func deleteExport(audioFilename: String, from documentsURL: URL) -> Bool {
-		let audioURL = documentsURL.appendingPathComponent(audioFilename)
-		let metadataURL = audioURL.deletingPathExtension().appendingPathExtension("json")
-		try? fileManager.removeItem(at: audioURL)
-		try? fileManager.removeItem(at: metadataURL)
-		return !fileManager.fileExists(atPath: audioURL.path)
-			&& !fileManager.fileExists(atPath: metadataURL.path)
+	private func deleteExports(matching reference: String, from documentsURL: URL) -> Bool {
+		for url in exportURLs(matching: reference, from: documentsURL) {
+			try? fileManager.removeItem(at: url)
+		}
+		return exportURLs(matching: reference, from: documentsURL).isEmpty
+	}
+
+	private func removeObsoleteExports(for entry: JournalEntry, keeping keptURLs: Set<URL>, from documentsURL: URL) {
+		let references = [entry.id.uuidString, entry.audioFilename].compactMap { $0 }
+		let keptPaths = Set(keptURLs.map(\.standardizedFileURL.path))
+		for reference in references {
+			for url in exportURLs(matching: reference, from: documentsURL)
+			where !keptPaths.contains(url.standardizedFileURL.path) {
+				try? fileManager.removeItem(at: url)
+			}
+		}
+	}
+
+	private func exportURLs(matching reference: String, from documentsURL: URL) -> [URL] {
+		let referenceStem = URL(fileURLWithPath: reference).deletingPathExtension().lastPathComponent
+		let suffix = "__\(referenceStem)"
+		let urls = (try? fileManager.contentsOfDirectory(
+			at: documentsURL,
+			includingPropertiesForKeys: nil,
+			options: [.skipsHiddenFiles]
+		)) ?? []
+		return urls.filter { url in
+			guard ["m4a", "json"].contains(url.pathExtension.lowercased()) else { return false }
+			let stem = url.deletingPathExtension().lastPathComponent
+			return stem == referenceStem || stem.hasSuffix(suffix)
+		}
+	}
+
+	private func exportStem(for entry: JournalEntry) -> String {
+		let components = Calendar.current.dateComponents([.year, .month, .day], from: entry.createdAt)
+		let date = String(
+			format: "%04d-%02d-%02d",
+			components.year ?? 0,
+			components.month ?? 0,
+			components.day ?? 0
+		)
+		return "\(date)_\(cityComponent(for: entry))__\(entry.id.uuidString)"
+	}
+
+	private func cityComponent(for entry: JournalEntry) -> String {
+		let city = entry.location?.city?.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard let city, !city.isEmpty else { return "Unknown" }
+		let invalidCharacters = CharacterSet(charactersIn: "/\\:?*\"<>|")
+			.union(.controlCharacters)
+			.union(.newlines)
+		let sanitized = city.unicodeScalars.map {
+			invalidCharacters.contains($0) ? "-" : String($0)
+		}.joined()
+		let collapsed = sanitized.replacingOccurrences(
+			of: "-+",
+			with: "-",
+			options: .regularExpression
+		)
+		let trimmed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: " .-"))
+		return trimmed.isEmpty ? "Unknown" : String(trimmed.prefix(48))
 	}
 
 	private func fileSize(at url: URL) -> Int64 {

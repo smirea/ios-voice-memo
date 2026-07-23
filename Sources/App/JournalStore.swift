@@ -18,7 +18,7 @@ final class JournalStore {
 	private let pendingRecordingURL: URL
 	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
 	@ObservationIgnored private var iCloudRevision = 0
-	@ObservationIgnored private var pendingICloudDeletionFilenames = Set<String>()
+	@ObservationIgnored private var pendingICloudDeletionReferences = Set<String>()
 	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var entryProcessingTokens: [UUID: UUID] = [:]
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
@@ -31,7 +31,7 @@ final class JournalStore {
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		entriesURL = rootURL.appendingPathComponent("entries.json")
 		pendingRecordingURL = rootURL.appendingPathComponent("pending-recording.json")
-		pendingICloudDeletionFilenames = Set(
+		pendingICloudDeletionReferences = Set(
 			UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []
 		)
 
@@ -275,7 +275,12 @@ final class JournalStore {
 			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: entriesURL.path)
 			#endif
 			try includeInBackup(entriesURL)
-			pendingICloudDeletionFilenames.formUnion(deletedEntries.compactMap(\.audioFilename))
+			for entry in deletedEntries {
+				pendingICloudDeletionReferences.insert(entry.id.uuidString)
+				if let audioFilename = entry.audioFilename {
+					pendingICloudDeletionReferences.insert(audioFilename)
+				}
+			}
 			savePendingICloudDeletions()
 			scheduleICloudDriveMirror()
 			return true
@@ -292,25 +297,25 @@ final class JournalStore {
 		let entries = entries
 		let recordingsURL = recordingsURL
 		let mirror = iCloudDriveMirror
-		let deletedAudioFilenames = pendingICloudDeletionFilenames
+		let deletedRecordingReferences = pendingICloudDeletionReferences
 		Task {
 			let completedDeletions = await mirror.sync(
 				entries: entries,
 				recordingsURL: recordingsURL,
-				deletedAudioFilenames: deletedAudioFilenames,
+				deletedRecordingReferences: deletedRecordingReferences,
 				revision: revision
 			)
-			pendingICloudDeletionFilenames.subtract(completedDeletions)
+			pendingICloudDeletionReferences.subtract(completedDeletions)
 			savePendingICloudDeletions()
 		}
 	}
 
 	private func savePendingICloudDeletions() {
-		if pendingICloudDeletionFilenames.isEmpty {
+		if pendingICloudDeletionReferences.isEmpty {
 			UserDefaults.standard.removeObject(forKey: Self.iCloudDeletionKey)
 		} else {
 			UserDefaults.standard.set(
-				pendingICloudDeletionFilenames.sorted(),
+				pendingICloudDeletionReferences.sorted(),
 				forKey: Self.iCloudDeletionKey
 			)
 		}
