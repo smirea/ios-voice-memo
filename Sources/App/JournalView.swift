@@ -61,11 +61,12 @@ struct JournalView: View {
 							.listRowBackground(Color.black)
 							.listRowSeparator(.hidden)
 							.swipeActions(edge: .trailing, allowsFullSwipe: false) {
-								Button(role: .destructive) {
+								Button {
 									entryPendingDeletion = entry
 								} label: {
 									Label("Delete", systemImage: "trash.fill")
 								}
+								.tint(.red)
 							}
 						}
 					}
