@@ -27,52 +27,46 @@ struct EntryView: View {
 
 			ScrollView {
 				VStack(alignment: .leading, spacing: 32) {
-					HStack(alignment: .firstTextBaseline, spacing: 16) {
-						Text(currentEntry.location?.displayName ?? "Voice memo")
-							.font(.system(size: 25, weight: .semibold))
-							.foregroundStyle(.white)
-							.lineLimit(1)
-							.truncationMode(.tail)
-						Spacer(minLength: 0)
-						Text(headerDate)
-							.font(.system(size: 25, weight: .semibold))
-							.foregroundStyle(.white)
-							.lineLimit(1)
-							.fixedSize(horizontal: true, vertical: false)
-							.layoutPriority(1)
+					VStack(alignment: .leading, spacing: 6) {
+						HStack(alignment: .firstTextBaseline, spacing: 16) {
+							Text(currentEntry.location?.displayName ?? "Voice memo")
+								.font(.system(size: 25, weight: .semibold))
+								.foregroundStyle(.white)
+								.lineLimit(1)
+								.truncationMode(.tail)
+							Spacer(minLength: 0)
+							Text(headerDate)
+								.font(.system(size: 25, weight: .semibold))
+								.foregroundStyle(.white)
+								.lineLimit(1)
+								.fixedSize(horizontal: true, vertical: false)
+								.layoutPriority(1)
+						}
+
+						if let calendarEvent = currentEntry.calendarEvent {
+							Button {
+								ExternalLinks.openCalendar(
+									event: calendarEvent,
+									preference: store.settings.preferredCalendarApp
+								)
+							} label: {
+								HStack(spacing: 10) {
+									Image(systemName: "calendar")
+										.foregroundStyle(AppStyle.accent)
+									Text(calendarEvent.title)
+										.font(.system(size: 16, weight: .semibold))
+										.foregroundStyle(.white)
+										.lineLimit(1)
+									Spacer(minLength: 0)
+								}
+								.frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+								.contentShape(Rectangle())
+							}
+							.buttonStyle(.plain)
+							.accessibilityHint("Opens in \(store.settings.preferredCalendarApp.title)")
+						}
 					}
 					.padding(.top, 10)
-
-					if let calendarEvent = currentEntry.calendarEvent {
-						Button {
-							ExternalLinks.openCalendar(
-								event: calendarEvent,
-								preference: store.settings.preferredCalendarApp
-							)
-						} label: {
-							HStack(spacing: 10) {
-								Image(systemName: "calendar")
-									.foregroundStyle(AppStyle.accent)
-								Text(calendarEvent.title)
-									.font(.system(size: 16, weight: .semibold))
-									.foregroundStyle(.white)
-									.lineLimit(1)
-								Spacer(minLength: 0)
-								Image(systemName: "arrow.up.forward")
-									.font(.system(size: 12, weight: .semibold))
-									.foregroundStyle(AppStyle.secondary)
-							}
-							.padding(.horizontal, 14)
-							.frame(height: 48)
-							.background(AppStyle.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-							.overlay {
-								RoundedRectangle(cornerRadius: 14, style: .continuous)
-									.stroke(AppStyle.cardBorder, lineWidth: 0.8)
-							}
-						}
-						.buttonStyle(.plain)
-						.accessibilityHint("Opens in \(store.settings.preferredCalendarApp.title)")
-					}
 
 					if let phase = store.processingPhase(for: entry.id) {
 						EntryProcessingStatusView(phase: phase)

@@ -5,6 +5,7 @@
 - Supports only the latest iOS and uses native interactions and components where possible.
 - Uses iOS's native horizontal back swipe without dragging screens vertically.
 - Uses a consistent dark interface, saturated blue accent, and Liquid Glass controls.
+- Never places content in decorative background boxes; uses spacing and typography for hierarchy.
 - Stores notes and recordings locally for offline access and includes them in device backups.
 - Mirrors each completed recording to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files.
 - Stores the note's transcript, title, generated observations, location, attached event, and model details in its matching iCloud Drive JSON file.
@@ -61,7 +62,7 @@
 - Shows the city on the left and a date such as `Thu Jul 23` on the right, adding the year only when it is not current.
 - Truncates long city names instead of crowding the date.
 - Uses `Voice memo` and omits the map when no recorded location is available.
-- Shows an attached event below the header with a calendar icon.
+- Shows an attached event as a plain row directly below the header with a calendar icon.
 - Tapping an attached event opens the preferred calendar app.
 - Shows the generated note title centered below the header.
 - Shows live transcription and title-generation status after recording finishes; processing continues after navigating away.
