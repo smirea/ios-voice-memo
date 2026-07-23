@@ -7,11 +7,12 @@
 - Uses a consistent dark interface, saturated blue accent, and Liquid Glass controls.
 - Stores notes and recordings locally for offline access and includes them in device backups.
 - Mirrors each completed recording to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files.
-- Stores the note's transcript, title, tags, location, and model details in its matching iCloud Drive JSON file.
+- Stores the note's transcript, title, generated observations, location, and model details in its matching iCloud Drive JSON file.
 - Backfills existing recordings to iCloud Drive and replaces temporary `Unknown` city filenames after a city resolves.
 - Treats local app data as the source of truth; edits made directly to iCloud Drive exports are not imported.
 - Deleting notes also removes their local audio and matching iCloud Drive exports.
 - Recovers nonempty audio from an interrupted recording when the app next launches.
+- Resumes interrupted transcription and title generation when the app next launches.
 - Transcribes recordings on-device, shows partial results live, and records the transcription model.
 - Generates note titles and weekly reviews on-device, with a fallback when the system model is unavailable.
 - Captures the recording location when permitted and asks system location services for the city name.
@@ -64,8 +65,8 @@
 
 - Generates a review for the current week when opened.
 - Shows a loading state while the weekly review is generated.
-- Shows the week, generated title, trend, reflection, and topic tags.
-- Uses the standard back button and edge swipe to return home.
+- Shows the week, generated title, trend, and reflection.
+- Uses the standard back button and native back swipe to return home.
 
 # Settings Screen
 
