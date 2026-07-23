@@ -17,10 +17,11 @@ An iPhone-only, local-first voice journal inspired by [Slate](https://apps.apple
 - On-device speech transcription with no network fallback
 - On-device Foundation Models reflections with a deterministic local fallback
 - Private journal timeline, transcript, observations, tags, added context, and copy action
+- Per-entry coordinates, Apple place-name lookup, and an embedded Apple Maps detail
 - Weekly summaries generated from that week's local entries
 - Local JSON and audio storage protected by iOS file protection
 - Automatic inclusion in iCloud device backups when iCloud Backup is enabled for the iPhone
-- No backend, account, analytics SDK, or app-initiated network requests
+- No backend, account, analytics SDK, or third-party network service; MapKit may use Apple services for place names and map imagery
 
 ## Requirements
 

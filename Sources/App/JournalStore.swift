@@ -20,6 +20,8 @@ final class JournalStore {
 	private let pendingRecordingURL: URL
 	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var entryProcessingTokens: [UUID: UUID] = [:]
+	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
+	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
 
 	init() {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
@@ -64,6 +66,13 @@ final class JournalStore {
 		entryProcessingPhases[entryID]
 	}
 
+	func beginRecordingLocationCapture() {
+		recordingLocationTask?.cancel()
+		recordingLocationTask = Task {
+			await EntryLocationCapture.capture()
+		}
+	}
+
 	func destinationForNewRecording(replacing replacementID: UUID? = nil) throws -> URL {
 		prepareStorage()
 		let url = recordingsURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
@@ -83,6 +92,8 @@ final class JournalStore {
 	}
 
 	func cancelRecording(at url: URL) {
+		recordingLocationTask?.cancel()
+		recordingLocationTask = nil
 		clearPendingRecording(matching: url)
 	}
 
@@ -92,6 +103,7 @@ final class JournalStore {
 		let entryID = existingIndex.map { entries[$0].id } ?? UUID()
 		let createdAt = existingIndex.map { entries[$0].createdAt } ?? .now
 		let previousAudioURL = existingIndex.flatMap { audioURL(for: entries[$0]) }
+		let previousLocation = existingIndex.flatMap { entries[$0].location }
 		let savedEntry = JournalEntry(
 			id: entryID,
 			createdAt: createdAt,
@@ -100,7 +112,8 @@ final class JournalStore {
 			headline: "Listening back…",
 			observations: ["Your recording is safe on this iPhone. The private reflection will appear here when it’s ready."],
 			tags: [],
-			audioFilename: url.lastPathComponent
+			audioFilename: url.lastPathComponent,
+			location: previousLocation
 		)
 
 		if let existingIndex {
@@ -124,7 +137,26 @@ final class JournalStore {
 		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
 			await self?.processRecording(entryID: entryID, url: url, token: processingToken)
 		}
+		attachRecordedLocation(to: entryID)
 		return entryID
+	}
+
+	private func attachRecordedLocation(to entryID: UUID) {
+		let locationTask = recordingLocationTask ?? Task {
+			await EntryLocationCapture.capture()
+		}
+		recordingLocationTask = nil
+		entryLocationTasks[entryID]?.cancel()
+		entryLocationTasks[entryID] = Task { @MainActor [weak self] in
+			let location = await locationTask.value
+			guard !Task.isCancelled, let self else { return }
+			defer { self.entryLocationTasks.removeValue(forKey: entryID) }
+			guard let location,
+				let index = self.entries.firstIndex(where: { $0.id == entryID })
+			else { return }
+			self.entries[index].location = location
+			self.persist()
+		}
 	}
 
 	private func processRecording(entryID: UUID, url: URL, token: UUID) async {
@@ -177,6 +209,8 @@ final class JournalStore {
 
 	func delete(_ entry: JournalEntry) {
 		entryProcessingTasks[entry.id]?.cancel()
+		entryLocationTasks[entry.id]?.cancel()
+		entryLocationTasks.removeValue(forKey: entry.id)
 		finishProcessing(entry.id)
 		if let audioURL = audioURL(for: entry) {
 			try? fileManager.removeItem(at: audioURL)
@@ -200,10 +234,14 @@ final class JournalStore {
 	}
 
 	func clearJournal() {
+		recordingLocationTask?.cancel()
+		recordingLocationTask = nil
 		for task in entryProcessingTasks.values { task.cancel() }
+		for task in entryLocationTasks.values { task.cancel() }
 		entryProcessingTasks.removeAll()
 		entryProcessingTokens.removeAll()
 		entryProcessingPhases.removeAll()
+		entryLocationTasks.removeAll()
 		for entry in entries where entry.audioFilename != nil {
 			if let url = audioURL(for: entry) {
 				try? fileManager.removeItem(at: url)

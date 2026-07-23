@@ -149,6 +149,7 @@ struct RecordView: View {
 			try await recorder.start(at: url)
 			activeRecordingURL = url
 			liveActivity.start()
+			store.beginRecordingLocationCapture()
 			#if os(iOS)
 			if store.settings.keepScreenAwakeWhileRecording {
 				UIApplication.shared.isIdleTimerDisabled = true

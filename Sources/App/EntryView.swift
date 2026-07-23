@@ -1,3 +1,4 @@
+import MapKit
 import SwiftUI
 import UIKit
 
@@ -32,6 +33,13 @@ struct EntryView: View {
 					}
 					.padding(.top, 8)
 					.padding(.bottom, 8)
+
+					if let location = currentEntry.location {
+						Label(location.displayName, systemImage: "mappin.and.ellipse")
+							.font(.system(size: 11, weight: .medium))
+							.foregroundStyle(SlateStyle.accent)
+							.transition(.move(edge: .top).combined(with: .opacity))
+					}
 
 					if let phase = store.processingPhase(for: entry.id) {
 						EntryProcessingStatusView(phase: phase)
@@ -95,6 +103,11 @@ struct EntryView: View {
 							.contentTransition(.opacity)
 							.textSelection(.enabled)
 					}
+
+					if let location = currentEntry.location {
+						EntryLocationMap(location: location)
+							.transition(.move(edge: .bottom).combined(with: .opacity))
+					}
 				}
 				.padding(.horizontal, 30)
 				.padding(.bottom, 36)
@@ -105,6 +118,7 @@ struct EntryView: View {
 		.presentationBackground(.black)
 		.swipeBack(action: onClose)
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
+		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
 		.sheet(isPresented: $showsContext) {
 			ContextSheet(store: store, entryID: entry.id)
 		}
@@ -160,6 +174,43 @@ struct EntryView: View {
 	private func copyEntry() {
 		let text = ([currentEntry.headline] + currentEntry.observations + [currentEntry.transcript]).joined(separator: "\n\n")
 		UIPasteboard.general.string = text
+	}
+}
+
+private struct EntryLocationMap: View {
+	let location: JournalLocation
+
+	private var coordinate: CLLocationCoordinate2D {
+		CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			Text("Location")
+				.font(.system(size: 9, weight: .medium))
+				.textCase(.uppercase)
+				.tracking(0.8)
+				.foregroundStyle(SlateStyle.tertiary)
+
+			Map(
+				initialPosition: .region(MKCoordinateRegion(
+					center: coordinate,
+					latitudinalMeters: 2_400,
+					longitudinalMeters: 2_400
+				)),
+				interactionModes: [.pan, .zoom]
+			) {
+				Marker(location.displayName, coordinate: coordinate)
+					.tint(SlateStyle.accent)
+			}
+			.mapStyle(.standard(elevation: .flat))
+			.frame(height: 220)
+			.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+			.overlay {
+				RoundedRectangle(cornerRadius: 18, style: .continuous)
+					.stroke(Color.white.opacity(0.10), lineWidth: 0.7)
+			}
+		}
 	}
 }
 

@@ -26,6 +26,8 @@
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Your voice stays on this device and becomes a private journal entry.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Your location is saved with this entry so you can remember where it was recorded.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSpeechRecognitionUsageDescription</key>

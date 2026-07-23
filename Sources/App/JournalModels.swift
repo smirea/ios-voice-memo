@@ -1,5 +1,15 @@
 import Foundation
 
+struct JournalLocation: Codable, Hashable, Sendable {
+	var latitude: Double
+	var longitude: Double
+	var city: String?
+
+	var displayName: String {
+		city ?? "Recorded location"
+	}
+}
+
 struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	let id: UUID
 	var createdAt: Date
@@ -10,6 +20,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var tags: [String]
 	var audioFilename: String?
 	var context: String?
+	var location: JournalLocation?
 
 	init(
 		id: UUID = UUID(),
@@ -20,7 +31,8 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		observations: [String],
 		tags: [String],
 		audioFilename: String? = nil,
-		context: String? = nil
+		context: String? = nil,
+		location: JournalLocation? = nil
 	) {
 		self.id = id
 		self.createdAt = createdAt
@@ -31,6 +43,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.tags = tags
 		self.audioFilename = audioFilename
 		self.context = context
+		self.location = location
 	}
 }
 
@@ -105,7 +118,8 @@ extension JournalEntry {
 					"You sounded relieved to recognize a familiar part of yourself again.",
 					"One good morning became evidence that something larger may be shifting."
 				],
-				tags: ["The Morning Run", "Coming Back To A Habit"]
+				tags: ["The Morning Run", "Coming Back To A Habit"],
+				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago")
 			),
 			JournalEntry(
 				createdAt: date(2026, 7, 12, 7, 21),
@@ -125,7 +139,8 @@ extension JournalEntry {
 					"Six p.m. arrives in your telling like weather, not like a series of yeses.",
 					"The deck got redone; the work that’s due Friday got talked about."
 				],
-				tags: ["The Figma Review", "Saying Yes Too Much", "Friday Deadline"]
+				tags: ["The Figma Review", "Saying Yes Too Much", "Friday Deadline"],
+				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago")
 			),
 			JournalEntry(
 				createdAt: date(2026, 7, 10, 21, 42),

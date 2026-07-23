@@ -26,6 +26,7 @@
 		A10000000000000000000011 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* RecordingActivityAttributes.swift */; };
 		A10000000000000000000012 /* VoiceMemoWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* VoiceMemoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000013 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* PrivacyInfo.xcprivacy */; };
+		A10000000000000000000014 /* EntryLocationCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* EntryLocationCapture.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +73,7 @@
 		B10000000000000000000011 /* VoiceMemoWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMemoWidgets.swift; sourceTree = "<group>"; };
 		B10000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10000000000000000000013 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		B10000000000000000000014 /* EntryLocationCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntryLocationCapture.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* MyVoiceMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyVoiceMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C10000000000000000000002 /* VoiceMemoWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VoiceMemoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -121,6 +123,7 @@
 				B1000000000000000000000B /* ReviewView.swift */,
 				B1000000000000000000000C /* SettingsView.swift */,
 				B1000000000000000000000F /* RecordingActivityManager.swift */,
+				B10000000000000000000014 /* EntryLocationCapture.swift */,
 			);
 			name = Sources;
 			path = Sources/App;
@@ -267,6 +270,7 @@
 				A1000000000000000000000B /* ReviewView.swift in Sources */,
 				A1000000000000000000000C /* SettingsView.swift in Sources */,
 				A1000000000000000000000E /* RecordingActivityManager.swift in Sources */,
+				A10000000000000000000014 /* EntryLocationCapture.swift in Sources */,
 				A1000000000000000000000F /* RecordingActivityAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
