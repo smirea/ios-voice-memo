@@ -6,6 +6,10 @@ This is a simple iOS app that's only meant to support the latest iOS and should 
 - Keep `FEATURES.md` updated whenever user-visible features, interactions, or specific behaviors change.
 - Treat documented behavior as a regression checklist: do not accidentally remove, lose, or break it while changing something else.
 
+# Visual review
+
+- After completing any visual app change, capture the finished UI in the iOS Simulator and include screenshots of the changed screens or states in the final chat response.
+
 # Stack
 
 - Language: Swift
