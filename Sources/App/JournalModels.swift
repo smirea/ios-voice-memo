@@ -21,6 +21,8 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var audioFilename: String?
 	var context: String?
 	var location: JournalLocation?
+	var summaryModel: String?
+	var transcriptModel: String?
 
 	init(
 		id: UUID = UUID(),
@@ -32,7 +34,9 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		tags: [String],
 		audioFilename: String? = nil,
 		context: String? = nil,
-		location: JournalLocation? = nil
+		location: JournalLocation? = nil,
+		summaryModel: String? = nil,
+		transcriptModel: String? = nil
 	) {
 		self.id = id
 		self.createdAt = createdAt
@@ -44,6 +48,8 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.audioFilename = audioFilename
 		self.context = context
 		self.location = location
+		self.summaryModel = summaryModel
+		self.transcriptModel = transcriptModel
 	}
 }
 
@@ -59,6 +65,7 @@ struct ReflectionResult: Sendable {
 	var headline: String
 	var observations: [String]
 	var tags: [String]
+	var modelName: String
 }
 
 enum EntryProcessingPhase: Equatable, Sendable {
@@ -68,24 +75,16 @@ enum EntryProcessingPhase: Equatable, Sendable {
 
 	var title: String {
 		switch self {
-		case .transcribing: "Making your transcript"
-		case .reflecting: "Finding the thread"
-		case .complete: "Entry ready"
-		}
-	}
-
-	var detail: String {
-		switch self {
-		case .transcribing: "Words will appear here as they’re recognized on this iPhone."
-		case .reflecting: "Your transcript is ready. The private reflection is taking shape."
-		case .complete: "Transcript and reflection are saved."
+		case .transcribing: "Transcribing"
+		case .reflecting: "Summarizing"
+		case .complete: "Ready"
 		}
 	}
 
 	var compactTitle: String {
 		switch self {
 		case .transcribing: "Transcribing"
-		case .reflecting: "Reflecting"
+		case .reflecting: "Summarizing"
 		case .complete: "Ready"
 		}
 	}
@@ -119,7 +118,9 @@ extension JournalEntry {
 					"One good morning became evidence that something larger may be shifting."
 				],
 				tags: ["The Morning Run", "Coming Back To A Habit"],
-				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago")
+				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
+				summaryModel: "SystemLanguageModel.default",
+				transcriptModel: "Apple Speech · en-US"
 			),
 			JournalEntry(
 				createdAt: date(2026, 7, 12, 7, 21),
@@ -127,7 +128,9 @@ extension JournalEntry {
 				transcript: "I need to plan the day before it gets away from me. The review is first, then lunch, then I can finish the draft.",
 				headline: "Planning the day",
 				observations: ["You were trying to give the day a shape before other people did."],
-				tags: []
+				tags: [],
+				summaryModel: "SystemLanguageModel.default",
+				transcriptModel: "Apple Speech · en-US"
 			),
 			JournalEntry(
 				createdAt: date(2026, 7, 11, 22, 25),
@@ -140,7 +143,9 @@ extension JournalEntry {
 					"The deck got redone; the work that’s due Friday got talked about."
 				],
 				tags: ["The Figma Review", "Saying Yes Too Much", "Friday Deadline"],
-				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago")
+				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
+				summaryModel: "SystemLanguageModel.default",
+				transcriptModel: "Apple Speech · en-US"
 			),
 			JournalEntry(
 				createdAt: date(2026, 7, 10, 21, 42),
@@ -148,7 +153,9 @@ extension JournalEntry {
 				transcript: "The apartment stopped being the moment it became a choice you were making together.",
 				headline: "The apartment stopped being the moment it became a choice you were making together.",
 				observations: ["You sounded less interested in the place than in what choosing it would mean."],
-				tags: ["The Apartment", "Choosing Together"]
+				tags: ["The Apartment", "Choosing Together"],
+				summaryModel: "SystemLanguageModel.default",
+				transcriptModel: "Apple Speech · en-US"
 			)
 		]
 	}()

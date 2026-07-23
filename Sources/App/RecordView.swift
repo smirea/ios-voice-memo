@@ -5,7 +5,6 @@ import UIKit
 
 struct RecordView: View {
 	@Bindable var store: JournalStore
-	let replacementID: UUID?
 	let onClose: () -> Void
 	let onFinished: (UUID) -> Void
 
@@ -54,8 +53,8 @@ struct RecordView: View {
 					recordingLimit += 30
 				} label: {
 					Text("Add 30 seconds")
-						.font(.system(size: 10))
-						.foregroundStyle(SlateStyle.accent.opacity(0.72))
+						.font(.system(size: 14, weight: .semibold))
+						.foregroundStyle(AppStyle.accent)
 						.padding(.vertical, 16)
 				}
 				.buttonStyle(.plain)
@@ -63,8 +62,8 @@ struct RecordView: View {
 
 				if let statusMessage = recorder.statusMessage {
 					Text(statusMessage)
-						.font(.system(size: 11))
-						.foregroundStyle(Color.white.opacity(0.48))
+						.font(.system(size: 14, weight: .medium))
+						.foregroundStyle(AppStyle.secondary)
 						.multilineTextAlignment(.center)
 						.padding(.horizontal, 54)
 						.offset(y: -34)
@@ -76,7 +75,7 @@ struct RecordView: View {
 					Button(action: togglePause) {
 						Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
 							.font(.system(size: 13, weight: .semibold))
-							.foregroundStyle(SlateStyle.accent)
+							.foregroundStyle(AppStyle.accent)
 							.frame(width: 48, height: 48)
 							.glassEffect(.regular.interactive(), in: Circle())
 					}
@@ -89,8 +88,8 @@ struct RecordView: View {
 							.font(.system(size: 20, weight: .medium))
 							.foregroundStyle(.white)
 							.frame(width: 62, height: 62)
-							.background(SlateStyle.accent, in: Circle())
-							.shadow(color: SlateStyle.accent.opacity(0.32), radius: 18, y: 7)
+							.background(AppStyle.accent, in: Circle())
+							.shadow(color: AppStyle.accent.opacity(0.38), radius: 18, y: 7)
 					}
 					.buttonStyle(.plain)
 					.disabled(!isVisualDemo && (!recorder.isRecording || isFinishing))
@@ -144,7 +143,7 @@ struct RecordView: View {
 		guard !isVisualDemo else { return }
 		var destination: URL?
 		do {
-			let url = try store.destinationForNewRecording(replacing: replacementID)
+			let url = try store.destinationForNewRecording()
 			destination = url
 			try await recorder.start(at: url)
 			activeRecordingURL = url
@@ -173,7 +172,7 @@ struct RecordView: View {
 		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
 		#endif
-		let entryID = store.finishRecording(at: recording.url, duration: recording.duration, replacing: replacementID)
+		let entryID = store.finishRecording(at: recording.url, duration: recording.duration)
 		onFinished(entryID)
 	}
 

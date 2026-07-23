@@ -23,7 +23,7 @@ struct StartRecordingWidget: Widget {
 			.containerBackground(.black, for: .widget)
 		}
 		.configurationDisplayName("New recording")
-		.description("Start a private voice journal entry.")
+		.description("Start a voice memo.")
 		.supportedFamilies([.accessoryCircular])
 	}
 }

@@ -1,89 +1,74 @@
 import SwiftUI
 
-private struct PresentedEntry: Identifiable {
-	let id: UUID
+private enum AppRoute: Hashable {
+	case entry(UUID)
+	case review
 }
 
 private struct RecordingContext: Identifiable {
 	let id = UUID()
-	let replacementID: UUID?
 }
 
 struct RootView: View {
 	@Bindable var store: JournalStore
-	@State private var presentedEntry: PresentedEntry?
+	@State private var path: [AppRoute] = []
 	@State private var recordingContext: RecordingContext?
-	@State private var showsReview = false
 	@State private var showsSettings = false
 
 	init(store: JournalStore) {
 		self.store = store
 		let arguments = ProcessInfo.processInfo.arguments
 		if arguments.contains("-demo-entry"), let entry = store.entries.first(where: { Calendar.current.component(.day, from: $0.createdAt) == 11 }) {
-			_presentedEntry = State(initialValue: PresentedEntry(id: entry.id))
+			_path = State(initialValue: [.entry(entry.id)])
 		}
 		if arguments.contains("-demo-recording") {
-			_recordingContext = State(initialValue: RecordingContext(replacementID: nil))
+			_recordingContext = State(initialValue: RecordingContext())
 		}
 		if arguments.contains("-demo-review") {
-			_showsReview = State(initialValue: true)
+			_path = State(initialValue: [.review])
 		}
 	}
 
 	var body: some View {
-		ZStack {
+		NavigationStack(path: $path) {
 			JournalView(
 				store: store,
-				onSelectEntry: { presentedEntry = PresentedEntry(id: $0.id) },
-				onNewRecording: { recordingContext = RecordingContext(replacementID: nil) },
-				onReview: { showsReview = true },
+				onSelectEntry: { path.append(.entry($0.id)) },
+				onNewRecording: { recordingContext = RecordingContext() },
+				onReview: { path.append(.review) },
 				onSettings: { showsSettings = true }
 			)
-
-			if let selection = presentedEntry, let entry = store.entry(id: selection.id) {
-				EntryView(
-					store: store,
-					entry: entry,
-					onClose: { presentedEntry = nil },
-					onRerecord: {
-						presentedEntry = nil
-						recordingContext = RecordingContext(replacementID: entry.id)
+			.toolbar(.hidden, for: .navigationBar)
+			.navigationDestination(for: AppRoute.self) { route in
+				switch route {
+				case let .entry(entryID):
+					if let entry = store.entry(id: entryID) {
+						EntryView(store: store, entry: entry)
 					}
-				)
-				.transition(.move(edge: .trailing).combined(with: .opacity))
-			}
-
-			if showsReview {
-				ReviewView(store: store, date: store.selectedDate, onClose: { showsReview = false })
-					.transition(.move(edge: .trailing).combined(with: .opacity))
-			}
-
-			if let context = recordingContext {
-				RecordView(
-					store: store,
-					replacementID: context.replacementID,
-					onClose: { recordingContext = nil },
-					onFinished: { entryID in
-						recordingContext = nil
-						presentedEntry = PresentedEntry(id: entryID)
-					}
-				)
-				.transition(.opacity)
+				case .review:
+					ReviewView(store: store, date: store.selectedDate)
+				}
 			}
 		}
-		.background(SlateStyle.background)
-		.animation(.easeOut(duration: 0.16), value: presentedEntry?.id)
-		.animation(.easeOut(duration: 0.16), value: showsReview)
-		.animation(.easeOut(duration: 0.16), value: recordingContext?.id)
+		.background(AppStyle.background)
+		.fullScreenCover(item: $recordingContext) { _ in
+			RecordView(
+				store: store,
+				onClose: { recordingContext = nil },
+				onFinished: { entryID in
+					path = [.entry(entryID)]
+					recordingContext = nil
+				}
+			)
+		}
 		.sheet(isPresented: $showsSettings) {
 			SettingsView(store: store)
 		}
 		.onOpenURL { url in
 			guard url.scheme == "myvoicememo", url.host == "record" else { return }
 			guard recordingContext == nil else { return }
-			presentedEntry = nil
-			showsReview = false
-			recordingContext = RecordingContext(replacementID: nil)
+			path.removeAll()
+			recordingContext = RecordingContext()
 		}
 	}
 }

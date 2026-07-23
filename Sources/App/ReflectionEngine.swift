@@ -24,7 +24,7 @@ enum ReflectionEngine {
 		#endif
 
 		let topics = Array(sorted.flatMap(\.tags).uniqued().prefix(3))
-		let title = sorted.last?.headline ?? "A quiet week worth keeping"
+		let title = sorted.last?.headline ?? "No entries this week"
 		let body = sorted.isEmpty
 			? "There are no entries for this week yet."
 			: sorted.map(\.transcript).joined(separator: " ")
@@ -43,7 +43,7 @@ enum ReflectionEngine {
 		let first = sentences.first ?? transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 		let headline: String
 		if first.isEmpty {
-			headline = "A moment without words"
+			headline = "No summary available"
 		} else if first.count <= 100 {
 			headline = first.hasSuffix(".") ? first : first + "."
 		} else {
@@ -55,8 +55,9 @@ enum ReflectionEngine {
 		}
 		return ReflectionResult(
 			headline: headline,
-			observations: observations.isEmpty ? ["You left a moment here to come back to."] : observations,
-			tags: extractTags(from: transcript)
+			observations: observations,
+			tags: extractTags(from: transcript),
+			modelName: "MyVoiceMemo local parser"
 		)
 	}
 
@@ -85,7 +86,7 @@ enum ReflectionEngine {
 		TAGS: short tag | short tag | short tag
 		""")
 		let response = try await session.respond(to: transcript)
-		return parseReflection(response.content)
+		return parseReflection(response.content, modelName: "SystemLanguageModel.default")
 	}
 
 	@available(iOS 26.0, *)
@@ -109,7 +110,7 @@ enum ReflectionEngine {
 	}
 	#endif
 
-	private static func parseReflection(_ text: String) -> ReflectionResult? {
+	private static func parseReflection(_ text: String, modelName: String) -> ReflectionResult? {
 		let lines = text.components(separatedBy: .newlines)
 		guard let title = value(after: "TITLE:", in: lines) else { return nil }
 		let observations = lines
@@ -117,7 +118,7 @@ enum ReflectionEngine {
 			.filter { $0.hasPrefix("-") }
 			.map { String($0.dropFirst()).trimmingCharacters(in: .whitespaces) }
 		let tags = value(after: "TAGS:", in: lines)?.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) } ?? []
-		return ReflectionResult(headline: title, observations: observations, tags: tags)
+		return ReflectionResult(headline: title, observations: observations, tags: tags, modelName: modelName)
 	}
 
 	private static func value(after prefix: String, in lines: [String]) -> String? {

@@ -15,7 +15,7 @@ enum RecordingError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .microphonePermissionDenied:
-			"Microphone access is required to record a journal entry."
+			"Microphone access is required to record a voice memo."
 		case .couldNotStart:
 			"The recording could not be started."
 		}
@@ -94,7 +94,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 				statusMessage = nil
 				startMetering()
 			} catch {
-				statusMessage = "Recording is safely paused until the microphone is available."
+				statusMessage = "Recording paused until the microphone is available."
 			}
 		} else {
 			recorder.pause()
@@ -193,7 +193,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		case .began:
 			wasRecordingBeforeInterruption = !isPaused
 			isPaused = true
-			statusMessage = "Recording paused. Your audio is saved on this iPhone."
+			statusMessage = "Recording paused."
 			stopMetering()
 		case .ended:
 			guard wasRecordingBeforeInterruption else { return }
@@ -215,14 +215,14 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		do {
 			try AVAudioSession.sharedInstance().setActive(true)
 			guard recorder?.record() == true else {
-				statusMessage = "Recording is safely paused until the microphone is available."
+				statusMessage = "Recording paused until the microphone is available."
 				return
 			}
 			isPaused = false
 			statusMessage = nil
 			startMetering()
 		} catch {
-			statusMessage = "Recording is safely paused until the microphone is available."
+			statusMessage = "Recording paused until the microphone is available."
 		}
 	}
 	#endif
@@ -266,19 +266,25 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	}
 }
 
+struct TranscriptionResult: Sendable {
+	let transcript: String
+	let modelName: String
+}
+
 enum LocalTranscriber {
 	static func transcribe(
 		url: URL,
-		onUpdate: @escaping @Sendable (String) -> Void = { _ in }
-	) async throws -> String {
+		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void = { _ in }
+	) async throws -> TranscriptionResult {
 		let authorized = await withCheckedContinuation { continuation in
 			SFSpeechRecognizer.requestAuthorization { status in
 				continuation.resume(returning: status == .authorized)
 			}
 		}
 		guard authorized, let recognizer = SFSpeechRecognizer(), recognizer.supportsOnDeviceRecognition else {
-			return ""
+			return TranscriptionResult(transcript: "", modelName: "Apple Speech")
 		}
+		let modelName = "Apple Speech · \(recognizer.locale.identifier)"
 
 		let request = SFSpeechURLRecognitionRequest(url: url)
 		request.requiresOnDeviceRecognition = true
@@ -290,9 +296,12 @@ enum LocalTranscriber {
 				if let error {
 					state.fail(error)
 				} else if let result {
-					let transcript = result.bestTranscription.formattedString
-					onUpdate(transcript)
-					if result.isFinal { state.finish(transcript) }
+					let value = TranscriptionResult(
+						transcript: result.bestTranscription.formattedString,
+						modelName: modelName
+					)
+					onUpdate(value)
+					if result.isFinal { state.finish(value) }
 				}
 			}
 		}
@@ -301,18 +310,18 @@ enum LocalTranscriber {
 
 private final class RecognitionState: @unchecked Sendable {
 	private let lock = NSLock()
-	private var continuation: CheckedContinuation<String, any Error>?
+	private var continuation: CheckedContinuation<TranscriptionResult, any Error>?
 
-	init(continuation: CheckedContinuation<String, any Error>) {
+	init(continuation: CheckedContinuation<TranscriptionResult, any Error>) {
 		self.continuation = continuation
 	}
 
-	func finish(_ transcript: String) {
+	func finish(_ result: TranscriptionResult) {
 		lock.lock()
 		let continuation = self.continuation
 		self.continuation = nil
 		lock.unlock()
-		continuation?.resume(returning: transcript)
+		continuation?.resume(returning: result)
 	}
 
 	func fail(_ error: any Error) {

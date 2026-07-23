@@ -9,7 +9,7 @@ final class JournalStore {
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
 	var selectedDate: Date
 	var isProcessing = false
-	var processingMessage = "Listening back…"
+	var processingMessage = "Updating summary…"
 	var settings = JournalSettings.load()
 
 	let isDemoMode: Bool
@@ -73,14 +73,13 @@ final class JournalStore {
 		}
 	}
 
-	func destinationForNewRecording(replacing replacementID: UUID? = nil) throws -> URL {
+	func destinationForNewRecording() throws -> URL {
 		prepareStorage()
 		let url = recordingsURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
 		try writePendingRecording(PendingRecording(
 			filename: url.lastPathComponent,
 			startedAt: .now,
-			duration: 0,
-			replacementID: replacementID
+			duration: 0
 		))
 		return url
 	}
@@ -98,36 +97,24 @@ final class JournalStore {
 	}
 
 	@discardableResult
-	func finishRecording(at url: URL, duration: TimeInterval, replacing replacementID: UUID? = nil) -> UUID {
-		let existingIndex = replacementID.flatMap { id in entries.firstIndex { $0.id == id } }
-		let entryID = existingIndex.map { entries[$0].id } ?? UUID()
-		let createdAt = existingIndex.map { entries[$0].createdAt } ?? .now
-		let previousAudioURL = existingIndex.flatMap { audioURL(for: entries[$0]) }
-		let previousLocation = existingIndex.flatMap { entries[$0].location }
+	func finishRecording(at url: URL, duration: TimeInterval) -> UUID {
+		let entryID = UUID()
 		let savedEntry = JournalEntry(
 			id: entryID,
-			createdAt: createdAt,
+			createdAt: .now,
 			duration: duration,
-			transcript: "Your recording is saved. Words will appear here as they’re recognized.",
-			headline: "Listening back…",
-			observations: ["Your recording is safe on this iPhone. The private reflection will appear here when it’s ready."],
+			transcript: "",
+			headline: "Processing recording",
+			observations: [],
 			tags: [],
-			audioFilename: url.lastPathComponent,
-			location: previousLocation
+			audioFilename: url.lastPathComponent
 		)
 
-		if let existingIndex {
-			entries[existingIndex] = savedEntry
-		} else {
-			entries.append(savedEntry)
-		}
+		entries.append(savedEntry)
 		entries.sort { $0.createdAt > $1.createdAt }
 		selectedDate = savedEntry.createdAt
 		if persist() {
 			clearPendingRecording(matching: url)
-			if let previousAudioURL, previousAudioURL != url {
-				try? fileManager.removeItem(at: previousAudioURL)
-			}
 		}
 
 		entryProcessingTasks[entryID]?.cancel()
@@ -160,19 +147,21 @@ final class JournalStore {
 	}
 
 	private func processRecording(entryID: UUID, url: URL, token: UUID) async {
-		let transcript = (try? await LocalTranscriber.transcribe(url: url) { [weak self] partialTranscript in
+		let transcription = try? await LocalTranscriber.transcribe(url: url) { [weak self] partialResult in
 			Task { @MainActor [weak self] in
-				self?.updatePartialTranscript(partialTranscript, for: entryID, token: token)
+				self?.updatePartialTranscript(partialResult, for: entryID, token: token)
 			}
-		})?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		}
+		let transcript = transcription?.transcript.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
 		guard let transcriptIndex = entries.firstIndex(where: { $0.id == entryID }) else {
 			finishProcessing(entryID, token: token)
 			return
 		}
 
-		entries[transcriptIndex].transcript = transcript.isEmpty ? "No transcript was available for this recording." : transcript
-		entries[transcriptIndex].observations = ["Your transcript is ready. The private reflection is still taking shape on this iPhone."]
+		entries[transcriptIndex].transcript = transcript.isEmpty ? "No transcript available." : transcript
+		entries[transcriptIndex].transcriptModel = transcription?.modelName
+		entries[transcriptIndex].observations = []
 		entryProcessingPhases[entryID] = .reflecting
 		persist()
 
@@ -185,6 +174,7 @@ final class JournalStore {
 		entries[index].headline = reflection.headline
 		entries[index].observations = reflection.observations
 		entries[index].tags = reflection.tags
+		entries[index].summaryModel = reflection.modelName
 		persist()
 		entryProcessingPhases[entryID] = .complete
 		try? await Task.sleep(for: .seconds(1.4))
@@ -192,12 +182,13 @@ final class JournalStore {
 		finishProcessing(entryID, token: token)
 	}
 
-	private func updatePartialTranscript(_ transcript: String, for entryID: UUID, token: UUID) {
+	private func updatePartialTranscript(_ result: TranscriptionResult, for entryID: UUID, token: UUID) {
 		guard entryProcessingTokens[entryID] == token,
 			entryProcessingPhases[entryID] == .transcribing,
 			let index = entries.firstIndex(where: { $0.id == entryID })
 		else { return }
-		entries[index].transcript = transcript
+		entries[index].transcript = result.transcript
+		entries[index].transcriptModel = result.modelName
 	}
 
 	private func finishProcessing(_ entryID: UUID, token: UUID? = nil) {
@@ -207,28 +198,17 @@ final class JournalStore {
 		entryProcessingTokens.removeValue(forKey: entryID)
 	}
 
-	func delete(_ entry: JournalEntry) {
-		entryProcessingTasks[entry.id]?.cancel()
-		entryLocationTasks[entry.id]?.cancel()
-		entryLocationTasks.removeValue(forKey: entry.id)
-		finishProcessing(entry.id)
-		if let audioURL = audioURL(for: entry) {
-			try? fileManager.removeItem(at: audioURL)
-		}
-		entries.removeAll { $0.id == entry.id }
-		persist()
-	}
-
 	func addContext(_ context: String, to entryID: UUID) async {
 		guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
 		isProcessing = true
-		processingMessage = "Reading that moment again…"
+		processingMessage = "Updating summary…"
 		let combined = entries[index].transcript + "\n\nAdditional context: " + context
 		let reflection = await ReflectionEngine.reflect(on: combined)
 		entries[index].context = context
 		entries[index].headline = reflection.headline
 		entries[index].observations = reflection.observations
 		entries[index].tags = reflection.tags
+		entries[index].summaryModel = reflection.modelName
 		persist()
 		isProcessing = false
 	}
@@ -373,7 +353,6 @@ private struct PendingRecording: Codable {
 	var filename: String
 	var startedAt: Date
 	var duration: TimeInterval
-	var replacementID: UUID?
 }
 
 struct JournalSettings: Codable, Equatable {

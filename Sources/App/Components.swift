@@ -1,16 +1,16 @@
 import SwiftUI
 
-enum SlateStyle {
+enum AppStyle {
 	static let background = Color.black
-	static let accent = Color(red: 0.04, green: 0.39, blue: 0.98)
-	static let accentSoft = accent.opacity(0.14)
-	static let card = Color.white.opacity(0.035)
-	static let cardBorder = Color.white.opacity(0.075)
-	static let secondary = Color.white.opacity(0.38)
-	static let tertiary = Color.white.opacity(0.20)
+	static let accent = Color(red: 0.02, green: 0.40, blue: 1.00)
+	static let accentSoft = accent.opacity(0.18)
+	static let card = Color(red: 0.065, green: 0.075, blue: 0.095)
+	static let cardBorder = Color.white.opacity(0.15)
+	static let secondary = Color.white.opacity(0.72)
+	static let tertiary = Color.white.opacity(0.62)
 }
 
-struct SlateCard<Content: View>: View {
+struct AppCard<Content: View>: View {
 	@ViewBuilder var content: Content
 
 	var body: some View {
@@ -18,27 +18,27 @@ struct SlateCard<Content: View>: View {
 			.padding(.horizontal, 17)
 			.padding(.vertical, 20)
 			.frame(maxWidth: .infinity, alignment: .leading)
-			.background(SlateStyle.card, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+			.background(AppStyle.card, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
 			.overlay {
 				RoundedRectangle(cornerRadius: 13, style: .continuous)
-					.stroke(SlateStyle.cardBorder, lineWidth: 0.7)
+					.stroke(AppStyle.cardBorder, lineWidth: 0.8)
 			}
 	}
 }
 
-struct SlateTag: View {
+struct TagPill: View {
 	let text: String
 
 	var body: some View {
 		Text(text)
-			.font(.system(size: 9, weight: .regular))
-			.foregroundStyle(Color.white.opacity(0.62))
+			.font(.system(size: 12, weight: .medium))
+			.foregroundStyle(Color.white.opacity(0.90))
 			.lineLimit(1)
-			.padding(.horizontal, 8)
-			.padding(.vertical, 4)
-			.background(SlateStyle.accent.opacity(0.08), in: Capsule())
+			.padding(.horizontal, 10)
+			.padding(.vertical, 6)
+			.background(AppStyle.accent.opacity(0.16), in: Capsule())
 			.overlay {
-				Capsule().stroke(SlateStyle.accent.opacity(0.30), lineWidth: 0.7)
+				Capsule().stroke(AppStyle.accent.opacity(0.55), lineWidth: 0.8)
 			}
 	}
 }
@@ -49,22 +49,12 @@ struct CloseControl: View {
 	var body: some View {
 		Button(action: action) {
 			Image(systemName: "xmark")
-				.font(.system(size: 12, weight: .medium))
-				.foregroundStyle(Color.white.opacity(0.72))
+				.font(.system(size: 15, weight: .semibold))
+				.foregroundStyle(Color.white.opacity(0.88))
 				.frame(width: 44, height: 44)
 		}
 		.buttonStyle(.plain)
 		.accessibilityLabel("Close")
-	}
-}
-
-struct InvisibleCloseControl: View {
-	let action: () -> Void
-
-	var body: some View {
-		Button(action: action) { Color.clear.frame(width: 44, height: 44) }
-			.buttonStyle(.plain)
-			.accessibilityLabel("Close")
 	}
 }
 
@@ -95,45 +85,12 @@ struct ProcessingOverlay: View {
 		ZStack {
 			Color.black.opacity(0.82).ignoresSafeArea()
 			VStack(spacing: 18) {
-				ProgressView().tint(SlateStyle.accent)
+				ProgressView().tint(AppStyle.accent)
 				Text(message)
-					.font(.system(size: 13))
-					.foregroundStyle(Color.white.opacity(0.62))
+					.font(.system(size: 15))
+					.foregroundStyle(AppStyle.secondary)
 			}
 		}
-	}
-}
-
-private struct SwipeBackModifier: ViewModifier {
-	let action: () -> Void
-	@GestureState private var translation: CGFloat = 0
-
-	func body(content: Content) -> some View {
-		content
-			.offset(x: max(0, translation))
-			.opacity(1 - min(0.22, max(0, translation) / 900))
-			.simultaneousGesture(
-				DragGesture(minimumDistance: 24)
-					.updating($translation) { value, state, _ in
-						guard value.translation.width > 0,
-							abs(value.translation.width) > abs(value.translation.height) * 1.25
-						else { return }
-						state = value.translation.width
-					}
-					.onEnded { value in
-						guard value.translation.width > 90,
-							abs(value.translation.width) > abs(value.translation.height) * 1.25
-						else { return }
-						action()
-					}
-			)
-			.accessibilityAction(.escape, action)
-	}
-}
-
-extension View {
-	func swipeBack(action: @escaping () -> Void) -> some View {
-		modifier(SwipeBackModifier(action: action))
 	}
 }
 
@@ -192,11 +149,11 @@ extension TimeInterval {
 }
 
 extension Date.FormatStyle {
-	static var slateHeader: Date.FormatStyle {
+	static var journalHeader: Date.FormatStyle {
 		Date.FormatStyle().month(.wide).day().year()
 	}
 
-	static var slateEntryHeader: Date.FormatStyle {
+	static var entryHeader: Date.FormatStyle {
 		Date.FormatStyle().weekday(.abbreviated).month(.abbreviated).day().year()
 	}
 }

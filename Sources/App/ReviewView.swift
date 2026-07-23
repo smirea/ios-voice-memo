@@ -3,7 +3,6 @@ import SwiftUI
 struct ReviewView: View {
 	@Bindable var store: JournalStore
 	let date: Date
-	let onClose: () -> Void
 	@State private var review: WeeklyReview?
 
 	var body: some View {
@@ -13,23 +12,12 @@ struct ReviewView: View {
 			if let review {
 				ScrollView {
 					VStack(alignment: .leading, spacing: 25) {
-						HStack {
-							InvisibleCloseControl(action: onClose)
-								.offset(x: -14)
-							Spacer()
-							Text("Review")
-								.font(.system(size: 11))
-								.foregroundStyle(Color.white.opacity(0.76))
-							Spacer()
-							Color.clear.frame(width: 30, height: 44)
-						}
-
-						Text(review.weekStart.formatted(.dateTime.month(.abbreviated).day()))
-							.font(.system(size: 9))
-							.foregroundStyle(SlateStyle.tertiary)
+						Text(review.weekStart.formatted(.dateTime.month(.abbreviated).day().year()))
+							.font(.system(size: 14, weight: .medium))
+							.foregroundStyle(AppStyle.secondary)
 
 						Text(review.title)
-							.font(.system(size: 25, weight: .regular))
+							.font(.system(size: 27, weight: .semibold))
 							.foregroundStyle(.white)
 							.fixedSize(horizontal: false, vertical: true)
 
@@ -39,29 +27,32 @@ struct ReviewView: View {
 
 						Text(review.body)
 							.font(.system(size: 17))
-							.foregroundStyle(Color.white.opacity(0.84))
+							.foregroundStyle(Color.white.opacity(0.92))
 							.lineSpacing(7)
 							.fixedSize(horizontal: false, vertical: true)
 
 						FlowLayout(spacing: 6) {
-							ForEach(review.tags, id: \.self) { SlateTag(text: $0) }
+							ForEach(review.tags, id: \.self) { TagPill(text: $0) }
 						}
 					}
-					.padding(.horizontal, 31)
+					.padding(.horizontal, 24)
+					.padding(.top, 12)
 					.padding(.bottom, 38)
 				}
 				.scrollIndicators(.hidden)
 			} else {
 				VStack(spacing: 15) {
-					ProgressView().tint(SlateStyle.accent)
-					Text("Reading the week back…")
-						.font(.system(size: 12))
-						.foregroundStyle(SlateStyle.secondary)
+					ProgressView().tint(AppStyle.accent)
+					Text("Generating review")
+						.font(.system(size: 15, weight: .medium))
+						.foregroundStyle(AppStyle.secondary)
 				}
 			}
 		}
 		.presentationBackground(.black)
-		.swipeBack(action: onClose)
+		.navigationTitle("Weekly review")
+		.navigationBarTitleDisplayMode(.inline)
+		.toolbar(.visible, for: .navigationBar)
 		.task(id: date) { review = await store.weeklyReview(for: date) }
 	}
 }
@@ -78,12 +69,12 @@ private struct TrendGraph: View {
 					path.move(to: first)
 					for point in points.dropFirst() { path.addLine(to: point) }
 				}
-				.stroke(SlateStyle.accent, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+				.stroke(AppStyle.accent, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
 
 				ForEach(Array(points.enumerated()), id: \.offset) { _, point in
 					Circle()
-						.fill(SlateStyle.accent)
-						.frame(width: 4, height: 4)
+						.fill(AppStyle.accent)
+						.frame(width: 6, height: 6)
 						.position(point)
 				}
 			}

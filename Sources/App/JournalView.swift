@@ -46,13 +46,13 @@ struct JournalView: View {
 					.foregroundStyle(.white)
 					.padding(.horizontal, 27)
 					.frame(height: 50)
-					.background(SlateStyle.accent, in: Capsule())
-					.shadow(color: SlateStyle.accent.opacity(0.28), radius: 18, y: 8)
+					.background(AppStyle.accent, in: Capsule())
+					.shadow(color: AppStyle.accent.opacity(0.34), radius: 18, y: 8)
 			}
 			.buttonStyle(.plain)
 			.padding(.trailing, 20)
 			.padding(.bottom, 18)
-			.accessibilityHint("Starts a private voice journal entry")
+			.accessibilityHint("Starts a voice memo")
 		}
 		.simultaneousGesture(weekSwipeGesture)
 	}
@@ -81,11 +81,11 @@ struct JournalView: View {
 					}
 					.accessibilityLabel("Settings")
 				}
-				.foregroundStyle(Color.white.opacity(0.68))
+				.foregroundStyle(Color.white.opacity(0.88))
 				.glassEffect(.regular.interactive(), in: Capsule())
 			}
 
-			Text(store.selectedDate.formatted(Date.FormatStyle.slateHeader))
+			Text(store.selectedDate.formatted(Date.FormatStyle.journalHeader))
 				.font(.system(size: 32, weight: .regular))
 				.foregroundStyle(.white)
 				.contentTransition(.numericText())
@@ -95,11 +95,11 @@ struct JournalView: View {
 
 	private var emptyState: some View {
 		VStack(spacing: 12) {
-			Text("Speak your mind")
-				.font(.system(size: 19, weight: .regular))
-			Text("A private recording and reflection will live here. Nothing leaves this device.")
-				.font(.system(size: 13))
-				.foregroundStyle(SlateStyle.secondary)
+			Text("No voice memos")
+				.font(.system(size: 21, weight: .medium))
+			Text("Tap New to record.")
+				.font(.system(size: 15))
+				.foregroundStyle(AppStyle.secondary)
 				.multilineTextAlignment(.center)
 				.frame(maxWidth: 270)
 		}
@@ -111,8 +111,8 @@ struct JournalView: View {
 		VStack(alignment: .leading, spacing: 9) {
 			if !Calendar.current.isDate(date, inSameDayAs: store.selectedDate) {
 				Text(date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-					.font(.system(size: 9, weight: .regular))
-					.foregroundStyle(SlateStyle.tertiary)
+					.font(.system(size: 13, weight: .medium))
+					.foregroundStyle(AppStyle.secondary)
 					.padding(.top, 9)
 			}
 
@@ -144,7 +144,7 @@ private struct EntryCard: View {
 	let processingPhase: EntryProcessingPhase?
 
 	var body: some View {
-		SlateCard {
+		AppCard {
 			VStack(alignment: .leading, spacing: 12) {
 				HStack(spacing: 5) {
 					Text(entry.createdAt.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)))
@@ -152,13 +152,13 @@ private struct EntryCard: View {
 					Text(entry.duration.compactDurationText)
 					Spacer()
 					Image(systemName: "waveform")
-						.font(.system(size: 10))
+						.font(.system(size: 12))
 				}
-				.font(.system(size: 9))
-				.foregroundStyle(SlateStyle.tertiary)
+				.font(.system(size: 12, weight: .medium))
+				.foregroundStyle(AppStyle.tertiary)
 
 				Text(entry.headline)
-					.font(.system(size: 17, weight: .regular))
+					.font(.system(size: 18, weight: .medium))
 					.foregroundStyle(.white)
 					.multilineTextAlignment(.leading)
 					.lineLimit(3)
@@ -172,14 +172,14 @@ private struct EntryCard: View {
 						}
 						Text(processingPhase.compactTitle)
 					}
-					.font(.system(size: 9, weight: .semibold))
-					.foregroundStyle(SlateStyle.accent)
-					.tint(SlateStyle.accent)
+					.font(.system(size: 12, weight: .semibold))
+					.foregroundStyle(AppStyle.accent)
+					.tint(AppStyle.accent)
 				}
 
 				if !entry.tags.isEmpty {
 					FlowLayout(spacing: 5) {
-						ForEach(entry.tags.prefix(3), id: \.self) { SlateTag(text: $0) }
+						ForEach(entry.tags.prefix(3), id: \.self) { TagPill(text: $0) }
 					}
 				}
 			}
@@ -209,20 +209,20 @@ private struct WeekStrip: View {
 				} label: {
 					VStack(spacing: 5) {
 						Text(date.formatted(.dateTime.weekday(.narrow)))
-							.font(.system(size: 9))
+							.font(.system(size: 12, weight: .medium))
 						Text(date.formatted(.dateTime.day()))
-							.font(.system(size: 13, weight: .medium))
+							.font(.system(size: 16, weight: .semibold))
 						Circle()
-							.fill(hasEntry ? SlateStyle.accent : Color.clear)
-							.frame(width: 3, height: 3)
+							.fill(hasEntry ? AppStyle.accent : Color.clear)
+							.frame(width: 4, height: 4)
 					}
-					.foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.55))
+					.foregroundStyle(isSelected ? Color.white : AppStyle.secondary)
 					.frame(maxWidth: .infinity)
-					.frame(height: 58)
-					.background(Color.white.opacity(isSelected ? 0.06 : 0.035), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+					.frame(height: 64)
+					.background(isSelected ? AppStyle.card : Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 					.overlay {
 						RoundedRectangle(cornerRadius: 9, style: .continuous)
-							.stroke(isSelected ? SlateStyle.accent.opacity(0.65) : Color.white.opacity(0.055), lineWidth: 0.7)
+							.stroke(isSelected ? AppStyle.accent.opacity(0.85) : AppStyle.cardBorder, lineWidth: 0.8)
 					}
 				}
 				.buttonStyle(.plain)

@@ -1,27 +1,25 @@
 # MyVoiceMemo
 
-An iPhone-only, local-first voice journal inspired by [Slate](https://apps.apple.com/us/app/slate-private-journal/id6787531627). This first milestone reproduces Slate's public recording, journal, entry, and weekly-review experience. Later iterations will add webhooks and integrations for AI agents.
+An iPhone voice memo app that records, transcribes, summarizes, and organizes spoken notes.
 
-# Target Functionality
-1. Robust recording: audio is always saved and is consistent, even if the screen turns off, or microphone changes. audio is always saved on device while it's recording
-2. Automatic iCloud backups always enabled
-3. Local first: app should work while fully offline
+## Goals
 
-## Current baseline
+1. Record reliably through screen lock, audio-route changes, and interruptions.
+2. Preserve audio continuously while recording and recover interrupted sessions.
+3. Keep recordings available offline and include them in the iPhone's normal device backup.
 
-- Record, pause, resume, extend, finish, re-record, and delete voice entries
-- Background recording through screen lock with interruption and microphone-route recovery
-- Local recording checkpoints and automatic recovery after an interrupted app session
+## Features
+
+- Record, pause, resume, extend, and finish voice memos
+- Background recording with interruption and microphone-route recovery
+- Recording checkpoints and recovery after an interrupted app session
 - Live recording state on the Lock Screen and Dynamic Island
 - One-tap Lock Screen recording widget
-- On-device speech transcription with no network fallback
-- On-device Foundation Models reflections with a deterministic local fallback
-- Private journal timeline, transcript, observations, tags, added context, and copy action
-- Per-entry coordinates, Apple place-name lookup, and an embedded Apple Maps detail
-- Weekly summaries generated from that week's local entries
-- Local JSON and audio storage protected by iOS file protection
-- Automatic inclusion in iCloud device backups when iCloud Backup is enabled for the iPhone
-- No backend, account, analytics SDK, or third-party network service; MapKit may use Apple services for place names and map imagery
+- Speech transcription with live partial results
+- Foundation Models summaries with a deterministic fallback
+- Model provenance stored with transcripts and summaries
+- Timeline, tags, context, weekly summaries, and Apple Maps locations
+- Protected JSON and audio storage
 
 ## Requirements
 
@@ -33,12 +31,8 @@ An iPhone-only, local-first voice journal inspired by [Slate](https://apps.apple
 
 Open `VoiceMemo.xcodeproj`, select the `VoiceMemo` scheme, and run on an iOS 26 iPhone target.
 
-Add `-demo` to the scheme's launch arguments to load the reference content used for visual comparison. The additional `-demo-entry`, `-demo-review`, and `-demo-recording` arguments open those states directly.
+Add `-demo` to load sample content. The additional `-demo-entry`, `-demo-review`, and `-demo-recording` launch arguments open those states directly.
 
 ## TestFlight
 
-The active Xcode Cloud `Default` workflow archives every push to `master` and distributes successful builds to the internal `me` testing group. Xcode Cloud manages sequential build numbers.
-
-## Reference scope
-
-The UI is matched to Slate's four published App Store screens and the behavior described in its listing. The original is iPhone-only and cannot be installed in Simulator, so private onboarding and subscription flows could not be inspected. MyVoiceMemo keeps its own storage local-first and relies on automatic iOS device backup rather than adding a separate cloud account or sync service.
+The Xcode Cloud `Default` workflow archives every push to `master` and distributes successful builds to the internal `me` testing group. Xcode Cloud manages sequential build numbers.

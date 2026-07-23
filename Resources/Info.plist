@@ -25,13 +25,13 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Your voice stays on this device and becomes a private journal entry.</string>
+	<string>Record a voice memo.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Your location is saved with this entry so you can remember where it was recorded.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Speech recognition makes a private on-device transcript of your recording.</string>
+	<string>Create a transcript of your voice memo.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
