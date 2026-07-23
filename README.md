@@ -6,7 +6,7 @@ An iPhone voice memo app that records, transcribes, summarizes, and organizes sp
 
 1. Record reliably through screen lock, audio-route changes, and interruptions.
 2. Preserve audio continuously while recording and recover interrupted sessions.
-3. Keep recordings available offline and include them in the iPhone's normal device backup.
+3. Keep recordings available offline and mirror them to a browsable iCloud Drive folder.
 
 ## Features
 
@@ -22,10 +22,11 @@ An iPhone voice memo app that records, transcribes, summarizes, and organizes sp
 - Timeline, tags, weekly summaries, and recorded locations
 - Swipe-to-delete notes with confirmation
 - Protected JSON and audio storage
+- Browsable audio and metadata pairs in iCloud Drive
 
 ## Storage
 
-Audio files and note data live in the app's private `Application Support/MyVoiceMemo` container. iOS includes them in normal device backups, but they are not exposed as a browsable iCloud Drive or Files folder.
+The app keeps its working data in the private `Application Support/MyVoiceMemo` container for reliable offline recording and playback. It also mirrors every completed recording to `iCloud Drive/MyVoiceMemo` as a matching `.m4a` and `.json` pair. The JSON contains the note ID, timestamp, duration, transcript, summary, observations, tags, location, and model provenance. Existing recordings are backfilled when the app launches. Deleting a note removes both mirrored files; edits made directly to the exports are not imported back into the app.
 
 ## Requirements
 

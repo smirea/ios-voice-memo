@@ -27,6 +27,7 @@
 		A10000000000000000000012 /* VoiceMemoWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C10000000000000000000002 /* VoiceMemoWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000013 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* PrivacyInfo.xcprivacy */; };
 		A10000000000000000000014 /* EntryLocationCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* EntryLocationCapture.swift */; };
+		A10000000000000000000015 /* ICloudDriveMirror.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* ICloudDriveMirror.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +75,8 @@
 		B10000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10000000000000000000013 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B10000000000000000000014 /* EntryLocationCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntryLocationCapture.swift; sourceTree = "<group>"; };
+		B10000000000000000000015 /* ICloudDriveMirror.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudDriveMirror.swift; sourceTree = "<group>"; };
+		B10000000000000000000016 /* MyVoiceMemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyVoiceMemo.entitlements; sourceTree = "<group>"; };
 		C10000000000000000000001 /* MyVoiceMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyVoiceMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C10000000000000000000002 /* VoiceMemoWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VoiceMemoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -113,6 +116,7 @@
 				B10000000000000000000001 /* VoiceMemoApp.swift */,
 				B10000000000000000000002 /* JournalModels.swift */,
 				B10000000000000000000003 /* JournalStore.swift */,
+				B10000000000000000000015 /* ICloudDriveMirror.swift */,
 				B10000000000000000000004 /* ReflectionEngine.swift */,
 				B10000000000000000000005 /* AudioRecorder.swift */,
 				B10000000000000000000006 /* Components.swift */,
@@ -133,6 +137,7 @@
 			isa = PBXGroup;
 			children = (
 				B1000000000000000000000D /* Info.plist */,
+				B10000000000000000000016 /* MyVoiceMemo.entitlements */,
 				B10000000000000000000013 /* PrivacyInfo.xcprivacy */,
 				B1000000000000000000000E /* Assets.xcassets */,
 			);
@@ -215,6 +220,11 @@
 				TargetAttributes = {
 					F10000000000000000000001 = {
 						CreatedOnToolsVersion = 26.5;
+						SystemCapabilities = {
+							com.apple.iCloud = {
+								enabled = 1;
+							};
+						};
 					};
 					F10000000000000000000002 = {
 						CreatedOnToolsVersion = 26.5;
@@ -260,6 +270,7 @@
 				A10000000000000000000001 /* VoiceMemoApp.swift in Sources */,
 				A10000000000000000000002 /* JournalModels.swift in Sources */,
 				A10000000000000000000003 /* JournalStore.swift in Sources */,
+				A10000000000000000000015 /* ICloudDriveMirror.swift in Sources */,
 				A10000000000000000000004 /* ReflectionEngine.swift in Sources */,
 				A10000000000000000000005 /* AudioRecorder.swift in Sources */,
 				A10000000000000000000006 /* Components.swift in Sources */,
@@ -331,6 +342,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/MyVoiceMemo.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = FNYFHG5SV7;
@@ -355,6 +367,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Resources/MyVoiceMemo.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = FNYFHG5SV7;

@@ -46,7 +46,7 @@ struct SettingsView: View {
 			Button("Cancel", role: .cancel) {}
 			Button("Delete all", role: .destructive) { store.clearJournal() }
 		} message: {
-			Text("This removes every recording, transcript, and reflection from this device.")
+			Text("This permanently deletes every note, recording, and iCloud Drive export.")
 		}
 	}
 }

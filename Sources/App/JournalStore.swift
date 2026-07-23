@@ -16,6 +16,9 @@ final class JournalStore {
 	private let recordingsURL: URL
 	private let entriesURL: URL
 	private let pendingRecordingURL: URL
+	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
+	@ObservationIgnored private var iCloudRevision = 0
+	@ObservationIgnored private var pendingICloudDeletionFilenames = Set<String>()
 	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var entryProcessingTokens: [UUID: UUID] = [:]
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
@@ -28,6 +31,9 @@ final class JournalStore {
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		entriesURL = rootURL.appendingPathComponent("entries.json")
 		pendingRecordingURL = rootURL.appendingPathComponent("pending-recording.json")
+		pendingICloudDeletionFilenames = Set(
+			UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []
+		)
 
 		if isDemoMode {
 			entries = JournalEntry.demo
@@ -38,6 +44,7 @@ final class JournalStore {
 			prepareStorage()
 			entries = loadEntries()
 			recoverUnreferencedRecordings()
+			scheduleICloudDriveMirror()
 		}
 	}
 
@@ -209,7 +216,7 @@ final class JournalStore {
 			try? fileManager.removeItem(at: url)
 		}
 		entries.removeAll { $0.id == entryID }
-		persist()
+		persist(deleting: [entry])
 	}
 
 	func clearJournal() {
@@ -221,13 +228,14 @@ final class JournalStore {
 		entryProcessingTokens.removeAll()
 		entryProcessingPhases.removeAll()
 		entryLocationTasks.removeAll()
-		for entry in entries where entry.audioFilename != nil {
+		let deletedEntries = entries
+		for entry in deletedEntries where entry.audioFilename != nil {
 			if let url = audioURL(for: entry) {
 				try? fileManager.removeItem(at: url)
 			}
 		}
 		entries.removeAll()
-		persist()
+		persist(deleting: deletedEntries)
 	}
 
 	func weeklyReview(for date: Date) async -> WeeklyReview {
@@ -259,7 +267,7 @@ final class JournalStore {
 	}
 
 	@discardableResult
-	private func persist() -> Bool {
+	private func persist(deleting deletedEntries: [JournalEntry] = []) -> Bool {
 		guard !isDemoMode, let data = try? JSONEncoder().encode(entries) else { return false }
 		do {
 			try data.write(to: entriesURL, options: [.atomic])
@@ -267,10 +275,44 @@ final class JournalStore {
 			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: entriesURL.path)
 			#endif
 			try includeInBackup(entriesURL)
+			pendingICloudDeletionFilenames.formUnion(deletedEntries.compactMap(\.audioFilename))
+			savePendingICloudDeletions()
+			scheduleICloudDriveMirror()
 			return true
 		} catch {
 			assertionFailure("Could not save the local journal: \(error)")
 			return false
+		}
+	}
+
+	private func scheduleICloudDriveMirror() {
+		guard !isDemoMode else { return }
+		iCloudRevision += 1
+		let revision = iCloudRevision
+		let entries = entries
+		let recordingsURL = recordingsURL
+		let mirror = iCloudDriveMirror
+		let deletedAudioFilenames = pendingICloudDeletionFilenames
+		Task {
+			let completedDeletions = await mirror.sync(
+				entries: entries,
+				recordingsURL: recordingsURL,
+				deletedAudioFilenames: deletedAudioFilenames,
+				revision: revision
+			)
+			pendingICloudDeletionFilenames.subtract(completedDeletions)
+			savePendingICloudDeletions()
+		}
+	}
+
+	private func savePendingICloudDeletions() {
+		if pendingICloudDeletionFilenames.isEmpty {
+			UserDefaults.standard.removeObject(forKey: Self.iCloudDeletionKey)
+		} else {
+			UserDefaults.standard.set(
+				pendingICloudDeletionFilenames.sorted(),
+				forKey: Self.iCloudDeletionKey
+			)
 		}
 	}
 
@@ -346,6 +388,8 @@ final class JournalStore {
 		values.isExcludedFromBackup = false
 		try url.setResourceValues(values)
 	}
+
+	private static let iCloudDeletionKey = "pending-icloud-drive-deletions"
 }
 
 private struct PendingRecording: Codable {

@@ -28,6 +28,18 @@
 	<string>Record a voice memo.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Your location is saved with this entry so you can remember where it was recorded.</string>
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.com.stefan.myvoicememo</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>MyVoiceMemo</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSpeechRecognitionUsageDescription</key>
