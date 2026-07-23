@@ -34,6 +34,10 @@ Open `VoiceMemo.xcodeproj`, select the `VoiceMemo` scheme, and run on an iOS 26 
 
 Add `-demo` to the scheme's launch arguments to load the reference content used for visual comparison. The additional `-demo-entry`, `-demo-review`, and `-demo-recording` arguments open those states directly.
 
+## TestFlight
+
+The active Xcode Cloud `Default` workflow archives every push to `master` and distributes successful builds to the internal `me` testing group. Xcode Cloud manages sequential build numbers.
+
 ## Reference scope
 
 The UI is matched to Slate's four published App Store screens and the behavior described in its listing. The original is iPhone-only and cannot be installed in Simulator, so private onboarding and subscription flows could not be inspected. MyVoiceMemo keeps its own storage local-first and relies on automatic iOS device backup rather than adding a separate cloud account or sync service.
