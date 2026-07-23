@@ -52,6 +52,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		guard await requestMicrophonePermission() else {
 			throw RecordingError.microphonePermissionDenied
 		}
+		try Task.checkCancellation()
 
 		#if os(iOS)
 		let session = AVAudioSession.sharedInstance()

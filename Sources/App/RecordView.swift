@@ -97,7 +97,15 @@ struct RecordView: View {
 		}
 		.presentationBackground(.black)
 		.task { await beginRecording() }
-		.onDisappear { liveActivity.end() }
+		.onDisappear {
+			liveActivity.end()
+			if !isFinishing {
+				discardActiveRecording()
+				#if os(iOS)
+				UIApplication.shared.isIdleTimerDisabled = false
+				#endif
+			}
+		}
 		.onChange(of: recorder.duration) { _, duration in
 			checkpointIfNeeded(duration: duration)
 		}
@@ -144,8 +152,12 @@ struct RecordView: View {
 		do {
 			let url = try store.destinationForNewRecording()
 			destination = url
-			try await recorder.start(at: url)
 			activeRecordingURL = url
+			try await recorder.start(at: url)
+			guard !Task.isCancelled else {
+				discardActiveRecording()
+				return
+			}
 			liveActivity.start()
 			impact(.light)
 			let locationTask = store.beginRecordingLocationCapture()
@@ -160,10 +172,8 @@ struct RecordView: View {
 			}
 			#endif
 		} catch {
-			if let destination {
-				try? FileManager.default.removeItem(at: destination)
-				store.cancelRecording(at: destination)
-			}
+			discardActiveRecording(fallbackURL: destination)
+			guard !Task.isCancelled else { return }
 			errorMessage = error.localizedDescription
 		}
 	}
@@ -183,16 +193,21 @@ struct RecordView: View {
 	}
 
 	private func cancel() {
-		if let url = recorder.cancel() {
-			store.cancelRecording(at: url)
-		}
-		activeRecordingURL = nil
+		discardActiveRecording()
 		liveActivity.end()
 		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
 		#endif
 		notification(.warning)
 		onClose()
+	}
+
+	private func discardActiveRecording(fallbackURL: URL? = nil) {
+		let url = recorder.cancel() ?? activeRecordingURL ?? fallbackURL
+		activeRecordingURL = nil
+		guard let url else { return }
+		try? FileManager.default.removeItem(at: url)
+		store.cancelRecording(at: url)
 	}
 
 	private func togglePause() {

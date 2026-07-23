@@ -195,14 +195,67 @@ private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
 		InteractivePopGestureViewController()
 	}
 
-	func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+	func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+		(uiViewController as? InteractivePopGestureViewController)?.enableNavigationPop()
+	}
 }
 
 private final class InteractivePopGestureViewController: UIViewController {
 	override func viewDidAppear(_ animated: Bool) {
 		super.viewDidAppear(animated)
-		navigationController?.interactivePopGestureRecognizer?.delegate = nil
-		navigationController?.interactivePopGestureRecognizer?.isEnabled = true
+		enableNavigationPop()
+	}
+
+	override func viewDidLayoutSubviews() {
+		super.viewDidLayoutSubviews()
+		enableNavigationPop()
+	}
+
+	func enableNavigationPop() {
+		DispatchQueue.main.async { [weak self] in
+			guard let self, let navigationController = findNavigationController() else { return }
+			let canNavigateBack = navigationController.viewControllers.count > 1
+			navigationController.interactivePopGestureRecognizer?.delegate = nil
+			navigationController.interactivePopGestureRecognizer?.isEnabled = canNavigateBack
+			navigationController.interactiveContentPopGestureRecognizer?.delegate = nil
+			navigationController.interactiveContentPopGestureRecognizer?.isEnabled = canNavigateBack
+		}
+	}
+
+	private func findNavigationController() -> UINavigationController? {
+		if let navigationController {
+			return navigationController
+		}
+
+		var responder: UIResponder? = view
+		while let current = responder {
+			if let navigationController = current as? UINavigationController {
+				return navigationController
+			}
+			if let controller = current as? UIViewController,
+				let navigationController = controller.navigationController {
+				return navigationController
+			}
+			responder = current.next
+		}
+
+		return findNavigationController(in: view.window?.rootViewController)
+	}
+
+	private func findNavigationController(in controller: UIViewController?) -> UINavigationController? {
+		guard let controller else { return nil }
+		if let navigationController = controller as? UINavigationController {
+			return navigationController
+		}
+		if let navigationController = findNavigationController(in: controller.presentedViewController) {
+			return navigationController
+		}
+		for child in controller.children {
+			if let navigationController = findNavigationController(in: child) {
+				return navigationController
+			}
+		}
+		return nil
 	}
 }
 

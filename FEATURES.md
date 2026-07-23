@@ -3,7 +3,7 @@
 # General
 
 - Supports only the latest iOS and uses native interactions and components where possible.
-- Uses standard horizontal edge swipes for back navigation without dragging screens vertically.
+- Uses iOS's native horizontal back swipe without dragging screens vertically.
 - Uses a consistent dark interface, saturated blue accent, and Liquid Glass controls.
 - Stores notes and recordings locally for offline access and includes them in device backups.
 - Mirrors each completed recording to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files.
@@ -46,7 +46,7 @@
 
 # Note Screen
 
-- Has no visible back button; the standard edge swipe returns to the previous screen.
+- Has no visible back button; the native back swipe returns to the previous screen.
 - Shows the city on the left and a date such as `Thu Jul 23` on the right, adding the year only when it is not current.
 - Truncates long city names instead of crowding the date.
 - Uses `Voice memo` and omits the map when no recorded location is available.
