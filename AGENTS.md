@@ -1,3 +1,5 @@
+This is a simple iOS app that's only meant to support the latest iOS and should use as much as possible native interactions and components before reaching out to custom implementations
+
 # Stack
 
 - Language: Swift
