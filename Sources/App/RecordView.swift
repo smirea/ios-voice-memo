@@ -19,6 +19,8 @@ struct RecordView: View {
 	@State private var isAttachedToEvent = false
 	@State private var selectedEventID: String?
 	@State private var isLoadingEvents = true
+	@State private var selectedDate = Date.now
+	@State private var showsDatePicker = false
 
 	private var isVisualDemo: Bool {
 		ProcessInfo.processInfo.arguments.contains("-demo-recording")
@@ -37,6 +39,19 @@ struct RecordView: View {
 		return events.first { $0.id == selectedEventID }
 	}
 
+	private var selectedDay: Date {
+		Calendar.current.startOfDay(for: selectedDate)
+	}
+
+	private var selectedDateTitle: String {
+		let formatter = DateFormatter()
+		formatter.locale = .current
+		let selectedYear = Calendar.current.component(.year, from: selectedDate)
+		let currentYear = Calendar.current.component(.year, from: .now)
+		formatter.dateFormat = selectedYear == currentYear ? "EEE MMM d" : "EEE MMM d yyyy"
+		return formatter.string(from: selectedDate)
+	}
+
 	var body: some View {
 		ZStack {
 			Color.black.ignoresSafeArea()
@@ -52,9 +67,11 @@ struct RecordView: View {
 			if startsImmediately || isVisualDemo {
 				hasStartedRecording = true
 				await beginRecording()
-			} else {
-				await prepareEventSelection()
 			}
+		}
+		.task(id: selectedDay) {
+			guard !startsImmediately, !isVisualDemo, !hasStartedRecording else { return }
+			await prepareEventSelection(for: selectedDay)
 		}
 		.onDisappear {
 			liveActivity.end()
@@ -90,6 +107,29 @@ struct RecordView: View {
 		} message: {
 			Text(errorMessage ?? "")
 		}
+		.sheet(isPresented: $showsDatePicker) {
+			NavigationStack {
+				DatePicker(
+					"Event date",
+					selection: $selectedDate,
+					displayedComponents: .date
+				)
+				.datePickerStyle(.graphical)
+				.labelsHidden()
+				.tint(AppStyle.accent)
+				.padding(.horizontal, 20)
+				.navigationTitle("Select date")
+				.navigationBarTitleDisplayMode(.inline)
+				.toolbar {
+					ToolbarItem(placement: .confirmationAction) {
+						Button("Done") { showsDatePicker = false }
+					}
+				}
+			}
+			.preferredColorScheme(.dark)
+			.presentationDetents([.medium])
+			.presentationDragIndicator(.visible)
+		}
 	}
 
 	private var setupView: some View {
@@ -98,16 +138,28 @@ struct RecordView: View {
 
 			ScrollView {
 				VStack(alignment: .leading, spacing: 24) {
-					Text("New recording")
-						.font(.system(size: 30, weight: .semibold))
-						.foregroundStyle(.white)
+					Button {
+						showsDatePicker = true
+					} label: {
+						HStack(spacing: 9) {
+							Text(selectedDateTitle)
+								.font(.system(size: 30, weight: .semibold))
+								.foregroundStyle(.white)
+							Image(systemName: "chevron.down")
+								.font(.system(size: 14, weight: .bold))
+								.foregroundStyle(AppStyle.accent)
+						}
+					}
+					.buttonStyle(.plain)
+					.accessibilityLabel("Recording date, \(selectedDateTitle)")
+					.accessibilityHint("Opens the calendar picker")
 
 					Toggle(isOn: $isAttachedToEvent) {
 						Label("Attached to event", systemImage: "calendar")
 							.font(.system(size: 17, weight: .semibold))
 					}
 					.tint(AppStyle.accent)
-					.disabled(!store.settings.calendarSyncEnabled || events.isEmpty)
+					.disabled(isLoadingEvents || !store.settings.calendarSyncEnabled || events.isEmpty)
 
 					eventList
 						.opacity(isAttachedToEvent ? 1 : 0.36)
@@ -140,15 +192,15 @@ struct RecordView: View {
 		if isLoadingEvents {
 			HStack(spacing: 10) {
 				ProgressView()
-				.tint(AppStyle.accent)
-				Text("Loading today’s events")
+					.tint(AppStyle.accent)
+				Text("Loading events")
 					.font(.system(size: 15, weight: .medium))
 					.foregroundStyle(AppStyle.secondary)
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 			.padding(.vertical, 20)
 		} else if events.isEmpty {
-			Text(store.settings.calendarSyncEnabled ? "No events today" : "Calendar sync is off")
+			Text(store.settings.calendarSyncEnabled ? "No events on this date" : "Calendar sync is off")
 				.font(.system(size: 15, weight: .medium))
 				.foregroundStyle(AppStyle.secondary)
 				.frame(maxWidth: .infinity, alignment: .leading)
@@ -265,8 +317,12 @@ struct RecordView: View {
 		return recorder.levels
 	}
 
-	private func prepareEventSelection() async {
-		await store.refreshCalendar()
+	private func prepareEventSelection(for date: Date) async {
+		isLoadingEvents = true
+		isAttachedToEvent = false
+		selectedEventID = nil
+		await store.refreshCalendar(on: date)
+		guard selectedDay == date else { return }
 		isLoadingEvents = false
 		isAttachedToEvent = store.settings.calendarSyncEnabled && !events.isEmpty
 		if isAttachedToEvent {
@@ -275,7 +331,7 @@ struct RecordView: View {
 	}
 
 	private func selectClosestEvent() {
-		let now = Date.now
+		let now = eventSelectionReferenceDate
 		let currentTimedEvents = events.filter {
 			!$0.isAllDay && $0.startDate <= now && now <= $0.endDate
 		}
@@ -289,6 +345,17 @@ struct RecordView: View {
 		selectedEventID = candidates.min { lhs, rhs in
 			eventDistance(lhs, from: now) < eventDistance(rhs, from: now)
 		}?.id
+	}
+
+	private var eventSelectionReferenceDate: Date {
+		let now = Date.now
+		let components = Calendar.current.dateComponents([.hour, .minute, .second], from: now)
+		return Calendar.current.date(
+			bySettingHour: components.hour ?? 0,
+			minute: components.minute ?? 0,
+			second: components.second ?? 0,
+			of: selectedDate
+		) ?? selectedDate
 	}
 
 	private func eventDistance(_ event: JournalCalendarEvent, from date: Date) -> TimeInterval {

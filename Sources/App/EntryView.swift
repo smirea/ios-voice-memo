@@ -5,6 +5,7 @@ import UIKit
 struct EntryView: View {
 	@Bindable var store: JournalStore
 	let entry: JournalEntry
+	let onBack: () -> Void
 	@State private var playback = AudioPlayback()
 
 	private var currentEntry: JournalEntry {
@@ -114,15 +115,23 @@ struct EntryView: View {
 				.padding(.bottom, 40)
 			}
 			.scrollIndicators(.hidden)
-
-			InteractivePopGestureEnabler()
-				.frame(width: 0, height: 0)
 		}
 		.presentationBackground(.black)
 		.toolbar(.hidden, for: .navigationBar)
+		.simultaneousGesture(
+			DragGesture(minimumDistance: 16)
+				.onEnded { value in
+					guard value.startLocation.x <= 32,
+						value.translation.width >= 64,
+						value.translation.width > abs(value.translation.height)
+					else { return }
+					onBack()
+				}
+		)
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
 		.onDisappear { playback.stop() }
+		.accessibilityAction(.escape, onBack)
 	}
 }
 
@@ -218,99 +227,6 @@ private struct ScrubbableWaveform: View {
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-	}
-}
-
-private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
-	func makeCoordinator() -> Coordinator {
-		Coordinator()
-	}
-
-	func makeUIViewController(context: Context) -> InteractivePopGestureViewController {
-		let controller = InteractivePopGestureViewController()
-		controller.popGestureCoordinator = context.coordinator
-		return controller
-	}
-
-	func updateUIViewController(
-		_ uiViewController: InteractivePopGestureViewController,
-		context: Context
-	) {
-		uiViewController.popGestureCoordinator = context.coordinator
-		context.coordinator.enable(from: uiViewController)
-	}
-
-	@MainActor
-	final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-		private weak var navigationController: UINavigationController?
-
-		func enable(from controller: UIViewController) {
-			DispatchQueue.main.async { [weak self, weak controller] in
-				guard let self, let controller,
-					let navigationController = self.findNavigationController(from: controller)
-				else { return }
-				self.navigationController = navigationController
-				navigationController.interactivePopGestureRecognizer?.delegate = self
-				navigationController.interactivePopGestureRecognizer?.isEnabled =
-					navigationController.viewControllers.count > 1
-			}
-		}
-
-		func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-			guard let navigationController else { return false }
-			return navigationController.viewControllers.count > 1
-				&& navigationController.transitionCoordinator == nil
-		}
-
-		private func findNavigationController(from controller: UIViewController) -> UINavigationController? {
-			if let navigationController = controller.navigationController {
-				return navigationController
-			}
-
-			var responder: UIResponder? = controller.view
-			while let current = responder {
-				if let navigationController = current as? UINavigationController {
-					return navigationController
-				}
-				if let controller = current as? UIViewController,
-					let navigationController = controller.navigationController {
-					return navigationController
-				}
-				responder = current.next
-			}
-
-			return findNavigationController(in: controller.view.window?.rootViewController)
-		}
-
-		private func findNavigationController(in controller: UIViewController?) -> UINavigationController? {
-			guard let controller else { return nil }
-			if let navigationController = controller as? UINavigationController {
-				return navigationController
-			}
-			if let navigationController = findNavigationController(in: controller.presentedViewController) {
-				return navigationController
-			}
-			for child in controller.children {
-				if let navigationController = findNavigationController(in: child) {
-					return navigationController
-				}
-			}
-			return nil
-		}
-	}
-}
-
-private final class InteractivePopGestureViewController: UIViewController {
-	weak var popGestureCoordinator: InteractivePopGestureEnabler.Coordinator?
-
-	override func viewDidAppear(_ animated: Bool) {
-		super.viewDidAppear(animated)
-		popGestureCoordinator?.enable(from: self)
-	}
-
-	override func viewDidLayoutSubviews() {
-		super.viewDidLayoutSubviews()
-		popGestureCoordinator?.enable(from: self)
 	}
 }
 

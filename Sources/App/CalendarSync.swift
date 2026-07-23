@@ -31,6 +31,7 @@ final class CalendarSync {
 
 	@ObservationIgnored private let eventStore = EKEventStore()
 	@ObservationIgnored private let isDemoMode: Bool
+	@ObservationIgnored private var refreshID = UUID()
 
 	init(isDemoMode: Bool = false) {
 		self.isDemoMode = isDemoMode
@@ -45,7 +46,7 @@ final class CalendarSync {
 
 	func requestAccess() async -> Bool {
 		if isDemoMode {
-			loadDemoData()
+			loadDemoData(on: .now)
 			return true
 		}
 		do {
@@ -61,9 +62,15 @@ final class CalendarSync {
 		}
 	}
 
-	func refresh(includedCalendarIdentifiers: Set<String>?) async {
+	func refresh(
+		includedCalendarIdentifiers: Set<String>?,
+		on date: Date = .now
+	) async {
+		let requestID = UUID()
+		refreshID = requestID
+
 		if isDemoMode {
-			loadDemoData()
+			loadDemoData(on: date)
 			if let includedCalendarIdentifiers {
 				events.removeAll {
 					!includedCalendarIdentifiers.contains($0.calendarIdentifier)
@@ -81,10 +88,10 @@ final class CalendarSync {
 
 		loadCalendars()
 		let selectedIdentifiers = includedCalendarIdentifiers
-		let start = Calendar.current.startOfDay(for: .now)
-		let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? .now
+		let start = Calendar.current.startOfDay(for: date)
+		let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
 
-		events = await Task.detached(priority: .utility) {
+		let loadedEvents: [JournalCalendarEvent] = await Task.detached(priority: .utility) {
 			let store = EKEventStore()
 			let selectedCalendars = store.calendars(for: .event).filter { calendar in
 				selectedIdentifiers?.contains(calendar.calendarIdentifier) ?? true
@@ -106,9 +113,12 @@ final class CalendarSync {
 					)
 				}
 		}.value
+		guard refreshID == requestID else { return }
+		events = loadedEvents
 	}
 
 	func clear() {
+		refreshID = UUID()
 		events = []
 		calendars = []
 		authorizationStatus = EKEventStore.authorizationStatus(for: .event)
@@ -131,9 +141,9 @@ final class CalendarSync {
 			}
 	}
 
-	private func loadDemoData() {
+	private func loadDemoData(on date: Date) {
 		let calendar = Calendar.current
-		let start = calendar.startOfDay(for: .now)
+		let start = calendar.startOfDay(for: date)
 		func time(_ hour: Int, _ minute: Int = 0) -> Date {
 			calendar.date(byAdding: .minute, value: hour * 60 + minute, to: start) ?? start
 		}

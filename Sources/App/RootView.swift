@@ -45,7 +45,11 @@ struct RootView: View {
 				switch route {
 				case let .entry(entryID):
 					if let entry = store.entry(id: entryID) {
-						EntryView(store: store, entry: entry)
+						EntryView(
+							store: store,
+							entry: entry,
+							onBack: { path.removeAll() }
+						)
 					}
 				case .review:
 					ReviewView(store: store, date: .now)
@@ -77,7 +81,7 @@ struct RootView: View {
 			await store.refreshCalendar()
 		}
 		.onChange(of: scenePhase) { _, phase in
-			guard phase == .active else { return }
+			guard phase == .active, recordingContext == nil else { return }
 			Task { await store.refreshCalendar() }
 		}
 	}

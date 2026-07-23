@@ -34,8 +34,10 @@
 # Record Screen
 
 - Opens an event-attachment setup before recording when launched from the Home Screen.
-- Shows today's included calendar events in chronological order.
-- Disables event attachment and explains when Calendar sync is off or there are no events today.
+- Shows the selected date as the screen title.
+- Tapping the date opens the standard calendar picker.
+- Shows the selected date's included calendar events in chronological order.
+- Disables event attachment and explains when Calendar sync is off or there are no events on the selected date.
 - Selects an ongoing timed event by default, otherwise the event closest to the current time.
 - Attached to event can be turned off to unselect, shrink, and dim the event list.
 - Tapping an event selects it for the new note.
@@ -55,7 +57,7 @@
 
 # Note Screen
 
-- Has no visible back button; the native back swipe returns to the previous screen.
+- Has no visible back button; a leading-edge back swipe always returns Home.
 - Shows the city on the left and a date such as `Thu Jul 23` on the right, adding the year only when it is not current.
 - Truncates long city names instead of crowding the date.
 - Uses `Voice memo` and omits the map when no recorded location is available.

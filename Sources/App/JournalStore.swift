@@ -271,13 +271,14 @@ final class JournalStore {
 		return granted
 	}
 
-	func refreshCalendar() async {
+	func refreshCalendar(on date: Date = .now) async {
 		guard settings.calendarSyncEnabled else {
 			calendarSync.clear()
 			return
 		}
 		await calendarSync.refresh(
-			includedCalendarIdentifiers: settings.includedCalendarIdentifiers
+			includedCalendarIdentifiers: settings.includedCalendarIdentifiers,
+			on: date
 		)
 	}
 
