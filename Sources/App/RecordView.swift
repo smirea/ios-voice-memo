@@ -147,6 +147,7 @@ struct RecordView: View {
 			try await recorder.start(at: url)
 			activeRecordingURL = url
 			liveActivity.start()
+			impact(.light)
 			let locationTask = store.beginRecordingLocationCapture()
 			Task { @MainActor in
 				let location = await locationTask.value
@@ -176,6 +177,7 @@ struct RecordView: View {
 		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
 		#endif
+		impact(.medium)
 		let entryID = store.finishRecording(at: recording.url, duration: recording.duration)
 		onFinished(entryID)
 	}
@@ -189,11 +191,13 @@ struct RecordView: View {
 		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
 		#endif
+		notification(.warning)
 		onClose()
 	}
 
 	private func togglePause() {
 		recorder.togglePause()
+		impact(.soft)
 	}
 
 	private func checkpointIfNeeded(duration: TimeInterval) {
@@ -203,4 +207,16 @@ struct RecordView: View {
 		lastCheckpointSecond = second
 		store.checkpointRecording(at: activeRecordingURL, duration: duration)
 	}
+
+	#if os(iOS)
+	private func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+		guard store.settings.hapticsEnabled else { return }
+		UIImpactFeedbackGenerator(style: style).impactOccurred()
+	}
+
+	private func notification(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+		guard store.settings.hapticsEnabled else { return }
+		UINotificationFeedbackGenerator().notificationOccurred(type)
+	}
+	#endif
 }

@@ -61,20 +61,6 @@ struct EntryView: View {
 									await playback.load(url: audioURL, fallbackDuration: currentEntry.duration)
 								}
 						}
-
-						VStack(alignment: .leading, spacing: 13) {
-							ForEach(currentEntry.observations.filter { $0 != currentEntry.headline }, id: \.self) { observation in
-								Text(observation)
-									.font(.system(size: 17, weight: .regular))
-									.foregroundStyle(Color.white.opacity(0.92))
-									.lineSpacing(4)
-									.fixedSize(horizontal: false, vertical: true)
-							}
-						}
-
-						if let model = currentEntry.summaryModel {
-							ModelAttribution(model: model)
-						}
 					}
 
 					if store.settings.showTranscripts, !currentEntry.transcript.isEmpty {
@@ -97,10 +83,12 @@ struct EntryView: View {
 				.padding(.bottom, 40)
 			}
 			.scrollIndicators(.hidden)
+
+			InteractivePopGestureEnabler()
+				.frame(width: 0, height: 0)
 		}
 		.presentationBackground(.black)
-		.navigationBarTitleDisplayMode(.inline)
-		.toolbar(.visible, for: .navigationBar)
+		.toolbar(.hidden, for: .navigationBar)
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
 		.onDisappear { playback.stop() }
@@ -199,6 +187,22 @@ private struct ScrubbableWaveform: View {
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+	}
+}
+
+private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
+	func makeUIViewController(context: Context) -> UIViewController {
+		InteractivePopGestureViewController()
+	}
+
+	func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+}
+
+private final class InteractivePopGestureViewController: UIViewController {
+	override func viewDidAppear(_ animated: Bool) {
+		super.viewDidAppear(animated)
+		navigationController?.interactivePopGestureRecognizer?.delegate = nil
+		navigationController?.interactivePopGestureRecognizer?.isEnabled = true
 	}
 }
 

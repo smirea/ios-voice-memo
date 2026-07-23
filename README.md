@@ -1,6 +1,6 @@
 # MyVoiceMemo
 
-An iPhone voice memo app that records, transcribes, summarizes, and organizes spoken notes.
+An iPhone voice memo app that records, transcribes, titles, and organizes spoken notes.
 
 ## Goals
 
@@ -16,18 +16,18 @@ An iPhone voice memo app that records, transcribes, summarizes, and organizes sp
 - Live recording state on the Lock Screen and Dynamic Island
 - Location, date, and elapsed time in the recording Live Activity
 - One-tap Lock Screen recording widget
-- Long-form, on-device SpeechAnalyzer transcription
+- Long-form, on-device transcription with live partial results
 - Audio playback with waveform scrubbing
-- Foundation Models summaries with a deterministic fallback
-- Model provenance stored with transcripts and summaries
-- Timeline, weekly summaries, and recorded locations
+- Foundation Models titles and weekly reviews with deterministic fallbacks
+- Model provenance stored with generated content
+- Reverse-chronological timeline, weekly reviews, and recorded locations
 - Swipe-to-delete notes with confirmation
 - Protected JSON and audio storage
 - Browsable audio and metadata pairs in iCloud Drive
 
 ## Storage
 
-The app keeps its working data in the private `Application Support/MyVoiceMemo` container for reliable offline recording and playback. It also mirrors every completed recording to `iCloud Drive/MyVoiceMemo` as a matching `.m4a` and `.json` pair named `YYYY-MM-DD_<city>__<UUID>`. The JSON contains the note ID, timestamp, duration, transcript, summary, observations, location, and model provenance. Existing recordings are backfilled when the app launches. Deleting a note removes both mirrored files; edits made directly to the exports are not imported back into the app.
+The app keeps its working data in the private `Application Support/MyVoiceMemo` container for reliable offline recording and playback. It also mirrors every completed recording to `iCloud Drive/MyVoiceMemo` as a matching `.m4a` and `.json` pair named `YYYY-MM-DD_<city>__<UUID>`. The JSON contains the note ID, timestamp, duration, transcript, title, location, and model provenance. Existing recordings are backfilled when the app launches. Deleting a note removes both mirrored files; edits made directly to the exports are not imported back into the app.
 
 ## Requirements
 

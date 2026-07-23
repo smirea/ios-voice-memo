@@ -68,7 +68,7 @@ enum EntryProcessingPhase: Equatable, Sendable {
 	var title: String {
 		switch self {
 		case .transcribing: "Transcribing"
-		case .reflecting: "Summarizing"
+		case .reflecting: "Creating title"
 		case .complete: "Ready"
 		}
 	}
@@ -76,7 +76,7 @@ enum EntryProcessingPhase: Equatable, Sendable {
 	var compactTitle: String {
 		switch self {
 		case .transcribing: "Transcribing"
-		case .reflecting: "Summarizing"
+		case .reflecting: "Creating title"
 		case .complete: "Ready"
 		}
 	}

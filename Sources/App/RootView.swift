@@ -46,7 +46,7 @@ struct RootView: View {
 						EntryView(store: store, entry: entry)
 					}
 				case .review:
-					ReviewView(store: store, date: store.selectedDate)
+					ReviewView(store: store, date: .now)
 				}
 			}
 		}

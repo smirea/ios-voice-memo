@@ -1,5 +1,11 @@
 This is a simple iOS app that's only meant to support the latest iOS and should use as much as possible native interactions and components before reaching out to custom implementations
 
+# Feature contract
+
+- Read `FEATURES.md` before changing the app and review it again before finishing.
+- Keep `FEATURES.md` updated whenever user-visible features, interactions, or specific behaviors change.
+- Treat documented behavior as a regression checklist: do not accidentally remove, lose, or break it while changing something else.
+
 # Stack
 
 - Language: Swift

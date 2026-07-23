@@ -7,7 +7,6 @@ import Observation
 final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
-	var selectedDate: Date
 	var settings = JournalSettings.load()
 
 	let isDemoMode: Bool
@@ -37,21 +36,14 @@ final class JournalStore {
 
 		if isDemoMode {
 			entries = JournalEntry.demo
-			selectedDate = JournalEntry.demo.map(\.createdAt).max() ?? .now
 		} else {
 			entries = []
-			selectedDate = .now
 			prepareStorage()
 			entries = loadEntries()
 			recoverUnreferencedRecordings()
 			resumeInterruptedProcessing()
 			scheduleICloudDriveMirror()
 		}
-	}
-
-	func entries(onOrBefore date: Date) -> [JournalEntry] {
-		let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: date)) ?? date
-		return entries.filter { $0.createdAt < end }.sorted { $0.createdAt > $1.createdAt }
 	}
 
 	func entries(inWeekContaining date: Date) -> [JournalEntry] {
@@ -120,7 +112,6 @@ final class JournalStore {
 
 		entries.append(savedEntry)
 		entries.sort { $0.createdAt > $1.createdAt }
-		selectedDate = savedEntry.createdAt
 		if persist() {
 			clearPendingRecording(matching: url)
 		}
@@ -365,7 +356,6 @@ final class JournalStore {
 
 		guard didRecover else { return }
 		entries.sort { $0.createdAt > $1.createdAt }
-		selectedDate = entries.first?.createdAt ?? selectedDate
 		if persist(), let recoveredPendingURL {
 			clearPendingRecording(matching: recoveredPendingURL)
 		}
