@@ -8,6 +8,7 @@ final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
 	private(set) var namedLocations: [NamedJournalLocation] = []
+	private(set) var elevenLabsAPIKey = ""
 	var transcriptionAlertMessage: String?
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
@@ -19,6 +20,7 @@ final class JournalStore {
 	private let entriesURL: URL
 	private let configurationURL: URL
 	private let pendingRecordingURL: URL
+	@ObservationIgnored private let apiKeyStore = APIKeyStore()
 	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
 	@ObservationIgnored private let reminderActivityManager = ReminderActivityManager()
 	@ObservationIgnored private var iCloudRevision = 0
@@ -43,6 +45,7 @@ final class JournalStore {
 			isDemoMode: isDemoMode,
 			cacheURL: rootURL.appendingPathComponent("calendar-events.json")
 		)
+		elevenLabsAPIKey = apiKeyStore.value(for: .elevenLabs)
 		pendingICloudDeletionReferences = Set(
 			UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []
 		)
@@ -277,7 +280,8 @@ final class JournalStore {
 		do {
 			let result = try await AudioTranscriber.transcribe(
 				url: url,
-				preferElevenLabs: settings.preferElevenLabsTranscription
+				preferElevenLabs: settings.preferElevenLabsTranscription,
+				elevenLabsAPIKey: elevenLabsAPIKey
 			) { [weak self] partialResult in
 				guard !preserveExistingTranscriptOnFailure else { return }
 				Task { @MainActor [weak self] in
@@ -473,7 +477,8 @@ final class JournalStore {
 		}
 		let transcription = try await AudioTranscriber.transcribe(
 			url: audioURL,
-			preferElevenLabs: settings.preferElevenLabsTranscription
+			preferElevenLabs: settings.preferElevenLabsTranscription,
+			elevenLabsAPIKey: elevenLabsAPIKey
 		)
 		transcriptionAlertMessage = transcription.warning
 		let feedbackText = transcription.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -533,6 +538,11 @@ final class JournalStore {
 	func setShowModelNames(_ showModelNames: Bool) {
 		settings.showModelNames = showModelNames
 		commitConfiguration()
+	}
+
+	func setElevenLabsAPIKey(_ apiKey: String) {
+		elevenLabsAPIKey = apiKey
+		apiKeyStore.set(apiKey, for: .elevenLabs)
 	}
 
 	func clearTranscriptionAlert() {

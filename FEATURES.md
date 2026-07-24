@@ -66,6 +66,7 @@
 
 - Opens as a sheet, saves changes immediately, and dismisses with Done.
 - Controls screen wake while recording, recording haptics, transcript visibility, and the default-on ElevenLabs transcription preference.
+- Stores an optional ElevenLabs API key securely on-device and prefers it over the bundled fallback.
 - Calendar sync requests Full Access for read-only event access and lets each calendar be included or excluded.
 - Calendar settings can prefer direct Google Calendar links, with an exact native event view as fallback.
 - Reminder settings control delivery, Live Activities, and the global pre-event lead time.

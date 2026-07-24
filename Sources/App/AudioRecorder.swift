@@ -284,12 +284,15 @@ enum AudioTranscriber {
 	static func transcribe(
 		url: URL,
 		preferElevenLabs: Bool,
+		elevenLabsAPIKey: String? = nil,
 		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void = { _ in }
 	) async throws -> TranscriptionResult {
 		guard preferElevenLabs else {
 			return try await transcribeWithApple(url: url, onUpdate: onUpdate)
 		}
-		guard let apiKey = ElevenLabsTranscriber.apiKey else {
+		guard let apiKey = preferredAPIKey(elevenLabsAPIKey)
+			?? ElevenLabsTranscriber.bundledAPIKey
+		else {
 			do {
 				return try await transcribeWithApple(url: url, onUpdate: onUpdate)
 					.warningThatElevenLabsFailed(
@@ -325,6 +328,13 @@ enum AudioTranscriber {
 				throw AudioTranscriptionError.allServicesFailed(reason)
 			}
 		}
+	}
+
+	private static func preferredAPIKey(_ apiKey: String?) -> String? {
+		guard let apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+			!apiKey.isEmpty
+		else { return nil }
+		return apiKey
 	}
 
 	private static func transcribeWithApple(
@@ -471,7 +481,7 @@ private enum ElevenLabsTranscriber {
 		}
 	}
 
-	static var apiKey: String? {
+	static var bundledAPIKey: String? {
 		guard let url = Bundle.main.url(forResource: "LocalSecrets", withExtension: "xcconfig"),
 			let contents = try? String(contentsOf: url, encoding: .utf8),
 			let line = contents.split(whereSeparator: \.isNewline).first(where: {

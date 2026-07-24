@@ -34,10 +34,16 @@ struct SettingsView: View {
 						"Prefer ElevenLabs transcription",
 						isOn: $draft.preferElevenLabsTranscription
 					)
+					LabeledContent("API key") {
+						SecureField("Optional", text: elevenLabsAPIKeyBinding)
+							.multilineTextAlignment(.trailing)
+							.textInputAutocapitalization(.never)
+							.autocorrectionDisabled()
+							.textContentType(.password)
+							.privacySensitive()
+					}
 				} header: {
 					Text("Transcription")
-				} footer: {
-					Text("Apple Speech is used automatically when ElevenLabs cannot be reached.")
 				}
 				.listRowBackground(AppStyle.background)
 
@@ -116,8 +122,6 @@ struct SettingsView: View {
 			}
 		} header: {
 			Text("Calendar")
-		} footer: {
-			Text("MyVoiceMemo only reads events. iOS requires full Calendar access to make events available.")
 		}
 		.listRowBackground(AppStyle.background)
 	}
@@ -138,8 +142,6 @@ struct SettingsView: View {
 			}
 		} header: {
 			Text("Event reminders")
-		} footer: {
-			Text("Useful cues from an event memo can return before matching calendar events. Live Activities end when the event ends.")
 		}
 		.listRowBackground(AppStyle.background)
 	}
@@ -162,6 +164,13 @@ struct SettingsView: View {
 					}
 				}
 			}
+		)
+	}
+
+	private var elevenLabsAPIKeyBinding: Binding<String> {
+		Binding(
+			get: { store.elevenLabsAPIKey },
+			set: { store.setElevenLabsAPIKey($0) }
 		)
 	}
 
