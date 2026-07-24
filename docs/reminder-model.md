@@ -86,15 +86,12 @@ Reminder parsing is separate from title and summary generation. The parser recei
 - the attached source event;
 - the current reminder rules and all prior feedback during reprocessing.
 
-The on-device model performs small semantic decisions inside a staged parser instead of producing the entire rule in one large schema:
+The on-device model performs two compact semantic stages instead of producing an entire rule in one large schema:
 
-1. Split the transcript into sentences and focused conditional clauses.
-2. Accept unambiguous event instructions and reject known out-of-scope task patterns deterministically.
-3. Ask a two-value eligibility classifier only about ambiguous excerpts, including adjacent context for pronouns, corrections, and later disclaimers.
-4. Generate action and motivation for each eligible focus excerpt, then retain that exact excerpt as evidence. There is no maximum reminder count.
-5. Derive attached-series versus fuzzy targeting, next versus every policy, time of day, and relative validity from grounded language.
-6. Ask a small target model only for a semantic event label or explicit venue when lexical grounding is insufficient.
-7. Validate and deduplicate the assembled rules.
+1. Read the complete transcript, existing reminder set, and ordered corrections once. Return every final action with a motivation and exact supporting excerpt. There is no maximum reminder count.
+2. Resolve clear named or attached targets directly from their grounded context. When semantic interpretation is still needed, use a separate compact scheduling request per action; independent requests run concurrently, so additional reminders do not create a serial model-call chain.
+3. Derive attached-series versus fuzzy targeting, next versus every policy, time of day, and relative validity from the grounded schedule context.
+4. Reject ungrounded actions and venues, apply manual removals deterministically, and deduplicate the assembled rules.
 
 The parser follows these rules:
 
@@ -104,11 +101,11 @@ The parser follows these rules:
 - Preserve concrete details such as names, colors, time of day, place, and duration.
 - Deduplicate equivalent actions.
 - Treat ambiguous corrections conservatively.
-- Treat the current reminder set as authoritative and apply corrections in order.
+- Treat corrections as authoritative and apply them in order.
 
-The decomposition is intentional. Simulator evaluation showed that the system model was accurate on compact schemas but mixed fields and opaque references when action, selector, recurrence, duration, and batches of identifiers shared one generated type. Deterministic fields also make corrections such as “evening, not morning” stable across model versions.
+The decomposition is intentional. Simulator evaluation showed that the system model was accurate on compact schemas but mixed fields and opaque references when action, selector, recurrence, duration, and batches of identifiers shared one generated type. A transcript-wide first pass preserves relationships across distant sentences, while the second pass keeps the scheduling schema small. Deterministic fields make corrections such as “evening, not morning” stable across model versions.
 
-Guided generation guarantees the shape of a model result, not its semantic correctness. App validation rejects empty action or motivation text, noncontiguous evidence, action text that is not substantially grounded in that evidence, hallucinated venues, invalid durations, and reminders without an event target.
+Guided generation guarantees the shape of a model result, not its semantic correctness. App validation rejects empty action or motivation text, noncontiguous evidence, action text that is not substantially grounded in that evidence, hallucinated venues, invalid durations, and reminders without an event target. Generic references such as “the game” are resolved against the complete memo so earlier named events are retained.
 
 If the system language model is unavailable or parsing fails, the app produces no new reminders rather than using a speculative heuristic.
 
@@ -117,12 +114,13 @@ If the system language model is unavailable or parsing fails, the app produces n
 Resolution happens after parsing:
 
 1. Load a bounded range of included-calendar events.
-2. Discard canceled events, expired rules, past occurrences, and the source occurrence.
+2. Discard canceled events, expired rules, and occurrences that started before the reminder was created. An attached source event remains eligible when the memo was recorded before it.
 3. Apply deterministic validity and time-of-day constraints.
 4. Match series using stored identifiers and cached fallbacks.
-5. Require a lexical event-type anchor, then ask the model to classify each remaining fuzzy candidate independently.
-6. Treat omitted, invalid, or uncertain fuzzy classifications as nonmatches.
-7. Materialize either the first match or every match according to the occurrence policy.
+5. Resolve specific multiword event names directly against candidate titles.
+6. Require a lexical event-type anchor, then ask the model to classify each remaining fuzzy candidate independently.
+7. Treat omitted, invalid, or uncertain fuzzy classifications as nonmatches.
+8. Materialize either the first match or every match according to the occurrence policy.
 
 Recurring EventKit events prefer their external identifier because it is shared by occurrences. Calendar identifier, normalized title, and approximate start time form the fallback. Separately-created events such as Meetup imports are handled through fuzzy matching.
 
@@ -136,13 +134,13 @@ The source note shows reminders immediately below the summary with no section he
 
 Removing a reminder deletes the rule and adds a manual-removal feedback record. This prevents a later reprocessing pass from recreating the same reminder from the original transcript.
 
-“Add feedback” records a short audio correction, transcribes it on-device, deletes the temporary audio, and edits the current reminder set with:
+“Add feedback” records a short audio correction, transcribes it, deletes the temporary audio, and re-evaluates reminders with:
 
 - the current reminder set;
 - previous feedback;
 - the new feedback.
 
-The current set is authoritative, so a correction cannot silently resurrect a reminder the user already removed. Explicit removal, time, recurrence, and duration edits are applied deterministically. Additions and replacement actions pass through the same grounded on-device action parser. Reprocessing changes reminders only; it does not rewrite the note title, summary, or transcript.
+Manual removals are reapplied deterministically, so reprocessing cannot silently resurrect a reminder the user removed. Other additions, replacements, and corrections pass through the same transcript-wide grounded parser. Feedback reprocessing changes reminders only; it does not rewrite the note title, summary, or transcript.
 
 Full note reprocessing starts with a fresh extraction from the stored transcript, then reapplies every stored feedback correction and manual removal before replacing the reminders. It also regenerates the note title and summary, but never retranscribes or changes the source transcript.
 

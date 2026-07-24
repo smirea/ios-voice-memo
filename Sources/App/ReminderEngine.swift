@@ -1,19 +1,13 @@
 import Foundation
 import FoundationModels
 
-@Generable(description: "All event-specific actions in an excerpt already confirmed to contain at least one reminder")
-private struct GeneratedRequiredReminderBatch {
-	@Guide(description: "Every distinct reminder action in the eligible excerpt.", .minimumCount(1))
+@Generable(description: "The final useful event-specific reminders from a complete voice memo and any corrections")
+private struct GeneratedReminderBatch {
+	@Guide(description: "Every distinct useful reminder after applying all corrections, including zero")
 	var reminders: [GeneratedReminderDraft]
 }
 
-@Generable(description: "Whether one memo excerpt contains an eligible event reminder")
-private struct GeneratedCueEligibility {
-	@Guide(description: "eligible only for an affirmative instruction you give your future self for a future event; otherwise exclude", .anyOf(["eligible", "exclude"]))
-	var classification: String
-}
-
-@Generable(description: "One event-reminder action grounded in a memo excerpt")
+@Generable(description: "One complete event-reminder action grounded in the supplied memo")
 private struct GeneratedReminderDraft {
 	@Guide(description: "A short imperative checklist item")
 	var text: String
@@ -25,19 +19,23 @@ private struct GeneratedReminderDraft {
 	var evidence: String
 }
 
-@Generable(description: "The semantic calendar-event target for one reminder")
+@Generable(description: "The grounded calendar-event target for one reminder")
 private struct GeneratedReminderSchedule {
-	@Guide(description: "Describe only the event class stated in the evidence, without adding the attached event")
+	@Guide(description: "A short exact contiguous excerpt establishing the target event, frequency, or duration; use the action evidence when it contains this context")
+	var scheduleContext: String
+
+	@Guide(description: "Preserve every specific event name or stable event class stated for this action")
 	var eventDescription: String
 
 	@Guide(description: "A required location you stated, or none when there is no location constraint")
 	var locationDescription: String
 }
 
-private struct GeneratedReminder {
+private struct GeneratedReminder: Sendable {
 	var text: String
 	var motivation: String
 	var evidence: String
+	var scheduleContext: String
 	var attachesToSource: Bool
 	var eventDescription: String
 	var locationDescription: String
@@ -54,6 +52,7 @@ private struct GeneratedReminder {
 		text = draft.text
 		motivation = draft.motivation
 		evidence = draft.evidence
+		scheduleContext = schedule.scheduleContext
 		self.attachesToSource = attachesToSource
 		eventDescription = schedule.eventDescription
 		locationDescription = schedule.locationDescription
@@ -62,7 +61,14 @@ private struct GeneratedReminder {
 	}
 }
 
-private struct ReminderRelativeValidity {
+struct GroundedReminderSchedule: Sendable {
+	var context: String
+	var eventDescription: String
+	var occurrencePolicy: EventReminderOccurrencePolicy
+	var validity: ReminderRelativeValidity?
+}
+
+struct ReminderRelativeValidity: Sendable {
 	var value: Int
 	var component: Calendar.Component
 }
@@ -99,24 +105,18 @@ enum ReminderEngine {
 			return ReminderParsingResult(reminders: [], modelName: nil)
 		}
 
-		if !feedback.isEmpty {
-			let reminders = await reprocess(
+		do {
+			guard let generated = try await generatedReminders(
+				transcript: transcript,
 				sourceEvent: sourceEvent,
-				createdAt: createdAt,
 				currentReminders: currentReminders,
 				feedback: feedback
-			)
-			return ReminderParsingResult(
-				reminders: reminders,
-				modelName: "SystemLanguageModel.default · guided reminders"
-			)
-		}
-
-		if let generated = try? await generatedReminders(
-			transcript: transcript,
-			sourceEvent: sourceEvent
-		) {
-			let evidenceCorpus = transcript.reminderNormalized
+			) else {
+				return ReminderParsingResult(reminders: currentReminders, modelName: nil)
+			}
+			let evidenceCorpus = ([transcript] + feedback.map(\.text))
+				.joined(separator: "\n")
+				.reminderNormalized
 			let rules = generated.compactMap {
 				rule(
 					from: $0,
@@ -126,146 +126,22 @@ enum ReminderEngine {
 				)
 			}
 			return ReminderParsingResult(
-				reminders: deduplicated(rules),
+				reminders: applyingManualRemovals(
+					to: deduplicated(rules),
+					feedback: feedback
+				),
 				modelName: "SystemLanguageModel.default · guided reminders"
 			)
+		} catch {
+			if ProcessInfo.processInfo.arguments.contains("-reminder-benchmark") {
+				print("REMINDER_GENERATION_ERROR \(error)")
+			}
 		}
 
 		return ReminderParsingResult(
 			reminders: currentReminders,
 			modelName: nil
 		)
-	}
-
-	private static func reprocess(
-		sourceEvent: JournalCalendarEvent,
-		createdAt: Date,
-		currentReminders: [EventReminderRule],
-		feedback: [ReminderFeedback]
-	) async -> [EventReminderRule] {
-		var reminders = currentReminders
-
-		for correction in feedback {
-			let normalized = correction.text.reminderNormalized
-			if correction.kind == .manualRemoval {
-				if let focusedID = correction.focusedReminderID {
-					reminders.removeAll {
-						$0.id == focusedID || feedbackText(normalized, references: $0)
-					}
-				} else {
-					reminders.removeAll { feedbackText(normalized, references: $0) }
-				}
-				continue
-			}
-
-			if normalized.contains("remove all")
-				|| normalized.contains("delete all")
-				|| normalized.contains("no event cues") {
-				reminders = []
-				continue
-			}
-
-			if normalized.contains("remove") || normalized.contains("delete") {
-				let removalScope = normalized.components(separatedBy: " keep ").first ?? normalized
-				reminders.removeAll { feedbackText(removalScope, references: $0) }
-				continue
-			}
-
-			if normalized.contains("replace") {
-				reminders.removeAll { feedbackText(normalized, references: $0) }
-				let parsed = await parse(
-					transcript: correction.text,
-					sourceEvent: sourceEvent,
-					createdAt: createdAt
-				)
-				reminders.append(contentsOf: parsed.reminders)
-				continue
-			}
-
-			let referencedIndices = reminders.indices.filter {
-				feedbackText(normalized, references: reminders[$0])
-			}
-			let correctionSignals = [
-				"actually",
-				"are for",
-				"is for",
-				"make the",
-				"only remind",
-				"last ",
-				"not "
-			]
-			if !referencedIndices.isEmpty,
-				correctionSignals.contains(where: normalized.contains) {
-				for index in referencedIndices {
-					reminders[index].evidence = correction.text
-					if case var .fuzzy(selector) = reminders[index].selector,
-						let timeBucket = affirmativeTimeBucket(in: correction.text) {
-						selector.timeBucket = timeBucket
-						reminders[index].selector = .fuzzy(selector)
-					}
-					if let policy = explicitOccurrencePolicy(in: correction.text) {
-						reminders[index].occurrencePolicy = policy
-						if policy == .everyMatch {
-							reminders[index].resolvedOccurrence = nil
-						}
-					}
-					if let validity = relativeValidity(in: correction.text) {
-						reminders[index].expiresAt = Calendar.current.date(
-							byAdding: validity.component,
-							value: validity.value,
-							to: createdAt
-						)
-					}
-				}
-				continue
-			}
-
-			if normalized.contains("missed")
-				|| normalized.hasPrefix("add ")
-				|| normalized.contains("also remind") {
-				let parsed = await parse(
-					transcript: correction.text,
-					sourceEvent: sourceEvent,
-					createdAt: createdAt
-				)
-				reminders.append(contentsOf: parsed.reminders)
-			}
-		}
-
-		return deduplicated(reminders)
-	}
-
-	private static func feedbackText(
-		_ normalizedFeedback: String,
-		references reminder: EventReminderRule
-	) -> Bool {
-		let ignored = Set([
-			"a", "an", "and", "at", "bring", "every", "for", "keep", "reminder",
-			"remove", "the", "to"
-		])
-		let words = Set(reminder.text.reminderNormalized.split(separator: " ").map(String.init))
-			.subtracting(ignored)
-			.filter { $0.count >= 4 }
-		return words.contains(where: normalizedFeedback.contains)
-	}
-
-	private static func explicitOccurrencePolicy(
-		in text: String
-	) -> EventReminderOccurrencePolicy? {
-		let normalized = text.reminderNormalized
-		if normalized.contains("only")
-			&& [
-				"next time", "next class", "next session", "next meeting",
-				"next standup", "next gym", "next game", "next meetup"
-			].contains(where: normalized.contains) {
-			return .nextMatch
-		}
-		if normalized.contains("every")
-			|| normalized.contains("from now on")
-			|| normalized.contains("going forward") {
-			return .everyMatch
-		}
-		return nil
 	}
 
 	static func resolve(
@@ -282,7 +158,6 @@ enum ReminderEngine {
 			for reminder in entry.reminders where reminder.isActive(at: now) {
 				let candidatesAfterCreation = orderedEvents.filter {
 					$0.startDate > reminder.createdAt
-						&& $0.focusKey != entry.calendarEvent?.focusKey
 				}
 				let matchedEvents: [JournalCalendarEvent]
 
@@ -290,10 +165,7 @@ enum ReminderEngine {
 				case let .series(series):
 					matchedEvents = candidatesAfterCreation.filter { series.matches($0) }
 				case let .fuzzy(selector):
-					let candidates = orderedEvents.filter {
-						$0.focusKey != entry.calendarEvent?.focusKey
-					}
-					let decisions = await match(selector: selector, candidates: candidates)
+					let decisions = await match(selector: selector, candidates: orderedEvents)
 					matchedEvents = candidatesAfterCreation.filter {
 						decisions[$0.focusKey]?.matches == true
 					}
@@ -335,198 +207,298 @@ enum ReminderEngine {
 
 	private static func generatedReminders(
 		transcript: String,
-		sourceEvent: JournalCalendarEvent
+		sourceEvent: JournalCalendarEvent,
+		currentReminders: [EventReminderRule],
+		feedback: [ReminderFeedback]
 	) async throws -> [GeneratedReminder]? {
 		guard SystemLanguageModel.default.availability == .available else { return nil }
-		let eligibleExcerpts = try await eligibleCueExcerpts(transcript: transcript)
-		guard !eligibleExcerpts.isEmpty else { return [] }
+		let evidenceCorpus = ([transcript] + feedback.map(\.text)).joined(separator: "\n")
+		guard sentenceExcerpts(evidenceCorpus).contains(where: hasFutureCueSignal) else {
+			return []
+		}
 
-		let draftInstructions = """
-		This excerpt has already been confirmed to contain at least one event reminder. Extract every action you gave your future self for immediately before or during that event. Do not reclassify the excerpt. Include actions conditional on the event's time or other stated traits.
+		let existing = currentReminders.isEmpty
+			? "None"
+			: currentReminders.map {
+				"- \($0.text) — \($0.occurrencePolicy.rawValue) \($0.selector.title)"
+			}.joined(separator: "\n")
+		let corrections = feedback.isEmpty
+			? "None"
+			: feedback.enumerated().map { index, correction in
+				"\(index + 1). \(correction.kind.rawValue): \(correction.text)"
+			}.joined(separator: "\n")
+		let session = LanguageModelSession(instructions: """
+		Read the complete event-attached memo before extracting anything. Return the final useful reminders after applying every correction in order. A reminder is an action you gave your future self for immediately before or during a calendar event.
+
+		Use context across sentences. Resolve "this event," "the game," "same thing," "today and tomorrow," and similar references before deciding whether an action is useful. If the same action applies to multiple events, create one reminder for that action rather than duplicate phrasings.
+
+		Evidence must be exact contiguous text copied from the original memo or a correction. Preserve every stated name, color, condition, and correction in the action.
 
 		Hard exclusions:
-		- Never turn a past observation into a reminder.
-		- Never extract a negated, canceled, or rejected idea.
-		- Never assign another person's intention or obligation to you.
-		- Never invent an action, object, name, event constraint, repetition, or duration.
-		- Never extract general tasks, errands, or appointments to schedule.
+		- Past observations without a future action.
+		- Negated, canceled, superseded, hypothetical, or rejected ideas.
+		- Another person's intention or obligation.
+		- General errands, habits, or appointments to schedule.
+		- Vague advice that would waste attention.
 
-		Copy a short exact contiguous evidence excerpt. Preserve every stated action, name, and color. Write each motivation directly to the note owner as "you"; never say "the user," "user," or "the speaker." Return every useful cue, including zero; never fill a quota. Prefer omission when uncertain. A later pass assigns event matching, repetition, time, location, and duration.
-
-		"""
-		var drafts: [GeneratedReminderDraft] = []
-		for excerpt in eligibleExcerpts {
-			for focusExcerpt in actionFocusExcerpts(excerpt) {
-				let prompt = """
-				Attached event: \(sourceEvent.title)
-
-				Focus excerpt:
-				\(focusExcerpt)
-				"""
-				var excerptDrafts: [GeneratedReminderDraft]?
-				for _ in 0..<2 where excerptDrafts == nil {
-					let session = LanguageModelSession(instructions: """
-					\(draftInstructions)
-					Extract actions stated in the focus excerpt only.
-
-					A self-correction such as "bring the red notebook—sorry, not red, bring the blue notebook" produces only "Bring the blue notebook."
-					The action is your imperative verb phrase, never attendance at the event. "Next class ask Dana about the showcase" produces "Ask Dana about the showcase," never "Go to class."
-					A time branch such as "If it starts in the evening, wear the blue shirt" is an affirmative instruction and produces "Wear the blue shirt."
-					Keep related people facts in one compact reminder. "Remember Alice plays green, Ben hosts, and Priya likes cooperative games" is one reminder containing all three facts, not three reminders. A negative preference such as "Noor does not want cooperative games" is a fact to preserve, not a canceled instruction.
-					""")
-					excerptDrafts = try? await withGenerationTimeout {
-						let response = try await session.respond(
-							to: prompt,
-							generating: GeneratedRequiredReminderBatch.self
-						)
-						return response.content.reminders
-					}
-				}
-				drafts.append(contentsOf: compactRelatedFacts(
-					excerptDrafts ?? [],
-					in: focusExcerpt
-				).map {
-					var draft = $0
-					draft.evidence = focusExcerpt
-					return draft
-				})
-			}
-		}
-		var reminders: [GeneratedReminder] = []
-		for draft in drafts {
-			let scheduleText = relevantScheduleText(
-				for: draft.evidence,
-				in: eligibleExcerpts
-			)
-			let attachesToSource = shouldAttachToSource(
-				evidence: scheduleText,
-				sourceEvent: sourceEvent
-			)
-			let schedule = await generatedSchedule(
-				for: draft,
-				sourceEvent: sourceEvent,
-				context: scheduleText,
-				attachesToSource: attachesToSource
-			)
-			let reminder = GeneratedReminder(
-				draft: draft,
-				schedule: schedule,
-				attachesToSource: attachesToSource,
-				occurrencePolicy: occurrencePolicy(in: scheduleText),
-				validity: relativeValidity(in: scheduleText)
-			)
-			reminders.append(reminder)
-		}
-		return reminders
-	}
-
-	private static func generatedSchedule(
-		for draft: GeneratedReminderDraft,
-		sourceEvent: JournalCalendarEvent,
-		context: String,
-		attachesToSource: Bool
-	) async -> GeneratedReminderSchedule {
-		if attachesToSource {
-			return GeneratedReminderSchedule(
-				eventDescription: sourceEvent.title,
-				locationDescription: "none"
-			)
-		}
-		let fallback = GeneratedReminderSchedule(
-			eventDescription: explicitEventDescription(in: context) ?? context,
-			locationDescription: sourceEvent.location.flatMap {
-				context.reminderNormalized.contains($0.reminderNormalized) ? $0 : nil
-			} ?? "none"
-		)
-		let session = LanguageModelSession(instructions: """
-		Extract only the semantic calendar-event class and required venue stated in the reminder evidence. Do not infer or mention the memo's attached source event. Keep time of day and duration out of the event description because app code handles them. If titles may vary, describe the stable event type. Use none when no venue is required.
-
-		Examples:
-		- "At tabletop meetups at Dice Dojo this month, wear the orange tag." becomes event class "tabletop meetup" at "Dice Dojo".
-		- "Before every client call, open the account notes." becomes event class "client call" with no venue.
-		- "During evening role-playing sessions, bring the binder." becomes event class "role-playing session" with no venue.
+		Keep related people facts together. Keep distinct actions separate. Do not create duplicate phrasings of the same action. Existing reminders are context, not evidence. Corrections are authoritative: add what was missed, replace what changed, and omit anything removed. Return any useful number of reminders, including zero. Address the note owner as "you," never as user or speaker.
 		""")
 		let prompt = """
-		Reminder action: \(draft.text)
-		Evidence: \(draft.evidence)
+		Attached event:
+		Title: \(sourceEvent.title)
+		Location: \(sourceEvent.location ?? "None")
+		Recurring: \(sourceEvent.isRecurring)
 
-		Relevant memo context:
-		\(context)
+		Original memo:
+		\(transcript)
+
+		Existing reminders:
+		\(existing)
+
+		Corrections, oldest to newest:
+		\(corrections)
 		"""
-		return (try? await withGenerationTimeout {
+		let drafts = try await withGenerationTimeout {
 			let response = try await session.respond(
 				to: prompt,
-				generating: GeneratedReminderSchedule.self
+				generating: GeneratedReminderBatch.self
 			)
-			var schedule = response.content
-			if let explicitDescription = explicitEventDescription(in: context) {
-				schedule.eventDescription = explicitDescription
+			return response.content.reminders
+		}
+		return await withTaskGroup(of: (Int, GeneratedReminder).self) { group in
+			for (index, draft) in drafts.enumerated() {
+				group.addTask {
+					(
+						index,
+						await generatedReminder(
+							from: draft,
+							sourceEvent: sourceEvent,
+							evidenceCorpus: evidenceCorpus
+						)
+					)
+				}
 			}
-			return schedule
-		}) ?? fallback
+			var indexed: [(Int, GeneratedReminder)] = []
+			for await reminder in group {
+				indexed.append(reminder)
+			}
+			return indexed.sorted { $0.0 < $1.0 }.map(\.1)
+		}
 	}
 
-	private static func eligibleCueExcerpts(transcript: String) async throws -> [String] {
-		let allExcerpts = sentenceExcerpts(transcript)
-		let candidates = allExcerpts.enumerated().filter { hasFutureCueSignal($0.element) }
-		guard !candidates.isEmpty else { return [] }
-		var eligible: [String] = []
-
-		for (index, excerpt) in candidates {
-			if isClearlyIneligible(excerpt) {
-				continue
-			}
-			if isClearlyEligible(
-				excerpt,
-				previousExcerpt: index > 0 ? allExcerpts[index - 1] : nil
-			) {
-				eligible.append(excerpt)
-				continue
-			}
+	private static func generatedReminder(
+		from draft: GeneratedReminderDraft,
+		sourceEvent: JournalCalendarEvent,
+		evidenceCorpus: String
+	) async -> GeneratedReminder {
+		let fallback = groundedSchedule(
+			for: draft.evidence,
+			in: evidenceCorpus
+		)
+		let fallbackDescriptions = explicitEventDescriptions(in: fallback.context)
+		let sharedTargetSignals = [
+			"as well", "same thing", "same goal", "same for",
+			"today and tomorrow", "today or tomorrow"
+		]
+		let needsModel = fallback.eventDescription.isEmpty
+			|| mayContainLocationConstraint(fallback.context)
+			|| (fallbackDescriptions.count > 1
+				&& !sharedTargetSignals.contains(where: fallback.context.reminderNormalized.contains))
+		let generated: GeneratedReminderSchedule?
+		if needsModel {
 			let session = LanguageModelSession(instructions: """
-			Classify one memo excerpt conservatively. Mark eligible only when it contains an affirmative instruction you give your future self for immediately before or during a future calendar event. The named future event may be the attached event, a broader event class, or a completely different event class. Exclude past observations, descriptions without a future instruction, negated or rejected ideas, another person's intentions, and general tasks such as scheduling appointments or errands. If the excerpt contains both excluded material and a valid event cue, mark it eligible; a later pass will extract only the valid cue.
+			Determine the calendar-event target for one already-extracted action. Read the complete memo context and resolve pronouns or generic references such as "the game" from earlier specific names.
 
-			The previous excerpt may resolve a pronoun, event class, or shared duration, but classify only the current excerpt.
-
-			Canonical boundaries:
-			- "I brought too many drinks." is exclude: it is only a past fact.
-			- "The warmup was long and I felt nervous." is exclude: it is only reflection.
-			- "Do not remind me about electrolytes next time." is exclude: it rejects a cue.
-			- "Next gym, do not bring water; bring electrolytes instead." is eligible: the positive replacement is a valid cue.
-			- "Rob said he needs to bring electrolytes." is exclude: it belongs to Rob.
-			- Current "The coach said remember eye contact next time." followed by "That advice was not for me." is exclude.
-			- "I should schedule a dentist appointment." is exclude: it is a general task.
-			- "At the next class, pause for one beat." is eligible.
-			- "For every morning game, wear red pants." is eligible.
-			- "Before every client call, open the account notes." is eligible even when the attached event is a standup.
-			- "At the next yoga class, bring the green mat." is eligible even when the attached event is a gym session.
-			- "For a month of evening role-playing sessions, bring the binder." is eligible even when the attached event is a board-game meetup.
-			- "Next time I see this group, remember Alice plays green and Ben hosts." is eligible: remembering useful people context is a future instruction.
-			- "For Sunday tabletop meetups, wear the orange tag even if the title changes." is eligible: "even if" adds matching context and does not reject the instruction.
-			- Current "If it starts in the evening, wear the blue shirt." after previous "For the next month of gaming, wear red in the morning." is eligible.
+			Schedule context must be exact contiguous text copied from the supplied memo context and retain the target, frequency, and duration. For a cue applying to multiple explicitly named events, preserve every name in eventDescription; never reduce names such as "Ultimate Werewolf" and "Blood on the Clocktower" to "game" or "event." Use only the stable event name or class, without time of day or duration. Use none for location unless the memo explicitly requires a venue. Do not invent details from the attached event.
 			""")
 			let prompt = """
-			An event-attached memo exists. The current excerpt may target that event or another event class.
+			Attached event: \(sourceEvent.title)
+			Action: \(draft.text)
+			Action evidence: \(draft.evidence)
 
-			Previous memo excerpt:
-			\(index > 0 ? allExcerpts[index - 1] : "None")
-
-			Current memo excerpt:
-			\(excerpt)
-
-			Following memo excerpt:
-			\(allExcerpts.indices.contains(index + 1) ? allExcerpts[index + 1] : "None")
+			Complete memo and corrections:
+			\(evidenceCorpus)
 			"""
-			let decision = try await withGenerationTimeout {
+			generated = try? await withGenerationTimeout {
 				let response = try await session.respond(
 					to: prompt,
-					generating: GeneratedCueEligibility.self
+					generating: GeneratedReminderSchedule.self
 				)
 				return response.content
 			}
-			if decision.classification == "eligible" { eligible.append(excerpt) }
+		} else {
+			generated = nil
 		}
-		return eligible
+		let scheduleContext = generated.flatMap {
+			groundedExcerpt($0.scheduleContext, in: evidenceCorpus)
+		} ?? fallback.context
+		let description = refinedEventDescription(
+			generated?.eventDescription ?? fallback.eventDescription,
+			scheduleContext: scheduleContext
+		)
+		let attachesToSource = shouldAttachToSource(
+			eventDescription: description,
+			scheduleContext: scheduleContext,
+			sourceEvent: sourceEvent
+		)
+		let schedule = GeneratedReminderSchedule(
+			scheduleContext: scheduleContext,
+			eventDescription: attachesToSource ? sourceEvent.title : description,
+			locationDescription: generated?.locationDescription ?? "none"
+		)
+		return GeneratedReminder(
+			draft: draft,
+			schedule: schedule,
+			attachesToSource: attachesToSource,
+			occurrencePolicy: generated == nil
+				? fallback.occurrencePolicy
+				: occurrencePolicy(in: scheduleContext),
+			validity: generated == nil
+				? fallback.validity
+				: relativeValidity(in: scheduleContext)
+		)
+	}
+
+	static func groundedSchedule(
+		for evidence: String,
+		in corpus: String
+	) -> GroundedReminderSchedule {
+		let context = contextualScheduleText(for: evidence, in: corpus)
+		return GroundedReminderSchedule(
+			context: context,
+			eventDescription: explicitEventDescriptions(in: context)
+				.joined(separator: " or "),
+			occurrencePolicy: occurrencePolicy(in: context),
+			validity: relativeValidity(in: context)
+		)
+	}
+
+	private static func mayContainLocationConstraint(_ text: String) -> Bool {
+		let normalized = " " + text.reminderNormalized
+		let targetPrefixes = Set([
+			"a", "an", "every", "future", "morning", "afternoon", "evening",
+			"next", "the", "this", "call", "class", "event", "game", "gaming",
+			"gym", "meeting", "meetup", "practice", "session", "standup", "workshop"
+		])
+		var searchStart = normalized.startIndex
+		while let range = normalized.range(
+			of: " at ",
+			range: searchStart..<normalized.endIndex
+		) {
+			let suffix = normalized[range.upperBound...]
+			let next = suffix.split(separator: " ").first.map(String.init) ?? ""
+			if !targetPrefixes.contains(next) {
+				return true
+			}
+			searchStart = range.upperBound
+		}
+		return false
+	}
+
+	private static func contextualScheduleText(
+		for evidence: String,
+		in corpus: String
+	) -> String {
+		let excerpts = sentenceExcerpts(corpus)
+		let normalizedEvidence = evidence.reminderNormalized
+		guard let index = excerpts.firstIndex(where: {
+			let normalized = $0.reminderNormalized
+			return normalized.contains(normalizedEvidence)
+				|| normalizedEvidence.contains(normalized)
+		}) else {
+			return evidence
+		}
+		var context = excerpts[index]
+		let hasOwnTarget = !explicitEventDescriptions(in: context).isEmpty
+			|| ["this event", "this group", "these sessions", "these classes"]
+				.contains(where: context.reminderNormalized.contains)
+		if !hasOwnTarget {
+			for previousIndex in stride(from: index - 1, through: max(0, index - 10), by: -1) {
+				context = excerpts[previousIndex] + " " + context
+				let explicit = explicitEventDescriptions(in: context)
+				let seeksMultipleNames = [
+					"as well", "same thing", "same goal", "same for",
+					"today and tomorrow", "today or tomorrow"
+				].contains(where: context.reminderNormalized.contains)
+				if !explicit.isEmpty, !seeksMultipleNames || explicit.count >= 2 {
+					break
+				}
+			}
+		}
+		let extensionSignals = ["as well", "same thing", "same goal", "same for"]
+		let following = (index + 1)..<min(excerpts.endIndex, index + 7)
+		if let extensionIndex = following.first(where: { nextIndex in
+			extensionSignals.contains {
+				excerpts[nextIndex].reminderNormalized.contains($0)
+			}
+		}) {
+			context += " " + excerpts[(index + 1)...extensionIndex].joined(separator: " ")
+		}
+		return context
+	}
+
+	private static func shouldAttachToSource(
+		eventDescription: String,
+		scheduleContext: String,
+		sourceEvent: JournalCalendarEvent
+	) -> Bool {
+		let explicitDescriptions = explicitEventDescriptions(in: scheduleContext)
+		if explicitDescriptions.count > 1 {
+			return false
+		}
+
+		let normalizedContext = scheduleContext.reminderNormalized
+		let deicticTargets = [
+			"this event", "this group", "these sessions", "these classes",
+			"next time", "same event", "future me"
+		]
+		if deicticTargets.contains(where: normalizedContext.contains),
+			explicitDescriptions.isEmpty {
+			return true
+		}
+
+		let ignored = Set([
+			"a", "an", "and", "at", "every", "for", "in", "my", "next",
+			"of", "on", "or", "the", "this"
+		])
+		let described = Set(eventDescription.reminderNormalized.split(separator: " ").map(String.init))
+			.subtracting(ignored)
+		let source = Set(sourceEvent.title.reminderNormalized.split(separator: " ").map(String.init))
+			.subtracting(ignored)
+		guard !described.isEmpty, !source.isEmpty else { return false }
+		let overlap = described.intersection(source)
+		return !overlap.isEmpty
+			&& (overlap.count >= 2 || overlap == described || overlap == source)
+	}
+
+	private static func occurrencePolicy(
+		in scheduleContext: String
+	) -> EventReminderOccurrencePolicy {
+		let normalized = scheduleContext.reminderNormalized
+		if normalized.contains("today and tomorrow")
+			|| normalized.contains("today or tomorrow") {
+			return .everyMatch
+		}
+		let standingSignals = [
+			"every", "always", "each ", "from now on", "going forward",
+			"same deal", "these sessions", "these classes"
+		]
+		if standingSignals.contains(where: normalized.contains) {
+			return .everyMatch
+		}
+		if relativeValidity(in: scheduleContext) != nil {
+			return .everyMatch
+		}
+		let pluralEventTerms = [
+			"calls", "classes", "events", "games", "meetings", "meetups",
+			"practices", "sessions", "standups", "workshops"
+		]
+		if pluralEventTerms.contains(where: {
+			normalized.split(separator: " ").contains(Substring($0))
+		}), !normalized.contains("next ") {
+			return .everyMatch
+		}
+		return .nextMatch
 	}
 
 	private static func sentenceExcerpts(_ transcript: String) -> [String] {
@@ -547,54 +519,12 @@ enum ReminderEngine {
 		return excerpts
 	}
 
-	private static func actionFocusExcerpts(_ excerpt: String) -> [String] {
-		let pattern = #",\s*(?:(?:and\s+)?(?=in\s+(?:the\s+)?(?:morning|afternoon|evening))|and\s+(?=at\s+(?:the\s+)?(?:morning|afternoon|evening|gaming|role)))"#
-		guard let expression = try? NSRegularExpression(pattern: pattern) else {
-			return [excerpt]
-		}
-		let fullRange = NSRange(excerpt.startIndex..., in: excerpt)
-		let matches = expression.matches(in: excerpt, range: fullRange)
-		guard !matches.isEmpty else { return [excerpt] }
-		var ranges: [Range<String.Index>] = []
-		var start = excerpt.startIndex
-		for match in matches {
-			guard let range = Range(match.range, in: excerpt) else { continue }
-			ranges.append(start..<range.lowerBound)
-			start = range.upperBound
-		}
-		ranges.append(start..<excerpt.endIndex)
-		return ranges.compactMap {
-			let value = excerpt[$0].trimmingCharacters(in: .whitespacesAndNewlines)
-			return value.isEmpty ? nil : value
-		}
-	}
-
-	private static func compactRelatedFacts(
-		_ drafts: [GeneratedReminderDraft],
-		in excerpt: String
-	) -> [GeneratedReminderDraft] {
-		let excerpt = excerpt.reminderNormalized
-		guard drafts.count > 1,
-			excerpt.contains("remember "),
-			!excerpt.contains("remember to "),
-			drafts.allSatisfy({
-				let text = clean($0.text).lowercased()
-				return text.hasPrefix("remember ")
-					|| text.hasPrefix("keep in mind ")
-			})
-		else { return drafts }
-
-		let prefixes = ["Remember that ", "Remember ", "Keep in mind that ", "Keep in mind "]
-		let facts = drafts.map { draft in
-			let text = clean(draft.text)
-			let prefix = prefixes.first {
-				text.lowercased().hasPrefix($0.lowercased())
-			}
-			return prefix.map { String(text.dropFirst($0.count)) } ?? text
-		}
-		var combined = drafts[0]
-		combined.text = "Remember " + facts.joined(separator: "; ")
-		return [combined]
+	private static func groundedExcerpt(_ value: String, in corpus: String) -> String? {
+		let value = clean(value)
+		guard !value.isEmpty,
+			corpus.reminderNormalized.contains(value.reminderNormalized)
+		else { return nil }
+		return value
 	}
 
 	private static func hasFutureCueSignal(_ excerpt: String) -> Bool {
@@ -627,97 +557,6 @@ enum ReminderEngine {
 		]
 		let words = Set(normalized.split(separator: " ").map(String.init))
 		return !words.isDisjoint(with: actionWords)
-	}
-
-	private static func isClearlyEligible(
-		_ excerpt: String,
-		previousExcerpt: String?
-	) -> Bool {
-		let normalized = excerpt.reminderNormalized
-		let exclusionSignals = [
-			"do not",
-			"don t",
-			"forget that",
-			"not planning",
-			"nothing to remember",
-			"advice for",
-			"coach said",
-			"not me",
-			"i told ",
-			"said he",
-			"said she",
-			"he needs",
-			"she needs",
-			"they should",
-			"would probably"
-		]
-		let hasPositiveReplacement = normalized.contains("instead")
-			|| normalized.contains("but bring")
-		guard hasPositiveReplacement
-			|| !exclusionSignals.contains(where: normalized.contains)
-		else { return false }
-		let eventSignals = [
-			" call", " class", " event", " game", " gym", " meeting", " meetup",
-			" practice", " scene", " session", " standup", " workshop",
-			"next time", "this group", "these sessions"
-		]
-		let actionWords = Set([
-			"ask", "bring", "focus", "forget", "keep", "learn", "look", "make", "open",
-			"pack", "pause", "practice", "remember", "take", "try", "use", "wear"
-		])
-		let words = Set(normalized.split(separator: " ").map(String.init))
-		let hasAction = !words.isDisjoint(with: actionWords)
-			|| normalized.contains("can t forget")
-			|| normalized.contains("cannot forget")
-		if hasAction && eventSignals.contains(where: normalized.contains) {
-			return true
-		}
-		let continuationSignals = [
-			"if it",
-			"same deal",
-			"same for",
-			"except"
-		]
-		return hasAction
-			&& continuationSignals.contains(where: normalized.contains)
-			&& previousExcerpt.map {
-				let previous = $0.reminderNormalized
-				return eventSignals.contains(where: previous.contains)
-			} == true
-	}
-
-	private static func isClearlyIneligible(_ excerpt: String) -> Bool {
-		let normalized = excerpt.reminderNormalized
-		let speakerCommitmentSignals = [
-			"actually want",
-			"can t forget",
-			"cannot forget",
-			"future me",
-			"i need",
-			"i plan",
-			"i should",
-			"i want",
-			"note to self",
-			"save this"
-		]
-		let anotherPersonSignals = [
-			"coach said",
-			"he needs",
-			"he should",
-			"i told ",
-			"said he",
-			"said she",
-			"she needs",
-			"she should",
-			"they need",
-			"they should"
-		]
-		let belongsOnlyToSomeoneElse = anotherPersonSignals.contains(where: normalized.contains)
-			&& !speakerCommitmentSignals.contains(where: normalized.contains)
-		return (normalized.contains("schedule") && normalized.contains("appointment"))
-			|| normalized.contains("buy groceries")
-			|| normalized.contains("renew my passport")
-			|| belongsOnlyToSomeoneElse
 	}
 
 	private static func actionIsGrounded(_ text: String, in evidence: String) -> Bool {
@@ -768,131 +607,103 @@ enum ReminderEngine {
 		.max { $0.1 < $1.1 }?.0
 	}
 
-	private static func explicitEventDescription(in text: String) -> String? {
+	private static func refinedEventDescription(
+		_ generated: String,
+		scheduleContext: String
+	) -> String {
+		let generated = clean(generated)
+		let explicit = explicitEventDescriptions(in: scheduleContext)
+		if explicit.count > 1 {
+			return explicit.joined(separator: " or ")
+		}
+		let generic = Set([
+			"event", "events", "game", "games", "game event", "gaming event",
+			"session", "sessions"
+		])
+		if generic.contains(generated.reminderNormalized),
+			let specific = explicit.first {
+			return specific
+		}
+		return generated
+	}
+
+	private static func explicitEventDescriptions(in text: String) -> [String] {
 		let words = text.reminderNormalized.split(separator: " ").map(String.init)
 		let anchorPrefixes = [
 			"call", "class", "event", "game", "gaming", "gym", "meeting",
 			"meetup", "practice", "session", "standup", "workshop"
 		]
-		let ignored = Set([
-			"a", "an", "at", "before", "during", "every", "for", "future", "in",
-			"morning", "afternoon", "evening", "next", "of", "on", "the", "this", "to"
+		let genericWords = Set([
+			"call", "class", "event", "events", "game", "games", "gaming", "gym",
+			"meeting", "meetup", "meetups", "practice", "session", "sessions",
+			"standup", "workshop"
 		])
+		let connectors = Set(["of", "on", "or", "the"])
+		let boundaries = Set([
+			"a", "actually", "also", "an", "and", "ask", "at", "before", "bring",
+			"during", "every", "focus", "for", "future", "have", "i", "in",
+			"keep", "learn", "look", "make", "morning", "afternoon", "evening",
+			"my", "next", "play", "read", "remember", "same", "take", "this",
+			"to", "today", "tomorrow", "try", "use", "wear"
+		])
+		var descriptions: [String] = []
 		for index in words.indices {
 			guard anchorPrefixes.contains(where: words[index].hasPrefix) else { continue }
-			let lowerBound = max(words.startIndex, index - 3)
-			var phrase = words[lowerBound...index].filter { !ignored.contains($0) }
-			if words[index].hasPrefix("game"),
-				words.indices.contains(index + 1),
-				["night", "meetup", "meetups"].contains(words[index + 1]) {
-				phrase.append(words[index + 1])
+			var start = index
+			var cursor = index - 1
+			while cursor >= words.startIndex, index - cursor <= 6 {
+				if boundaries.contains(words[cursor]) { break }
+				start = cursor
+				cursor -= 1
 			}
-			let actionWords = Set([
-				"ask", "bring", "focus", "keep", "learn", "look", "open",
-				"pack", "pause", "remember", "take", "try", "use", "wear"
+			let end = words.indices.contains(index + 1)
+				&& words[index].hasPrefix("game")
+				&& ["night", "meetup", "meetups"].contains(words[index + 1])
+				? index + 1
+				: index
+			var phrase = Array(words[start...end])
+			while phrase.first.map(connectors.contains) == true {
+				phrase.removeFirst()
+			}
+			let meaningful = Set(phrase).subtracting(genericWords).subtracting([
+				"a", "an", "and", "of", "on", "or", "the"
 			])
-			phrase = phrase.filter { !actionWords.contains($0) }
-			if !phrase.isEmpty {
-				return phrase.joined(separator: " ")
-			}
-		}
-		return nil
-	}
-
-	private static func relevantScheduleText(
-		for evidence: String,
-		in excerpts: [String]
-	) -> String {
-		let normalizedEvidence = evidence.reminderNormalized
-		guard let index = excerpts.firstIndex(where: {
-			$0.reminderNormalized.contains(normalizedEvidence)
-				|| normalizedEvidence.contains($0.reminderNormalized)
-		}) else {
-			return evidence
-		}
-		var relevant = [evidence]
-		let normalizedExcerpt = excerpts[index].reminderNormalized
-		if relativeValidity(in: evidence) == nil,
-			relativeValidity(in: excerpts[index]) != nil {
-			relevant.insert(excerpts[index], at: 0)
-		}
-		if explicitEventDescription(in: evidence) == nil,
-			explicitEventDescription(in: excerpts[index]) != nil {
-			relevant.insert(excerpts[index], at: 0)
-		}
-		let continuationSignals = [
-			"if it",
-			"same deal",
-			"same for",
-			"except",
-			"that event",
-			"those events"
-		]
-		if index > 0 && continuationSignals.contains(where: normalizedExcerpt.contains) {
-			relevant.insert(excerpts[index - 1], at: 0)
-		}
-		return relevant.joined(separator: " ")
-	}
-
-	private static func occurrencePolicy(
-		in scheduleText: String
-	) -> EventReminderOccurrencePolicy {
-		let normalized = scheduleText.reminderNormalized
-		let standingSignals = [
-			" every ",
-			"always",
-			"from now on",
-			"going forward"
-		]
-		let padded = " \(normalized) "
-		let oneTimeSignals = [
-			"next time",
-			"next class",
-			"next session",
-			"next meeting",
-			"next standup",
-			"next gym",
-			"next game",
-			"next meetup",
-			"next week s"
-		]
-		let lastStanding = standingSignals.compactMap {
-			padded.range(of: $0, options: .backwards).map {
-				padded.distance(from: padded.startIndex, to: $0.lowerBound)
-			}
-		}.max()
-		let lastOneTime = oneTimeSignals.compactMap {
-			normalized.range(of: $0, options: .backwards).map {
-				normalized.distance(from: normalized.startIndex, to: $0.lowerBound)
-			}
-		}.max()
-		if let lastOneTime,
-			lastStanding == nil || lastOneTime > lastStanding! {
-			return .nextMatch
-		}
-		if lastStanding != nil || relativeValidity(in: scheduleText) != nil {
-			return .everyMatch
-		}
-		let words = normalized.split(separator: " ").map(String.init)
-		if normalized.contains("future"),
-			words.contains(where: {
-				["calls", "classes", "events", "games", "meetings", "meetups", "sessions", "standups", "workshops"].contains($0)
+			let genericOnlyAllowed = phrase.contains {
+				["gaming", "gym", "meetup", "meetups", "practice", "standup", "workshop"]
+					.contains($0)
+			} || Set(phrase).intersection(genericWords).count >= 2
+			guard !meaningful.isEmpty || genericOnlyAllowed else { continue }
+			let description = phrase.joined(separator: " ")
+			if !descriptions.contains(where: {
+				$0.reminderNormalized == description.reminderNormalized
 			}) {
-			return .everyMatch
+				descriptions.append(description)
+			}
 		}
-		if words.contains(where: {
-			["calls", "classes", "events", "games", "meetings", "meetups", "sessions", "standups", "workshops"].contains($0)
-		}), !normalized.contains("next") {
-			return .everyMatch
+		return descriptions.filter { description in
+			let terms = Set(description.reminderNormalized.split(separator: " ").map(String.init))
+				.subtracting(["a", "an", "and", "of", "on", "or", "the"])
+			return !descriptions.contains { other in
+				guard other != description else { return false }
+				let otherTerms = Set(other.reminderNormalized.split(separator: " ").map(String.init))
+					.subtracting(["a", "an", "and", "of", "on", "or", "the"])
+				return terms.isSubset(of: otherTerms) && otherTerms.count > terms.count
+			}
 		}
-		if lastOneTime != nil {
-			return .nextMatch
-		}
-		return .nextMatch
 	}
 
 	private static func relativeValidity(in text: String) -> ReminderRelativeValidity? {
 		let normalized = text.reminderNormalized
+		if normalized.contains("today and tomorrow")
+			|| normalized.contains("today or tomorrow") {
+			return ReminderRelativeValidity(value: 2, component: .day)
+		}
+		if normalized.contains("today"),
+			normalized.contains("tomorrow"),
+			["as well", "same thing", "same goal", "same for"]
+				.contains(where: normalized.contains) {
+			return ReminderRelativeValidity(value: 2, component: .day)
+		}
 		let pattern = #"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a|next|this)\s+(day|days|week|weeks|month|months)\b"#
 		guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
 		let range = NSRange(normalized.startIndex..., in: normalized)
@@ -938,47 +749,6 @@ enum ReminderEngine {
 		return latest?.validity
 	}
 
-	private static func shouldAttachToSource(
-		evidence: String,
-		sourceEvent: JournalCalendarEvent
-	) -> Bool {
-		let normalized = evidence.reminderNormalized
-		let deicticSignals = [
-			"this group",
-			"this event",
-			"these people",
-			"these sessions",
-			"next session",
-			"next time i see"
-		]
-		if deicticSignals.contains(where: normalized.contains) {
-			return true
-		}
-		if normalized.contains("next time"),
-			explicitEventDescription(in: evidence) == nil {
-			return true
-		}
-		if !sourceEvent.isRecurring { return false }
-		let ignored = Set([
-			"team",
-			"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
-		])
-		let sourceWords = Set(
-			sourceEvent.title.reminderNormalized.split(separator: " ").map(String.init)
-		).subtracting(ignored)
-		let evidenceWords = Set(normalized.split(separator: " ").map(String.init))
-		if !sourceWords.isEmpty && !sourceWords.isDisjoint(with: evidenceWords) {
-			return true
-		}
-		let eventWordPrefixes = [
-			"call", "class", "event", "game", "gym", "meet", "practice",
-			"session", "standup", "workshop"
-		]
-		return !evidenceWords.contains {
-			eventWordPrefixes.contains(where: $0.hasPrefix)
-		}
-	}
-
 	private static func rule(
 		from generated: GeneratedReminder,
 		sourceEvent: JournalCalendarEvent,
@@ -1003,7 +773,7 @@ enum ReminderEngine {
 			guard !description.isEmpty else { return nil }
 			selector = .fuzzy(FuzzyEventSelector(
 				semanticDescription: description,
-				timeBucket: explicitTimeBucket(in: evidence),
+				timeBucket: explicitTimeBucket(in: generated.scheduleContext),
 				locationDescription: groundedOptionalConstraint(
 					generated.locationDescription,
 					in: evidenceCorpus
@@ -1045,13 +815,26 @@ enum ReminderEngine {
 				)
 			)
 		})
-		guard SystemLanguageModel.default.availability == .available else { return decisions }
-
-		let modelCandidates = candidates.filter {
+		let eligibleCandidates = candidates.filter {
 			guard selector.timeBucket.contains($0.startDate) else { return false }
 			guard let requiredLocation = selector.locationDescription else { return true }
 			return $0.location?.reminderNormalized.contains(requiredLocation.reminderNormalized) == true
-		}.filter { hasSemanticAnchor(selector: selector, event: $0) }
+		}
+		let exactMatches = eligibleCandidates.filter {
+			exactNamedTargetMatch(selector: selector, event: $0)
+		}
+		for event in exactMatches {
+			decisions[event.focusKey] = EventMatchAssessment(
+				matches: true,
+				reason: "The event title matches a named target."
+			)
+		}
+
+		guard SystemLanguageModel.default.availability == .available else { return decisions }
+		let exactMatchKeys = Set(exactMatches.map(\.focusKey))
+		let modelCandidates = eligibleCandidates
+			.filter { !exactMatchKeys.contains($0.focusKey) }
+			.filter { hasSemanticAnchor(selector: selector, event: $0) }
 		for event in modelCandidates {
 			let session = LanguageModelSession(instructions: """
 			Classify one calendar event against the supplied semantic selector. A match must clearly satisfy the event type and every stated constraint. Prefer false when uncertain. Title, notes, location, and time are evidence; do not invent missing facts. A shared venue or one related word is not enough to establish the event type.
@@ -1085,6 +868,35 @@ enum ReminderEngine {
 			)
 		}
 		return decisions
+	}
+
+	private static func exactNamedTargetMatch(
+		selector: FuzzyEventSelector,
+		event: JournalCalendarEvent
+	) -> Bool {
+		let ignored = Set([
+			"a", "an", "and", "at", "call", "class", "event", "events", "for",
+			"game", "games", "gaming", "in", "meeting", "meetup", "meetups",
+			"of", "on", "or", "practice", "session", "sessions", "standup",
+			"the", "workshop"
+		])
+		let titleWords = Set(event.title.reminderNormalized.split(separator: " ").map(String.init))
+		return selector.semanticDescription.reminderNormalized
+			.components(separatedBy: " or ")
+			.contains { alternative in
+				let targetWords = Set(alternative.split(separator: " ").map(String.init))
+					.subtracting(ignored)
+				guard targetWords.count >= 2 else { return false }
+				return targetWords.allSatisfy { targetWord in
+					titleWords.contains { titleWord in
+						let length = min(4, min(targetWord.count, titleWord.count))
+						return length >= 3
+							? targetWord.prefix(length) == titleWord.prefix(length)
+								|| (targetWord.count >= 4 && titleWord.contains(targetWord))
+							: targetWord == titleWord
+					}
+				}
+			}
 	}
 
 	private static func hasSemanticAnchor(
@@ -1157,6 +969,28 @@ enum ReminderEngine {
 			if !duplicate { kept.append(reminder) }
 		}
 		return kept
+	}
+
+	private static func applyingManualRemovals(
+		to reminders: [EventReminderRule],
+		feedback: [ReminderFeedback]
+	) -> [EventReminderRule] {
+		let removed = feedback
+			.filter { $0.kind == .manualRemoval }
+			.map { meaningfulActionWords($0.text.replacingOccurrences(
+				of: "Keep removed:",
+				with: "",
+				options: [.caseInsensitive, .anchored]
+			)) }
+			.filter { !$0.isEmpty }
+		return reminders.filter { reminder in
+			let words = meaningfulActionWords(reminder.text)
+			return !removed.contains { removedWords in
+				!words.isEmpty
+					&& words.intersection(removedWords).count
+						== min(words.count, removedWords.count)
+			}
+		}
 	}
 
 	private static func meaningfulActionWords(_ text: String) -> Set<String> {

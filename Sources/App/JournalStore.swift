@@ -265,23 +265,13 @@ final class JournalStore {
 		entryProcessingPhases[entryID] = .reminders
 		var reminderResult: ReminderParsingResult?
 		if settings.eventRemindersEnabled {
-			let fresh = await ReminderEngine.parse(
+			reminderResult = await ReminderEngine.parse(
 				transcript: transcript,
 				sourceEvent: source.calendarEvent,
 				createdAt: source.createdAt,
-				currentReminders: source.reminders
+				currentReminders: source.reminders,
+				feedback: source.reminderFeedback
 			)
-			if source.reminderFeedback.isEmpty {
-				reminderResult = fresh
-			} else {
-				reminderResult = await ReminderEngine.parse(
-					transcript: transcript,
-					sourceEvent: source.calendarEvent,
-					createdAt: source.createdAt,
-					currentReminders: fresh.reminders,
-					feedback: source.reminderFeedback
-				)
-			}
 		}
 
 		guard !Task.isCancelled,

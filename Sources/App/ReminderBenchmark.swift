@@ -166,13 +166,25 @@ enum ReminderBenchmark {
 		let arguments = ProcessInfo.processInfo.arguments
 		guard arguments.contains("-reminder-benchmark") else { return }
 		let requestedGroup = argument(after: "-reminder-benchmark-group", in: arguments)
-		let groups = requestedGroup.map { groupID in
-			ReminderBenchmarkCorpus.groups.filter { $0.id == groupID }
-		} ?? ReminderBenchmarkCorpus.groups
+		let requestedCase = argument(after: "-reminder-benchmark-case", in: arguments)
+		var groups = arguments.contains("-reminder-benchmark-deterministic-only")
+			? []
+			: requestedGroup.map { groupID in
+				ReminderBenchmarkCorpus.groups.filter { $0.id == groupID }
+			} ?? ReminderBenchmarkCorpus.groups
+		if let requestedCase {
+			groups = groups.compactMap { group in
+				var group = group
+				group.cases = group.cases.filter {
+					$0.name.localizedCaseInsensitiveContains(requestedCase)
+				}
+				return group.cases.isEmpty ? nil : group
+			}
+		}
 
 		print("REMINDER_BENCHMARK_BEGIN")
 		print(modelStatus)
-		print("\(ReminderBenchmarkCorpus.caseCount) model-backed cases in \(ReminderBenchmarkCorpus.groups.count) groups")
+		print("\(groups.reduce(0) { $0 + $1.cases.count }) model-backed cases in \(groups.count) groups")
 		let run = await run(groups: groups) { progress in
 			if let result = progress.result {
 				print(result.consoleReport)
@@ -470,6 +482,17 @@ enum ReminderBenchmark {
 			ReminderBenchmarkCheckResult(
 				name: "unpinned reminder JSON remains decodable",
 				passed: unpinnedReminderDecodingPasses(series)
+			),
+			ReminderBenchmarkCheckResult(
+				name: "summary rejects ungrounded file artifacts",
+				passed: ReflectionEngine.containsUngroundedArtifact(
+					"You will stay engaged.} Nehuan.S.20240514.1732.v1.20240514.1732.log",
+					transcript: "I want to stay engaged during the game."
+				)
+			),
+			ReminderBenchmarkCheckResult(
+				name: "distant named events ground a shared cue",
+				passed: namedEventSchedulePasses()
 			)
 		]
 
@@ -508,7 +531,77 @@ enum ReminderBenchmark {
 			name: "every match materializes all occurrences",
 			passed: repeated.occurrences.map(\.event.id) == [first.id, second.id]
 		))
+
+		let upcomingSource = await ReminderEngine.resolve(
+			entries: [contractEntry(source, once)],
+			events: [source, first],
+			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60)
+		)
+		checks.append(ReminderBenchmarkCheckResult(
+			name: "upcoming source occurrence remains eligible",
+			passed: upcomingSource.occurrences.map(\.event.id) == [source.id]
+		))
+
+		let werewolf = contractEvent(
+			"named-werewolf",
+			nil,
+			"Ultimate Werewolf",
+			0,
+			19,
+			"The Brewtorium"
+		)
+		let clocktower = contractEvent(
+			"named-clocktower",
+			nil,
+			"Blood on the Clocktower",
+			1,
+			19,
+			"The Brewtorium"
+		)
+		let namedGames = contractRule(
+			"Focus on the game",
+			.fuzzy(FuzzyEventSelector(
+				semanticDescription: "ultimate werewolf event or blood on the clock tower event",
+				timeBucket: .any,
+				locationDescription: nil,
+				examples: []
+			)),
+			.everyMatch
+		)
+		let namedResolution = await ReminderEngine.resolve(
+			entries: [contractEntry(werewolf, namedGames)],
+			events: [werewolf, clocktower],
+			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60)
+		)
+		checks.append(ReminderBenchmarkCheckResult(
+			name: "named fuzzy targets resolve without a model call",
+			passed: namedResolution.occurrences.map(\.event.id)
+				== [werewolf.id, clocktower.id]
+		))
 		return checks
+	}
+
+	private static func namedEventSchedulePasses() -> Bool {
+		let transcript = """
+		Today I have this Ultimate Werewolf event. My goal is to play while being charming and easygoing. And actually for tomorrow's Blood on the Clocktower event as well, let's do the same thing. Let's have a reminder for today and tomorrow to focus on the game and read the text. Just read one or two things and then jump in.
+		"""
+		let schedule = ReminderEngine.groundedSchedule(
+			for: "Let's have a reminder for today and tomorrow to focus on the game and read the text.",
+			in: transcript
+		)
+		let charmingSchedule = ReminderEngine.groundedSchedule(
+			for: "My goal is to play while being charming and easygoing.",
+			in: transcript
+		)
+		return [schedule, charmingSchedule].allSatisfy { schedule in
+			let normalized = schedule.eventDescription.reminderNormalized
+			return ["ultimate", "werewolf", "blood", "clocktower"].allSatisfy {
+				normalized.contains($0)
+			}
+				&& schedule.occurrencePolicy == .everyMatch
+				&& schedule.validity?.value == 2
+				&& schedule.validity?.component == .day
+		}
 	}
 
 	private static func contractEvent(

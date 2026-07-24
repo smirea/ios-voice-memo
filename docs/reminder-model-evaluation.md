@@ -8,8 +8,10 @@ xcrun simctl launch --terminate-running-process --console <device-id> \
 ```
 
 Use `-reminder-benchmark-group <id>` to run one of `direct`, `boundaries`, `schedule`, `speech`, `dense`, `feedback`, or `resolution`.
+Use `-reminder-benchmark-case "<name fragment>"` to isolate one regression.
+Use `-reminder-benchmark-deterministic-only` to verify the non-model contract checks when Foundation Models is unavailable.
 
-The cases live in `Sources/App/ReminderBenchmarkCases.swift`. They are compiled into the app so the same corpus can compare future system-model and parser revisions. The benchmark currently has 72 model-backed cases in seven levels plus eight deterministic contract checks:
+The cases live in `Sources/App/ReminderBenchmarkCases.swift`. They are compiled into the app so the same corpus can compare future system-model and parser revisions. The benchmark currently has 73 model-backed cases in seven levels plus twelve deterministic contract checks:
 
 1. Direct cues
 2. Precision boundaries
@@ -19,7 +21,7 @@ The cases live in `Sources/App/ReminderBenchmarkCases.swift`. They are compiled 
 6. Feedback reprocessing
 7. Fuzzy event resolution
 
-The levels progress from literal instructions to filler, indirect intent, negation, ownership changes, self-correction, multiple simultaneous rules, changing event titles, semantic near misses, and corrections to an existing reminder set.
+The levels progress from literal instructions to filler, indirect intent, negation, ownership changes, self-correction, multiple simultaneous rules, changing event titles, semantic near misses, corrections to an existing reminder set, and shared goals spanning multiple named events.
 
 ## Metrics
 
@@ -53,12 +55,19 @@ deterministic checks: 8/8
 
 Targeted runs also passed dense/adversarial extraction at 10/10, precision boundaries at 12/12, feedback reprocessing at 8/8, and fuzzy resolution at 10/10. Foundation Models output is nondeterministic, so scores should be compared over complete runs rather than treated as permanent guarantees.
 
+## Current 73-case revision verification
+
+The updated parser passes all 12 deterministic checks, including the two named-game regression, two-day validity, upcoming source-event eligibility, exact named-event resolution, and rejection of an ungrounded `.log` summary artifact.
+
+A targeted model-backed run of the new named-game case was attempted on both an existing and a fresh iOS 26.5 Simulator. Both failed inside the system model before producing content with `ModelManagerServices.ModelManagerError Code=1026`. No new model-quality score is recorded for this revision; the 72-case result above remains a historical baseline rather than a claim about the updated parser.
+
 ## Findings that changed the parser
 
 - One large guided schema produced valid JSON-like shapes but mixed selector, recurrence, time, and duration values.
 - Batch classification with opaque references caused decisions to leak between candidate events.
 - Supplying an adjacent eligible action during draft extraction caused cross-action leakage; each focused action now gets an isolated model session.
 - Compact action drafts and one-candidate boolean classifications were materially more reliable.
+- Event scheduling needs the complete memo: an action near the end may refer to specific events named several sentences earlier.
 - Explicit time, recurrence, relative duration, venue grounding, and obvious semantic conflicts are safer as deterministic validation.
-- Feedback performs better as edits to the authoritative current set than as a fresh extraction from the original transcript.
+- Feedback performs better when the model sees the transcript, current reminders, and ordered corrections in one coherent pass.
 - A small deterministic gate improves both latency and precision, while ambiguous ownership, quotation, and correction cases still benefit from the model.

@@ -258,7 +258,14 @@ enum ReminderBenchmarkCorpus {
 	}
 
 	private static var denseAndAdversarial: ReminderBenchmarkGroup {
-		ReminderBenchmarkGroup(
+		let werewolf = sourceEvent(
+			"werewolf-source",
+			"Ultimate Werewolf",
+			19,
+			"The Brewtorium",
+			true
+		)
+		return ReminderBenchmarkGroup(
 			id: "dense",
 			title: "Dense and adversarial",
 			level: 5,
@@ -311,7 +318,17 @@ enum ReminderBenchmarkCorpus {
 				]),
 				parse("Negated object with positive replacement", .gym, "Next gym, do not bring plain water; bring electrolytes instead.", [
 					cue("electrolytes", ["bring", "electrolytes"], .series, .nextMatch)
-				])
+				]),
+				parse(
+					"Two named games share the same goals",
+					werewolf,
+					"Today I have this Ultimate Werewolf event. My goal for today is to actually play the game and think about the game, but also be charming and easygoing. And actually for tomorrow's Blood on the Clocktower event as well, let's do the same thing. Let's have a reminder for today and tomorrow to focus on the game and read the text. Just read one or two things and then jump in instead of looking too much at the sheet.",
+					[
+						cue("charming", ["charming", "easygoing"], .fuzzy, .everyMatch, nil, 1...2, eventTerms: ["ultimate", "werewolf", "blood", "clocktower"]),
+						cue("focus", ["focus", "game"], .fuzzy, .everyMatch, nil, 1...2, eventTerms: ["ultimate", "werewolf", "blood", "clocktower"]),
+						cue("read", ["read", "jump"], .fuzzy, .everyMatch, nil, 1...2, eventTerms: ["ultimate", "werewolf", "blood", "clocktower"])
+					]
+				)
 			]
 		)
 	}
@@ -510,6 +527,20 @@ enum ReminderBenchmarkCorpus {
 		.parsing(ReminderParsingBenchmarkCase(
 			name: name,
 			sourceEvent: fixture.map(event),
+			transcript: transcript,
+			expected: expected
+		))
+	}
+
+	private static func parse(
+		_ name: String,
+		_ sourceEvent: JournalCalendarEvent,
+		_ transcript: String,
+		_ expected: [ExpectedReminderCue]
+	) -> ReminderBenchmarkCase {
+		.parsing(ReminderParsingBenchmarkCase(
+			name: name,
+			sourceEvent: sourceEvent,
 			transcript: transcript,
 			expected: expected
 		))
