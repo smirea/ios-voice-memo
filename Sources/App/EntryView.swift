@@ -235,7 +235,7 @@ struct EntryView: View {
 			if showsNoteActions {
 				noteActionsPanel
 					.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
-					.glassEffectID("note-actions", in: noteActionsNamespace)
+					.glassEffectID("note-actions-panel", in: noteActionsNamespace)
 					.glassEffectTransition(.matchedGeometry)
 			} else {
 				Button {
@@ -249,7 +249,7 @@ struct EntryView: View {
 				}
 				.buttonStyle(.plain)
 				.glassEffect(.regular.interactive(), in: Circle())
-				.glassEffectID("note-actions", in: noteActionsNamespace)
+				.glassEffectID("note-actions-button", in: noteActionsNamespace)
 				.glassEffectTransition(.matchedGeometry)
 				.accessibilityLabel("Note actions")
 			}
@@ -307,7 +307,7 @@ struct EntryView: View {
 	}
 
 	private func setNoteActionsPresented(_ isPresented: Bool) {
-		withAnimation(.spring(duration: 0.34, bounce: 0.18)) {
+		withAnimation(.spring(duration: 0.42, bounce: 0.12)) {
 			showsNoteActions = isPresented
 		}
 	}

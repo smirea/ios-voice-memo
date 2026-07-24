@@ -48,7 +48,7 @@
 - Shows a short generated summary for recordings longer than 20 seconds and attributes the analysis model below the summary or title.
 - Shows event reminders directly below the summary with compact frequency, quoted target, and duration; tapping uses native disclosure to expand its rationale without extra top or leading padding, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
 - **Add Feedback** records and transcribes a short correction, deletes the temporary audio, and reprocesses only the reminders.
-- A bottom-left note actions menu persists **Show Models** app-wide with the whole toggle row tappable, reprocesses all generated analysis from the transcript even after leaving the note while safely queuing other reprocesses, and shares complete metadata as a `.json` file with a separate **Copy JSON Text** action.
+- A bottom-left glass button morphs into note actions that persist **Show Models** app-wide with the whole toggle row tappable, reprocess all generated analysis from the transcript even after leaving the note while safely queuing other reprocesses, and share complete metadata as a `.json` file with a separate **Copy JSON Text** action.
 - When enabled in Settings, shows a four-line transcript preview and its transcription model.
 - Tapping the transcript opens a selectable full-screen reader with Copy, Close, and native back-swipe controls.
 - Shows the city above a noninteractive Apple map when recorded coordinates are available.
