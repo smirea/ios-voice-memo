@@ -1,3 +1,5 @@
+import EventKit
+import EventKitUI
 import MapKit
 import SwiftUI
 import UIKit
@@ -7,6 +9,8 @@ struct EntryView: View {
 	let entry: JournalEntry
 	let onBack: () -> Void
 	@State private var playback = AudioPlayback()
+	@State private var presentedCalendarEvent: PresentedCalendarEvent?
+	@State private var isMissingCalendarEventAlertPresented = false
 
 	private var currentEntry: JournalEntry {
 		store.entry(id: entry.id) ?? entry
@@ -45,10 +49,7 @@ struct EntryView: View {
 
 						if let calendarEvent = currentEntry.calendarEvent {
 							Button {
-								ExternalLinks.openCalendar(
-									event: calendarEvent,
-									preference: store.settings.preferredCalendarApp
-								)
+								openCalendarEvent(calendarEvent)
 							} label: {
 								HStack(spacing: 10) {
 									Image(systemName: "calendar")
@@ -63,7 +64,7 @@ struct EntryView: View {
 								.contentShape(Rectangle())
 							}
 							.buttonStyle(.plain)
-							.accessibilityHint("Opens in \(store.settings.preferredCalendarApp.title)")
+							.accessibilityHint("Opens the event details")
 						}
 					}
 					.padding(.top, 10)
@@ -80,6 +81,10 @@ struct EntryView: View {
 							.multilineTextAlignment(.center)
 							.fixedSize(horizontal: false, vertical: true)
 							.frame(maxWidth: .infinity, alignment: .center)
+
+						if let model = currentEntry.summaryModel {
+							ModelAttribution(model: model)
+						}
 
 						if let audioURL = store.audioURL(for: currentEntry) {
 							EntryAudioPlayer(playback: playback, duration: currentEntry.duration)
@@ -125,7 +130,30 @@ struct EntryView: View {
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
 		.onDisappear { playback.stop() }
+		.sheet(item: $presentedCalendarEvent) { presentedEvent in
+			CalendarEventDetail(event: presentedEvent.event)
+		}
+		.alert("Event unavailable", isPresented: $isMissingCalendarEventAlertPresented) {
+			Button("OK", role: .cancel) {}
+		} message: {
+			Text("This event is no longer available in the calendars on this iPhone.")
+		}
 		.accessibilityAction(.escape, onBack)
+	}
+
+	private func openCalendarEvent(_ event: JournalCalendarEvent) {
+		let resolvedEvent = store.calendarSync.resolve(event)
+		if store.settings.preferredCalendarApp == .google,
+			let providerURL = event.providerURL
+				?? resolvedEvent.flatMap(store.calendarSync.providerURL(for:)) {
+			UIApplication.shared.open(providerURL)
+			return
+		}
+		if let resolvedEvent {
+			presentedCalendarEvent = PresentedCalendarEvent(event: resolvedEvent)
+		} else {
+			isMissingCalendarEventAlertPresented = true
+		}
 	}
 }
 
@@ -241,51 +269,43 @@ private struct ExpandableTranscript: View {
 	@State private var availableWidth: CGFloat = 0
 
 	private var isTruncated: Bool {
-		guard availableWidth > 32 else { return false }
-		return textLineCount(width: availableWidth - 32) > 4
+		guard availableWidth > 0 else { return false }
+		return textLineCount(width: availableWidth) > 4
 	}
 
 	var body: some View {
-		Text(text)
-			.font(.system(size: 16))
-			.foregroundStyle(Color.white.opacity(0.90))
-			.lineSpacing(5)
-			.lineLimit(isExpanded ? nil : 4)
-			.fixedSize(horizontal: false, vertical: true)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.padding(isTruncated ? 16 : 0)
-			.padding(.bottom, isTruncated ? 28 : 0)
-			.background(isTruncated ? AppStyle.card : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-			.overlay {
-				if isTruncated {
-					RoundedRectangle(cornerRadius: 14, style: .continuous)
-						.stroke(AppStyle.cardBorder, lineWidth: 0.8)
-				}
-			}
-			.overlay(alignment: .bottomTrailing) {
-				if isTruncated {
-					Button {
-						withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
-					} label: {
-						Image(systemName: isExpanded ? "chevron.up.circle.fill" : "ellipsis.circle.fill")
-							.font(.system(size: 22))
-							.foregroundStyle(AppStyle.accent)
-							.frame(width: 44, height: 44)
+		VStack(alignment: .trailing, spacing: 2) {
+			Text(text)
+				.font(.system(size: 16))
+				.foregroundStyle(Color.white.opacity(0.90))
+				.lineSpacing(5)
+				.lineLimit(isExpanded ? nil : 4)
+				.fixedSize(horizontal: false, vertical: true)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.textSelection(.enabled)
+				.background {
+					GeometryReader { proxy in
+						Color.clear
+							.onAppear { availableWidth = proxy.size.width }
+							.onChange(of: proxy.size.width) { _, width in
+								availableWidth = width
+							}
 					}
-					.buttonStyle(.plain)
-					.accessibilityLabel(isExpanded ? "Collapse transcript" : "Expand transcript")
 				}
-			}
-			.textSelection(.enabled)
-			.background {
-				GeometryReader { proxy in
-					Color.clear
-						.onAppear { availableWidth = proxy.size.width }
-						.onChange(of: proxy.size.width) { _, width in
-							availableWidth = width
-						}
+
+			if isTruncated {
+				Button {
+					withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
+				} label: {
+					Image(systemName: isExpanded ? "chevron.up.circle.fill" : "ellipsis.circle.fill")
+						.font(.system(size: 22))
+						.foregroundStyle(AppStyle.accent)
+						.frame(width: 44, height: 44)
 				}
+				.buttonStyle(.plain)
+				.accessibilityLabel(isExpanded ? "Collapse transcript" : "Expand transcript")
 			}
+		}
 	}
 
 	private func textLineCount(width: CGFloat) -> Int {
@@ -310,6 +330,43 @@ private struct ExpandableTranscript: View {
 			lineCount += 1
 		}
 		return lineCount
+	}
+}
+
+private struct PresentedCalendarEvent: Identifiable {
+	let id = UUID()
+	let event: EKEvent
+}
+
+private struct CalendarEventDetail: UIViewControllerRepresentable {
+	let event: EKEvent
+	@Environment(\.dismiss) private var dismiss
+
+	func makeCoordinator() -> Coordinator {
+		Coordinator { dismiss() }
+	}
+
+	func makeUIViewController(context: Context) -> UINavigationController {
+		let controller = EKEventViewController()
+		controller.event = event
+		controller.allowsEditing = false
+		controller.allowsCalendarPreview = true
+		controller.delegate = context.coordinator
+		return UINavigationController(rootViewController: controller)
+	}
+
+	func updateUIViewController(_ controller: UINavigationController, context: Context) {}
+
+	final class Coordinator: NSObject, EKEventViewDelegate {
+		let onDone: () -> Void
+
+		init(onDone: @escaping () -> Void) {
+			self.onDone = onDone
+		}
+
+		func eventViewController(_ controller: EKEventViewController, didCompleteWith action: EKEventViewAction) {
+			onDone()
+		}
 	}
 }
 
@@ -382,36 +439,6 @@ private enum ExternalLinks {
 		}
 
 		UIApplication.shared.open(webURL)
-	}
-
-	static func openCalendar(
-		event: JournalCalendarEvent,
-		preference: PreferredCalendarApp
-	) {
-		switch preference {
-		case .google:
-			if let appURL = URL(string: "googlecalendar://"),
-				UIApplication.shared.canOpenURL(appURL) {
-				let webURL = googleCalendarWebURL(for: event.startDate)
-				UIApplication.shared.open(appURL) { didOpen in
-					guard !didOpen else { return }
-					Task { @MainActor in UIApplication.shared.open(webURL) }
-				}
-				return
-			}
-			UIApplication.shared.open(googleCalendarWebURL(for: event.startDate))
-		case .apple:
-			if let url = URL(string: "calshow:\(event.startDate.timeIntervalSinceReferenceDate)") {
-				UIApplication.shared.open(url)
-			}
-		}
-	}
-
-	private static func googleCalendarWebURL(for date: Date) -> URL {
-		let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
-		return URL(
-			string: "https://calendar.google.com/calendar/u/0/r/day/\(components.year ?? 0)/\(components.month ?? 0)/\(components.day ?? 0)"
-		)!
 	}
 }
 

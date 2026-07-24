@@ -74,7 +74,7 @@ struct SettingsView: View {
 				.disabled(isRequestingCalendarAccess)
 
 			if draft.calendarSyncEnabled {
-				Picker("Open events in", selection: $draft.preferredCalendarApp) {
+				Picker("Preferred calendar", selection: $draft.preferredCalendarApp) {
 					ForEach(PreferredCalendarApp.allCases) { app in
 						Text(app.title).tag(app)
 					}

@@ -18,11 +18,11 @@ An iPhone voice memo app that records, transcribes, titles, and organizes spoken
 - One-tap Lock Screen recording widget
 - Long-form, on-device transcription with live partial results
 - Audio playback with waveform scrubbing
-- Foundation Models titles and weekly reviews with deterministic fallbacks
+- Foundation Models guided titles and weekly reviews with deterministic fallbacks
 - Model provenance stored with generated content
 - Read-only calendar sync with per-calendar inclusion
 - Optional calendar-event attachment before recording
-- Google Calendar and Apple Calendar event links
+- Exact calendar event details with direct Google Calendar links when available
 - Reverse-chronological timeline, weekly reviews, and recorded locations
 - Swipe-to-delete notes with confirmation
 - Protected JSON and audio storage

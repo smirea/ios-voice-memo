@@ -104,6 +104,9 @@ final class CalendarSync {
 				.map {
 					JournalCalendarEvent(
 						id: $0.eventIdentifier ?? $0.calendarItemIdentifier,
+						localIdentifier: $0.calendarItemIdentifier,
+						externalIdentifier: $0.calendarItemExternalIdentifier,
+						providerURL: Self.calendarProviderURL(from: $0.url),
 						calendarIdentifier: $0.calendar.calendarIdentifier,
 						calendarTitle: $0.calendar.title,
 						title: $0.title?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty ?? "Untitled event",
@@ -115,6 +118,53 @@ final class CalendarSync {
 		}.value
 		guard refreshID == requestID else { return }
 		events = loadedEvents
+	}
+
+	func resolve(_ storedEvent: JournalCalendarEvent) -> EKEvent? {
+		if isDemoMode {
+			let event = EKEvent(eventStore: eventStore)
+			event.title = storedEvent.title
+			event.startDate = storedEvent.startDate
+			event.endDate = storedEvent.endDate
+			event.isAllDay = storedEvent.isAllDay
+			return event
+		}
+
+		guard authorizationStatus == .fullAccess else { return nil }
+
+		for identifier in [storedEvent.localIdentifier, storedEvent.id].compactMap({ $0 }) {
+			if let event = eventStore.event(withIdentifier: identifier)
+				?? eventStore.calendarItem(withIdentifier: identifier) as? EKEvent {
+				return event
+			}
+		}
+
+		if let externalIdentifier = storedEvent.externalIdentifier {
+			let matches = eventStore.calendarItems(withExternalIdentifier: externalIdentifier)
+				.compactMap { $0 as? EKEvent }
+			if let event = bestMatch(for: storedEvent, among: matches) {
+				return event
+			}
+		}
+
+		let start = storedEvent.startDate.addingTimeInterval(-60)
+		let end = storedEvent.endDate.addingTimeInterval(60)
+		let calendars = eventStore.calendars(for: .event).filter {
+			$0.calendarIdentifier == storedEvent.calendarIdentifier
+		}
+		let predicate = eventStore.predicateForEvents(
+			withStart: start,
+			end: end,
+			calendars: calendars.isEmpty ? nil : calendars
+		)
+		let matchingEvents = eventStore.events(matching: predicate).filter {
+			$0.title == storedEvent.title
+		}
+		return bestMatch(for: storedEvent, among: matchingEvents)
+	}
+
+	func providerURL(for event: EKEvent) -> URL? {
+		Self.calendarProviderURL(from: event.url)
 	}
 
 	func clear() {
@@ -181,6 +231,37 @@ final class CalendarSync {
 				isAllDay: false
 			)
 		]
+	}
+
+	private func bestMatch(
+		for storedEvent: JournalCalendarEvent,
+		among events: [EKEvent]
+	) -> EKEvent? {
+		let event = events.min { lhs, rhs in
+			matchScore(lhs, storedEvent: storedEvent) < matchScore(rhs, storedEvent: storedEvent)
+		}
+		guard let event,
+			abs(event.startDate.timeIntervalSince(storedEvent.startDate)) < 300
+		else { return nil }
+		return event
+	}
+
+	private func matchScore(_ event: EKEvent, storedEvent: JournalCalendarEvent) -> TimeInterval {
+		let calendarPenalty: TimeInterval = event.calendar.calendarIdentifier == storedEvent.calendarIdentifier ? 0 : 86_400
+		let titlePenalty: TimeInterval = event.title == storedEvent.title ? 0 : 43_200
+		return calendarPenalty + titlePenalty + abs(event.startDate.timeIntervalSince(storedEvent.startDate))
+	}
+
+	nonisolated private static func calendarProviderURL(from url: URL?) -> URL? {
+		guard let url, let host = url.host?.lowercased() else { return nil }
+		if host == "calendar.google.com" || host.hasSuffix(".calendar.google.com") {
+			return url
+		}
+		if (host == "google.com" || host == "www.google.com"),
+			url.path.hasPrefix("/calendar/") {
+			return url
+		}
+		return nil
 	}
 }
 

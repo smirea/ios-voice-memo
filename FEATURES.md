@@ -15,7 +15,7 @@
 - Recovers nonempty audio from an interrupted recording when the app next launches.
 - Resumes interrupted transcription and title generation when the app next launches.
 - Transcribes recordings on-device, shows partial results live, and records the transcription model.
-- Generates note titles and weekly reviews on-device, with a fallback when the system model is unavailable.
+- Generates note titles and weekly reviews on-device with guided output, ignoring filler and transcription artifacts, with a fallback when the system model is unavailable.
 - Captures the recording location when permitted and asks system location services for the city name.
 - Refreshes the included calendars' events silently when the app opens or returns to the foreground after Calendar sync is enabled.
 - Reads calendar data without creating, changing, or deleting events.
@@ -63,13 +63,14 @@
 - Truncates long city names instead of crowding the date.
 - Uses `Voice memo` and omits the map when no recorded location is available.
 - Shows an attached event as a plain row directly below the header with a calendar icon.
-- Tapping an attached event opens the preferred calendar app.
+- Tapping an attached event opens that exact event using its provider link when available, otherwise in a native event detail view.
 - Shows the generated note title centered below the header.
+- Shows the title-generation model below the title, aligned right.
 - Shows live transcription and title-generation status after recording finishes; processing continues after navigating away.
 - Provides play/pause, waveform progress, and remaining-time controls for the recording.
 - Stops playback when leaving the note.
 - Shows the transcript when enabled in Settings and allows text selection.
-- Collapses transcripts longer than four lines and only shows expand/collapse controls when content is hidden.
+- Shows transcripts as plain text, collapsing content longer than four lines and only showing expand/collapse controls when content is hidden.
 - Shows the transcription model below the transcript, aligned right.
 - Shows the city with a map pin above a noninteractive Apple map.
 - Tapping anywhere on the map opens the recorded coordinates in the Google Maps app, with Google Maps web as a fallback.
@@ -90,7 +91,7 @@
 - Show Transcripts controls transcript visibility on note screens.
 - Calendar sync requests iOS Full Access so it can read events, while the app itself remains read-only.
 - Calendar settings allow each available calendar to be included or excluded.
-- Calendar settings choose whether event links open in Google Calendar or Apple Calendar, with Google Calendar as the default.
+- Calendar settings prefer direct Google Calendar event links when available, with an exact native event view as the fallback.
 - Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export.
 
 # Lock Screen and Dynamic Island

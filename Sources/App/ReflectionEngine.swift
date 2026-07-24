@@ -1,6 +1,26 @@
 import Foundation
 #if canImport(FoundationModels)
 import FoundationModels
+
+@available(iOS 26.0, *)
+@Generable(description: "A concise title and three grounded observations about a private voice memo")
+private struct GeneratedReflection {
+	@Guide(description: "A sentence-case title of 4 to 12 words naming the memo's central theme, realization, decision, or next step")
+	var title: String
+
+	@Guide(description: "Three concise observations grounded in the speaker's words", .count(3))
+	var observations: [String]
+}
+
+@available(iOS 26.0, *)
+@Generable(description: "A concise weekly reflection based on private voice memos")
+private struct GeneratedWeeklyReview {
+	@Guide(description: "A sentence-case title under 12 words naming the week's central pattern")
+	var title: String
+
+	@Guide(description: "One restrained paragraph of 90 to 140 words describing repetition and change")
+	var body: String
+}
 #endif
 
 enum ReflectionEngine {
@@ -64,48 +84,53 @@ enum ReflectionEngine {
 	private static func modelReflection(on transcript: String) async throws -> ReflectionResult? {
 		guard SystemLanguageModel.default.availability == .available else { return nil }
 		let session = LanguageModelSession(instructions: """
-		You reflect a private voice journal. Notice themes and tensions in the speaker's own words. Never give advice, diagnose, ask a question, or chat. Be specific, restrained, and kind. Return plain text in exactly this shape:
-		TITLE: one second-person observation under 18 words
-		OBSERVATIONS:
-		- observation
-		- observation
-		- observation
+		Read the entire private voice memo before responding. Identify its most meaningful theme, realization, decision, or next step. Ignore false starts, filler, transcription repetitions, and comments about making the recording. Never use the opening phrase as a title merely because it appears first. Keep the title natural, specific, sentence case, and free of ending punctuation. Make each observation specific, restrained, kind, and supported by the speaker's own words. Never give advice, diagnose, ask a question, or chat.
 		""")
-		let response = try await session.respond(to: transcript)
-		return parseReflection(response.content, modelName: "SystemLanguageModel.default")
+		let response = try await session.respond(
+			to: transcript,
+			generating: GeneratedReflection.self
+		)
+		return ReflectionResult(
+			headline: cleanTitle(response.content.title),
+			observations: response.content.observations.map(cleanSentence),
+			modelName: "SystemLanguageModel.default · guided"
+		)
 	}
 
 	@available(iOS 26.0, *)
 	private static func modelWeeklyReview(transcript: String, entries: [JournalEntry], weekStart: Date) async throws -> WeeklyReview? {
 		guard !entries.isEmpty, SystemLanguageModel.default.availability == .available else { return nil }
 		let session = LanguageModelSession(instructions: """
-		Write a weekly reflection for a private voice journal using only the speaker's entries. Notice repetition and change. Never give advice, diagnose, ask questions, or chat. Return plain text in exactly this shape:
-		TITLE: one observation under 12 words
-		BODY: one paragraph, 90 to 140 words
+		Read all entries before writing a weekly reflection. Use only the speaker's entries, notice repetition and change, and ignore transcription artifacts. Keep the title natural, specific, sentence case, and free of ending punctuation. Never give advice, diagnose, ask questions, or chat.
 		""")
-		let response = try await session.respond(to: transcript)
-		let lines = response.content.components(separatedBy: .newlines)
-		let title = value(after: "TITLE:", in: lines) ?? entries.last!.headline
-		let body = value(after: "BODY:", in: lines) ?? transcript
+		let response = try await session.respond(
+			to: transcript,
+			generating: GeneratedWeeklyReview.self
+		)
 		let trend = entries.enumerated().map { index, entry in
 			min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
 		}
-		return WeeklyReview(weekStart: weekStart, title: title, body: body, trend: trend)
+		return WeeklyReview(
+			weekStart: weekStart,
+			title: cleanTitle(response.content.title),
+			body: response.content.body.trimmingCharacters(in: .whitespacesAndNewlines),
+			trend: trend
+		)
 	}
 	#endif
 
-	private static func parseReflection(_ text: String, modelName: String) -> ReflectionResult? {
-		let lines = text.components(separatedBy: .newlines)
-		guard let title = value(after: "TITLE:", in: lines) else { return nil }
-		let observations = lines
-			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-			.filter { $0.hasPrefix("-") }
-			.map { String($0.dropFirst()).trimmingCharacters(in: .whitespaces) }
-		return ReflectionResult(headline: title, observations: observations, modelName: modelName)
+	private static func cleanTitle(_ title: String) -> String {
+		let cleaned = title
+			.replacingOccurrences(of: "\n", with: " ")
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+			.trimmingCharacters(in: CharacterSet(charactersIn: ".!?\"“”"))
+		guard let first = cleaned.first else { return "Voice memo" }
+		return first.uppercased() + cleaned.dropFirst()
 	}
 
-	private static func value(after prefix: String, in lines: [String]) -> String? {
-		lines.first { $0.trimmingCharacters(in: .whitespaces).hasPrefix(prefix) }
-			.map { String($0.dropFirst($0.range(of: prefix)!.upperBound.utf16Offset(in: $0))).trimmingCharacters(in: .whitespaces) }
+	private static func cleanSentence(_ sentence: String) -> String {
+		sentence
+			.replacingOccurrences(of: "\n", with: " ")
+			.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 }

@@ -11,13 +11,67 @@ struct JournalLocation: Codable, Hashable, Sendable {
 }
 
 struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
+	private enum CodingKeys: String, CodingKey {
+		case id
+		case localIdentifier
+		case externalIdentifier
+		case providerURL
+		case calendarIdentifier
+		case calendarTitle
+		case title
+		case startDate
+		case endDate
+		case isAllDay
+	}
+
 	var id: String
+	var localIdentifier: String?
+	var externalIdentifier: String?
+	var providerURL: URL?
 	var calendarIdentifier: String
 	var calendarTitle: String
 	var title: String
 	var startDate: Date
 	var endDate: Date
 	var isAllDay: Bool
+
+	init(
+		id: String,
+		localIdentifier: String? = nil,
+		externalIdentifier: String? = nil,
+		providerURL: URL? = nil,
+		calendarIdentifier: String,
+		calendarTitle: String,
+		title: String,
+		startDate: Date,
+		endDate: Date,
+		isAllDay: Bool
+	) {
+		self.id = id
+		self.localIdentifier = localIdentifier
+		self.externalIdentifier = externalIdentifier
+		self.providerURL = providerURL
+		self.calendarIdentifier = calendarIdentifier
+		self.calendarTitle = calendarTitle
+		self.title = title
+		self.startDate = startDate
+		self.endDate = endDate
+		self.isAllDay = isAllDay
+	}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		id = try container.decode(String.self, forKey: .id)
+		localIdentifier = try container.decodeIfPresent(String.self, forKey: .localIdentifier)
+		externalIdentifier = try container.decodeIfPresent(String.self, forKey: .externalIdentifier)
+		providerURL = try container.decodeIfPresent(URL.self, forKey: .providerURL)
+		calendarIdentifier = try container.decode(String.self, forKey: .calendarIdentifier)
+		calendarTitle = try container.decode(String.self, forKey: .calendarTitle)
+		title = try container.decode(String.self, forKey: .title)
+		startDate = try container.decode(Date.self, forKey: .startDate)
+		endDate = try container.decode(Date.self, forKey: .endDate)
+		isAllDay = try container.decode(Bool.self, forKey: .isAllDay)
+	}
 }
 
 struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
