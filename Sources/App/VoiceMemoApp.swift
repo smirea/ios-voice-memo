@@ -10,6 +10,9 @@ struct VoiceMemoApp: App {
 				.preferredColorScheme(.dark)
 				.tint(AppStyle.accent)
 				.task {
+					#if DEBUG
+					await LocalModelProbe.runFromLaunchArguments()
+					#endif
 					await ReminderBenchmark.runFromLaunchArguments()
 					#if DEBUG
 					await LocationContractChecks.runFromLaunchArguments()

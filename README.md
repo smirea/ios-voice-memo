@@ -49,6 +49,12 @@ Open `VoiceMemo.xcodeproj`, select the `VoiceMemo` scheme, and run on an iOS 26 
 
 Add `-demo` to load sample content. Use `-demo-entry`, `-demo-reminders`, `-demo-reminder-feedback`, `-demo-review`, `-demo-recording`, `-demo-settings`, or `-demo-reminder-benchmark` to open a state directly.
 
+Query the Apple Intelligence model in the booted iPhone Simulator:
+
+```sh
+Scripts/query-local-model.sh "Explain why the sky is blue in one sentence."
+```
+
 See [`docs/reminder-model-evaluation.md`](docs/reminder-model-evaluation.md) for simulator benchmark commands and the current baseline.
 
 ## TestFlight
