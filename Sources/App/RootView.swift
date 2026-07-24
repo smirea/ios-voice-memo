@@ -104,7 +104,7 @@ struct RootView: View {
 			await store.refreshCalendar()
 		}
 		.onChange(of: scenePhase) { _, phase in
-			guard phase == .active, recordingContext == nil else { return }
+			guard phase == .active else { return }
 			Task { await store.refreshCalendar() }
 		}
 	}

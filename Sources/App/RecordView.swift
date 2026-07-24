@@ -15,8 +15,8 @@ struct RecordView: View {
 	@State private var lastCheckpointSecond = 0
 	@State private var hasStartedRecording = false
 	@State private var isAttachedToEvent = false
+	@State private var eventAttachmentWasChanged = false
 	@State private var selectedEventID: String?
-	@State private var isLoadingEvents = true
 	@State private var selectedDate = Date.now
 	@State private var showsDatePicker = false
 
@@ -29,7 +29,7 @@ struct RecordView: View {
 	}
 
 	private var events: [JournalCalendarEvent] {
-		store.calendarSync.events
+		store.calendarSync.events(on: selectedDay)
 	}
 
 	private var selectedCalendarEvent: JournalCalendarEvent? {
@@ -58,9 +58,13 @@ struct RecordView: View {
 				await beginRecording()
 			}
 		}
-		.task(id: selectedDay) {
+		.onAppear {
 			guard !startsImmediately, !isVisualDemo, !hasStartedRecording else { return }
-			await prepareEventSelection(for: selectedDay)
+			prepareEventSelection()
+		}
+		.onChange(of: selectedDay) { _, _ in
+			guard !startsImmediately, !isVisualDemo, !hasStartedRecording else { return }
+			prepareEventSelection()
 		}
 		.onDisappear {
 			liveActivity.end()
@@ -83,8 +87,16 @@ struct RecordView: View {
 			}
 		}
 		.onChange(of: events) { _, _ in
-			guard isAttachedToEvent, selectedEventID == nil else { return }
-			selectClosestEvent()
+			guard !eventAttachmentWasChanged else {
+				if isAttachedToEvent, selectedEventID == nil {
+					selectClosestEvent()
+				}
+				return
+			}
+			isAttachedToEvent = store.settings.calendarSyncEnabled && !events.isEmpty
+			if isAttachedToEvent {
+				selectClosestEvent()
+			}
 		}
 		.alert("Recording unavailable", isPresented: Binding(
 			get: { errorMessage != nil },
@@ -99,6 +111,7 @@ struct RecordView: View {
 				DatePicker(
 					"Event date",
 					selection: $selectedDate,
+					in: store.calendarSync.selectableDateRange,
 					displayedComponents: .date
 				)
 				.datePickerStyle(.graphical)
@@ -141,12 +154,18 @@ struct RecordView: View {
 					.accessibilityLabel("Recording date, \(selectedDate.compactHeaderText)")
 					.accessibilityHint("Opens the calendar picker")
 
-					Toggle(isOn: $isAttachedToEvent) {
+					Toggle(isOn: Binding(
+						get: { isAttachedToEvent },
+						set: {
+							eventAttachmentWasChanged = true
+							isAttachedToEvent = $0
+						}
+					)) {
 						Label("Attached to event", systemImage: "calendar")
 							.font(.system(size: 17, weight: .semibold))
 					}
 					.tint(AppStyle.accent)
-					.disabled(isLoadingEvents || !store.settings.calendarSyncEnabled || events.isEmpty)
+					.disabled(!store.settings.calendarSyncEnabled || events.isEmpty)
 
 					eventList
 						.opacity(isAttachedToEvent ? 1 : 0.36)
@@ -176,17 +195,7 @@ struct RecordView: View {
 
 	@ViewBuilder
 	private var eventList: some View {
-		if isLoadingEvents {
-			HStack(spacing: 10) {
-				ProgressView()
-					.tint(AppStyle.accent)
-				Text("Loading events")
-					.font(.system(size: 15, weight: .medium))
-					.foregroundStyle(AppStyle.secondary)
-			}
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.padding(.vertical, 20)
-		} else if events.isEmpty {
+		if events.isEmpty {
 			Text(store.settings.calendarSyncEnabled ? "No events on this date" : "Calendar sync is off")
 				.font(.system(size: 15, weight: .medium))
 				.foregroundStyle(AppStyle.secondary)
@@ -307,13 +316,10 @@ struct RecordView: View {
 		return recorder.levels
 	}
 
-	private func prepareEventSelection(for date: Date) async {
-		isLoadingEvents = true
+	private func prepareEventSelection() {
+		eventAttachmentWasChanged = false
 		isAttachedToEvent = false
 		selectedEventID = nil
-		await store.refreshCalendar(on: date)
-		guard selectedDay == date else { return }
-		isLoadingEvents = false
 		isAttachedToEvent = store.settings.calendarSyncEnabled && !events.isEmpty
 		if isAttachedToEvent {
 			selectClosestEvent()

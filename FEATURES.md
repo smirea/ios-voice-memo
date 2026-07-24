@@ -14,7 +14,7 @@
 - Generates summaries only for recordings longer than 20 seconds.
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md).
 - Captures the recording coordinates and city when location access is available.
-- Silently refreshes included calendars when the app opens or returns to the foreground, without creating, changing, or deleting events.
+- Silently refreshes and caches included events from one month ago through three months ahead when the app opens or returns to the foreground, at most once per day, without changing calendar data.
 
 # Home Screen
 
@@ -26,7 +26,7 @@
 
 # Record Screen
 
-- Opens event setup before recording from Home, with a tappable date and the included events for that day in chronological order.
+- Opens event setup instantly from Home using cached events, with a tappable date and the included events for that day in chronological order.
 - Explains and disables event attachment when Calendar sync is off or the selected day has no events.
 - Selects an ongoing timed event by default, otherwise the event closest to the current time.
 - Turning **Attached to event** off clears, shrinks, and dims the list; tapping an event selects it for the new note.

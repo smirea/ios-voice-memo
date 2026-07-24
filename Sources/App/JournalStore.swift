@@ -29,12 +29,15 @@ final class JournalStore {
 
 	init() {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
-		calendarSync = CalendarSync(isDemoMode: isDemoMode)
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 		rootURL = applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		entriesURL = rootURL.appendingPathComponent("entries.json")
 		pendingRecordingURL = rootURL.appendingPathComponent("pending-recording.json")
+		calendarSync = CalendarSync(
+			isDemoMode: isDemoMode,
+			cacheURL: rootURL.appendingPathComponent("calendar-events.json")
+		)
 		pendingICloudDeletionReferences = Set(
 			UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []
 		)
@@ -403,9 +406,11 @@ final class JournalStore {
 	}
 
 	func updateSettings(_ settings: JournalSettings) {
+		let calendarScopeChanged = self.settings.calendarSyncEnabled != settings.calendarSyncEnabled
+			|| self.settings.includedCalendarIdentifiers != settings.includedCalendarIdentifiers
 		self.settings = settings
 		settings.save()
-		Task { await refreshCalendar() }
+		Task { await refreshCalendar(force: calendarScopeChanged) }
 	}
 
 	func setShowModelNames(_ showModelNames: Bool) {
@@ -414,16 +419,10 @@ final class JournalStore {
 	}
 
 	func requestCalendarAccess() async -> Bool {
-		let granted = await calendarSync.requestAccess()
-		if granted {
-			await calendarSync.refresh(
-				includedCalendarIdentifiers: settings.includedCalendarIdentifiers
-			)
-		}
-		return granted
+		await calendarSync.requestAccess()
 	}
 
-	func refreshCalendar(on date: Date = .now) async {
+	func refreshCalendar(force: Bool = false) async {
 		guard settings.calendarSyncEnabled else {
 			calendarSync.clear()
 			await reminderActivityManager.endAll()
@@ -431,9 +430,9 @@ final class JournalStore {
 		}
 		await calendarSync.refresh(
 			includedCalendarIdentifiers: settings.includedCalendarIdentifiers,
-			on: date
+			force: force
 		)
-		await refreshReminderSchedule(now: date)
+		await refreshReminderSchedule()
 	}
 
 	func refreshReminderSchedule(now: Date = .now) async {
@@ -441,14 +440,7 @@ final class JournalStore {
 			await reminderActivityManager.endAll()
 			return
 		}
-		let start = Calendar.current.date(byAdding: .day, value: -30, to: now) ?? now
-		let end = Calendar.current.date(byAdding: .day, value: 45, to: now) ?? now
-		let events = await calendarSync.loadEvents(
-			from: start,
-			to: end,
-			includedCalendarIdentifiers: settings.includedCalendarIdentifiers
-		)
-		let result = await ReminderEngine.resolve(entries: entries, events: events, now: now)
+		let result = await ReminderEngine.resolve(entries: entries, events: calendarSync.events, now: now)
 
 		var rulesChanged = false
 		for entryIndex in entries.indices {

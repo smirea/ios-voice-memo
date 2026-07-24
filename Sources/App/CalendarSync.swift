@@ -2,10 +2,17 @@ import EventKit
 import Foundation
 import Observation
 
-struct CalendarSource: Hashable, Identifiable, Sendable {
+struct CalendarSource: Codable, Hashable, Identifiable, Sendable {
 	let id: String
 	let title: String
 	let sourceTitle: String
+}
+
+private struct CalendarEventCache: Codable {
+	let refreshedAt: Date
+	let includedCalendarIdentifiers: Set<String>?
+	let calendars: [CalendarSource]
+	let events: [JournalCalendarEvent]
 }
 
 enum PreferredCalendarApp: String, Codable, CaseIterable, Identifiable {
@@ -30,10 +37,24 @@ final class CalendarSync {
 
 	@ObservationIgnored private let eventStore = EKEventStore()
 	@ObservationIgnored private let isDemoMode: Bool
+	@ObservationIgnored private let cacheURL: URL
 	@ObservationIgnored private var refreshID = UUID()
+	@ObservationIgnored private var refreshedAt: Date?
+	@ObservationIgnored private var cachedCalendarIdentifiers: Set<String>?
+	@ObservationIgnored private var refreshStartedAt: Date?
+	@ObservationIgnored private var refreshingCalendarIdentifiers: Set<String>?
 
-	init(isDemoMode: Bool = false) {
+	init(isDemoMode: Bool = false, cacheURL: URL) {
 		self.isDemoMode = isDemoMode
+		self.cacheURL = cacheURL
+		guard !isDemoMode,
+			EKEventStore.authorizationStatus(for: .event) == .fullAccess,
+			let cache = Self.loadCache(from: cacheURL)
+		else { return }
+		calendars = cache.calendars
+		events = cache.events
+		refreshedAt = cache.refreshedAt
+		cachedCalendarIdentifiers = cache.includedCalendarIdentifiers
 	}
 
 	func requestAccess() async -> Bool {
@@ -54,39 +75,72 @@ final class CalendarSync {
 
 	func refresh(
 		includedCalendarIdentifiers: Set<String>?,
-		on date: Date = .now
+		now: Date = .now,
+		force: Bool = false
 	) async {
+		if !force, cacheIsFresh(
+			at: now,
+			includedCalendarIdentifiers: includedCalendarIdentifiers
+		) {
+			return
+		}
+		if !force,
+			refreshingCalendarIdentifiers == includedCalendarIdentifiers,
+			let refreshStartedAt,
+			now.timeIntervalSince(refreshStartedAt) < 300 {
+			return
+		}
+
 		let requestID = UUID()
 		refreshID = requestID
+		refreshStartedAt = now
+		refreshingCalendarIdentifiers = includedCalendarIdentifiers
+		let range = Self.eventRange(around: now)
 
 		if isDemoMode {
 			loadDemoCalendars()
-			let start = Calendar.current.startOfDay(for: date)
-			let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
-			events = await loadEvents(
-				from: start,
-				to: end,
+			let loadedEvents = await loadEvents(
+				from: range.lowerBound,
+				to: range.upperBound,
+				includedCalendarIdentifiers: includedCalendarIdentifiers
+			)
+			guard refreshID == requestID else { return }
+			events = loadedEvents
+			await finishRefresh(
+				at: now,
 				includedCalendarIdentifiers: includedCalendarIdentifiers
 			)
 			return
 		}
 
 		guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
-			calendars = []
-			events = []
+			clear()
 			return
 		}
 
 		loadCalendars()
-		let start = Calendar.current.startOfDay(for: date)
-		let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
 		let loadedEvents = await loadEvents(
-			from: start,
-			to: end,
+			from: range.lowerBound,
+			to: range.upperBound,
 			includedCalendarIdentifiers: includedCalendarIdentifiers
 		)
 		guard refreshID == requestID else { return }
 		events = loadedEvents
+		await finishRefresh(
+			at: now,
+			includedCalendarIdentifiers: includedCalendarIdentifiers
+		)
+	}
+
+	func events(on date: Date) -> [JournalCalendarEvent] {
+		let start = Calendar.current.startOfDay(for: date)
+		let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
+		return events.filter { $0.startDate < end && $0.endDate > start }
+	}
+
+	var selectableDateRange: ClosedRange<Date> {
+		let range = Self.eventRange(around: .now)
+		return range.lowerBound...range.upperBound.addingTimeInterval(-1)
 	}
 
 	func loadEvents(
@@ -167,6 +221,72 @@ final class CalendarSync {
 		refreshID = UUID()
 		events = []
 		calendars = []
+		refreshedAt = nil
+		cachedCalendarIdentifiers = nil
+		refreshStartedAt = nil
+		refreshingCalendarIdentifiers = nil
+		try? FileManager.default.removeItem(at: cacheURL)
+	}
+
+	private func cacheIsFresh(
+		at now: Date,
+		includedCalendarIdentifiers: Set<String>?
+	) -> Bool {
+		guard cachedCalendarIdentifiers == includedCalendarIdentifiers,
+			let refreshedAt
+		else { return false }
+		let age = now.timeIntervalSince(refreshedAt)
+		return age >= 0 && age < 86_400
+	}
+
+	private func finishRefresh(
+		at date: Date,
+		includedCalendarIdentifiers: Set<String>?
+	) async {
+		refreshedAt = date
+		cachedCalendarIdentifiers = includedCalendarIdentifiers
+		refreshStartedAt = nil
+		refreshingCalendarIdentifiers = nil
+		guard !isDemoMode else { return }
+		await Self.save(CalendarEventCache(
+			refreshedAt: date,
+			includedCalendarIdentifiers: includedCalendarIdentifiers,
+			calendars: calendars,
+			events: events
+		), to: cacheURL)
+	}
+
+	nonisolated private static func save(_ cache: CalendarEventCache, to cacheURL: URL) async {
+		guard let data = try? JSONEncoder().encode(cache) else { return }
+		await Task.detached(priority: .utility) {
+			do {
+				try FileManager.default.createDirectory(
+					at: cacheURL.deletingLastPathComponent(),
+					withIntermediateDirectories: true
+				)
+				try data.write(to: cacheURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+				var values = URLResourceValues()
+				values.isExcludedFromBackup = true
+				var savedURL = cacheURL
+				try savedURL.setResourceValues(values)
+			} catch {
+				assertionFailure("Could not save the calendar cache: \(error)")
+			}
+		}.value
+	}
+
+	nonisolated private static func loadCache(from url: URL) -> CalendarEventCache? {
+		guard let data = try? Data(contentsOf: url) else { return nil }
+		return try? JSONDecoder().decode(CalendarEventCache.self, from: data)
+	}
+
+	nonisolated private static func eventRange(around date: Date) -> Range<Date> {
+		let calendar = Calendar.current
+		let day = calendar.startOfDay(for: date)
+		let start = calendar.date(byAdding: .month, value: -1, to: day) ?? day
+		let future = calendar.date(byAdding: .month, value: 3, to: day) ?? day
+		let end = calendar.date(byAdding: .day, value: 1, to: future) ?? future
+		return start..<end
 	}
 
 	private func loadCalendars() {
