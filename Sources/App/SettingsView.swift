@@ -17,15 +17,29 @@ struct SettingsView: View {
 
 	var body: some View {
 		NavigationStack {
-			Form {
+			List {
 				Section("Recording") {
 					Toggle("Keep screen awake", isOn: $draft.keepScreenAwakeWhileRecording)
 					Toggle("Haptics", isOn: $draft.hapticsEnabled)
 				}
+				.listRowBackground(AppStyle.background)
 
 				Section("Journal") {
 					Toggle("Show transcripts", isOn: $draft.showTranscripts)
 				}
+				.listRowBackground(AppStyle.background)
+
+				Section {
+					Toggle(
+						"Prefer ElevenLabs transcription",
+						isOn: $draft.preferElevenLabsTranscription
+					)
+				} header: {
+					Text("Transcription")
+				} footer: {
+					Text("Apple Speech is used automatically when ElevenLabs cannot be reached.")
+				}
+				.listRowBackground(AppStyle.background)
 
 				calendarSection
 
@@ -40,6 +54,7 @@ struct SettingsView: View {
 						Label("Reminder benchmark", systemImage: "gauge.with.dots.needle.67percent")
 					}
 				}
+				.listRowBackground(AppStyle.background)
 
 				Section("Data") {
 					Button("Delete all entries", role: .destructive) {
@@ -47,7 +62,9 @@ struct SettingsView: View {
 					}
 					.disabled(store.entries.isEmpty || store.isDemoMode)
 				}
+				.listRowBackground(AppStyle.background)
 			}
+			.listStyle(.plain)
 			.scrollContentBackground(.hidden)
 			.background(AppStyle.background)
 			.navigationTitle("Settings")
@@ -102,6 +119,7 @@ struct SettingsView: View {
 		} footer: {
 			Text("MyVoiceMemo only reads events. iOS requires full Calendar access to make events available.")
 		}
+		.listRowBackground(AppStyle.background)
 	}
 
 	private var reminderSection: some View {
@@ -123,6 +141,7 @@ struct SettingsView: View {
 		} footer: {
 			Text("Useful cues from an event memo can return before matching calendar events. Live Activities end when the event ends.")
 		}
+		.listRowBackground(AppStyle.background)
 	}
 
 	private var calendarSyncBinding: Binding<Bool> {

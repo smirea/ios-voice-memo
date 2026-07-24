@@ -212,6 +212,7 @@
 				H10000000000000000000001 /* Sources */,
 				D10000000000000000000001 /* Frameworks */,
 				I10000000000000000000001 /* Resources */,
+				O10000000000000000000002 /* Copy Local Secrets */,
 				M10000000000000000000001 /* Embed App Extensions */,
 			);
 			buildRules = (
@@ -318,6 +319,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "/bin/sh \"$SRCROOT/Scripts/check-design-rules.sh\"";
+		};
+		O10000000000000000000002 /* Copy Local Secrets */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Local Secrets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/LocalSecrets.xcconfig",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$SRCROOT/Scripts/copy-local-secrets.sh\"";
 		};
 /* End PBXShellScriptBuildPhase section */
 

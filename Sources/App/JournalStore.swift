@@ -173,7 +173,10 @@ final class JournalStore {
 	}
 
 	private func processRecording(entryID: UUID, url: URL, token: UUID) async {
-		let transcription = try? await LocalTranscriber.transcribe(url: url) { [weak self] partialResult in
+		let transcription = try? await AudioTranscriber.transcribe(
+			url: url,
+			preferElevenLabs: settings.preferElevenLabsTranscription
+		) { [weak self] partialResult in
 			Task { @MainActor [weak self] in
 				self?.updatePartialTranscript(partialResult, for: entryID, token: token)
 			}
@@ -358,7 +361,10 @@ final class JournalStore {
 		guard entries.contains(where: { $0.id == entryID }) else {
 			throw ReminderFeedbackError.entryUnavailable
 		}
-		let transcription = try await LocalTranscriber.transcribe(url: audioURL)
+		let transcription = try await AudioTranscriber.transcribe(
+			url: audioURL,
+			preferElevenLabs: settings.preferElevenLabsTranscription
+		)
 		let feedbackText = transcription.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !feedbackText.isEmpty else { throw ReminderFeedbackError.emptyTranscript }
 
@@ -641,6 +647,7 @@ struct JournalSettings: Codable, Equatable {
 	var hapticsEnabled = true
 	var showTranscripts = true
 	var showModelNames = true
+	var preferElevenLabsTranscription = true
 	var calendarSyncEnabled = false
 	var includedCalendarIdentifiers: Set<String>?
 	var preferredCalendarApp = PreferredCalendarApp.google
@@ -661,6 +668,10 @@ struct JournalSettings: Codable, Equatable {
 		hapticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .hapticsEnabled) ?? true
 		showTranscripts = try container.decodeIfPresent(Bool.self, forKey: .showTranscripts) ?? true
 		showModelNames = try container.decodeIfPresent(Bool.self, forKey: .showModelNames) ?? true
+		preferElevenLabsTranscription = try container.decodeIfPresent(
+			Bool.self,
+			forKey: .preferElevenLabsTranscription
+		) ?? true
 		calendarSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .calendarSyncEnabled) ?? false
 		includedCalendarIdentifiers = try container.decodeIfPresent(
 			Set<String>.self,

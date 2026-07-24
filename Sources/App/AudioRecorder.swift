@@ -265,10 +265,36 @@ struct TranscriptionResult: Sendable {
 	let modelName: String
 }
 
-enum LocalTranscriber {
+enum AudioTranscriber {
 	static func transcribe(
 		url: URL,
+		preferElevenLabs: Bool,
 		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void = { _ in }
+	) async throws -> TranscriptionResult {
+		guard preferElevenLabs, let apiKey = ElevenLabsTranscriber.apiKey else {
+			return try await transcribeWithApple(url: url, onUpdate: onUpdate)
+		}
+
+		let appleTask = Task {
+			try await transcribeWithApple(url: url, onUpdate: onUpdate)
+		}
+		do {
+			let result = try await ElevenLabsTranscriber.transcribe(url: url, apiKey: apiKey)
+			appleTask.cancel()
+			_ = try? await appleTask.value
+			return result
+		} catch {
+			guard !Task.isCancelled else {
+				appleTask.cancel()
+				throw CancellationError()
+			}
+			return try await appleTask.value
+		}
+	}
+
+	private static func transcribeWithApple(
+		url: URL,
+		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void
 	) async throws -> TranscriptionResult {
 		if SpeechTranscriber.isAvailable,
 			let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current)
@@ -374,6 +400,113 @@ enum LocalTranscriber {
 			guard partialResult.transcript.isEmpty else { return partialResult }
 			throw error
 		}
+	}
+}
+
+private enum ElevenLabsTranscriber {
+	private struct Response: Decodable {
+		let text: String
+	}
+
+	private enum TranscriptionError: Error {
+		case invalidResponse
+		case requestFailed(Int)
+		case emptyTranscript
+	}
+
+	static var apiKey: String? {
+		guard let url = Bundle.main.url(forResource: "LocalSecrets", withExtension: "xcconfig"),
+			let contents = try? String(contentsOf: url, encoding: .utf8),
+			let line = contents.split(whereSeparator: \.isNewline).first(where: {
+				$0.trimmingCharacters(in: .whitespaces).hasPrefix("ELEVENLABS_API_KEY")
+			}),
+			let separator = line.firstIndex(of: "=")
+		else {
+			return nil
+		}
+		let key = line[line.index(after: separator)...]
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		return key.isEmpty ? nil : key
+	}
+
+	static func transcribe(url: URL, apiKey: String) async throws -> TranscriptionResult {
+		let boundary = "MyVoiceMemo-\(UUID().uuidString)"
+		let bodyURL = try multipartBody(audioURL: url, boundary: boundary)
+		defer { try? FileManager.default.removeItem(at: bodyURL) }
+
+		var request = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/speech-to-text")!)
+		request.httpMethod = "POST"
+		request.cachePolicy = .reloadIgnoringLocalCacheData
+		request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
+		request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+		let (data, response) = try await URLSession.shared.upload(for: request, fromFile: bodyURL)
+		guard let response = response as? HTTPURLResponse else {
+			throw TranscriptionError.invalidResponse
+		}
+		guard (200..<300).contains(response.statusCode) else {
+			throw TranscriptionError.requestFailed(response.statusCode)
+		}
+
+		let transcript = try JSONDecoder()
+			.decode(Response.self, from: data)
+			.text
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !transcript.isEmpty else { throw TranscriptionError.emptyTranscript }
+		return TranscriptionResult(transcript: transcript, modelName: "ElevenLabs Scribe v2")
+	}
+
+	private static func multipartBody(audioURL: URL, boundary: String) throws -> URL {
+		let bodyURL = FileManager.default.temporaryDirectory
+			.appendingPathComponent("elevenlabs-\(UUID().uuidString)")
+			.appendingPathExtension("multipart")
+		guard FileManager.default.createFile(atPath: bodyURL.path, contents: nil) else {
+			throw TranscriptionError.invalidResponse
+		}
+
+		let output = try FileHandle(forWritingTo: bodyURL)
+		do {
+			try writeField("model_id", value: "scribe_v2", boundary: boundary, to: output)
+			try writeField("tag_audio_events", value: "false", boundary: boundary, to: output)
+			try writeField("timestamps_granularity", value: "none", boundary: boundary, to: output)
+			try write(
+				"--\(boundary)\r\n"
+					+ "Content-Disposition: form-data; name=\"file\"; filename=\"recording.m4a\"\r\n"
+					+ "Content-Type: audio/mp4\r\n\r\n",
+				to: output
+			)
+
+			let input = try FileHandle(forReadingFrom: audioURL)
+			defer { try? input.close() }
+			while let chunk = try input.read(upToCount: 1_048_576), !chunk.isEmpty {
+				try output.write(contentsOf: chunk)
+			}
+			try write("\r\n--\(boundary)--\r\n", to: output)
+			try output.close()
+			return bodyURL
+		} catch {
+			try? output.close()
+			try? FileManager.default.removeItem(at: bodyURL)
+			throw error
+		}
+	}
+
+	private static func writeField(
+		_ name: String,
+		value: String,
+		boundary: String,
+		to output: FileHandle
+	) throws {
+		try write(
+			"--\(boundary)\r\n"
+				+ "Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n"
+				+ "\(value)\r\n",
+			to: output
+		)
+	}
+
+	private static func write(_ value: String, to output: FileHandle) throws {
+		try output.write(contentsOf: Data(value.utf8))
 	}
 }
 
