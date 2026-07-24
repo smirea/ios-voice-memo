@@ -447,7 +447,6 @@ private struct ReminderRuleRow: View {
 			if hasDetails {
 				DisclosureGroup(isExpanded: $isExpanded) {
 					reminderDetails
-						.padding(.top, 10)
 				} label: {
 					reminderLabel
 				}
