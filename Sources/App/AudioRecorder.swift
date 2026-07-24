@@ -290,10 +290,16 @@ enum AudioTranscriber {
 			return try await transcribeWithApple(url: url, onUpdate: onUpdate)
 		}
 		guard let apiKey = ElevenLabsTranscriber.apiKey else {
-			return try await transcribeWithApple(url: url, onUpdate: onUpdate)
-				.warningThatElevenLabsFailed(
-					"ElevenLabs is enabled, but its API key is missing from this build."
+			do {
+				return try await transcribeWithApple(url: url, onUpdate: onUpdate)
+					.warningThatElevenLabsFailed(
+						"ElevenLabs is enabled, but its API key is missing from this build."
+					)
+			} catch {
+				throw AudioTranscriptionError.allServicesFailed(
+					"its API key is missing from this build"
 				)
+			}
 		}
 
 		let appleTask = Task {
