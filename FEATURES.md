@@ -8,14 +8,15 @@
 - Never places content in decorative background boxes; uses spacing and typography for hierarchy.
 - Stores notes and recordings locally for offline access and includes them in device backups.
 - Mirrors each completed recording to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files.
-- Stores the note's transcript, title, generated observations, location, attached event, and model details in its matching iCloud Drive JSON file.
+- Stores the note's transcript, summary, title, generated observations, location, attached event, and model details in its matching iCloud Drive JSON file.
 - Backfills existing recordings to iCloud Drive and replaces temporary `Unknown` city filenames after a city resolves.
 - Treats local app data as the source of truth; edits made directly to iCloud Drive exports are not imported.
 - Deleting notes also removes their local audio and matching iCloud Drive exports.
 - Recovers nonempty audio from an interrupted recording when the app next launches.
-- Resumes interrupted transcription and title generation when the app next launches.
+- Resumes interrupted transcription, summary, and title generation when the app next launches.
 - Transcribes recordings on-device, shows partial results live, and records the transcription model.
 - Generates note titles and weekly reviews on-device with guided output, ignoring filler and transcription artifacts, with a fallback when the system model is unavailable.
+- Generates a short on-device summary for recordings longer than 20 seconds.
 - Captures the recording location when permitted and asks system location services for the city name.
 - Refreshes the included calendars' events silently when the app opens or returns to the foreground after Calendar sync is enabled.
 - Reads calendar data without creating, changing, or deleting events.
@@ -25,7 +26,7 @@
 - Shows the current date at the top left and a Liquid Glass Settings button at the top right.
 - Shows all notes in a continuously scrolling reverse-chronological list.
 - Each note shows its date and time on the left, duration on the right, and title below.
-- A note being processed shows its current transcription or title-generation status.
+- A note being processed shows its current transcription or analysis status.
 - Tapping a note opens the **Note Screen**.
 - Swiping a note left reveals a trash button; tapping it requires deletion confirmation.
 - Shows an empty state when there are no notes.
@@ -65,12 +66,15 @@
 - Shows an attached event as a plain row directly below the header with a calendar icon.
 - Tapping an attached event opens that exact event using its provider link when available, otherwise in a native event detail view.
 - Shows the generated note title centered below the header.
-- Shows the title-generation model below the title, aligned right.
-- Shows live transcription and title-generation status after recording finishes; processing continues after navigating away.
+- Shows live transcription and analysis status after recording finishes; processing continues after navigating away.
 - Provides play/pause, waveform progress, and remaining-time controls for the recording.
 - Stops playback when leaving the note.
-- Shows the transcript when enabled in Settings and allows text selection.
-- Shows transcripts as plain text, collapsing content longer than four lines and only showing expand/collapse controls when content is hidden.
+- Shows a short generated summary above the transcript for recordings longer than 20 seconds.
+- Shows the analysis model below the summary, or below the title when no summary is generated, aligned right.
+- Shows the transcript when enabled in Settings as a plain preview truncated after four lines.
+- Tapping the transcript preview pushes a full-screen reader that can be closed or swiped back.
+- The transcript reader allows text selection and has a copy button at the bottom left.
+- The transcript reader has a Liquid Glass close button at the top right.
 - Shows the transcription model below the transcript, aligned right.
 - Shows the city with a map pin above a noninteractive Apple map.
 - Tapping anywhere on the map opens the recorded coordinates in the Google Maps app, with Google Maps web as a fallback.

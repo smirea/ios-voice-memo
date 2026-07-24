@@ -181,18 +181,24 @@ final class JournalStore {
 		}
 
 		entries[transcriptIndex].transcript = transcript.isEmpty ? "No transcript available." : transcript
+		entries[transcriptIndex].summary = nil
 		entries[transcriptIndex].transcriptModel = transcription?.modelName
 		entries[transcriptIndex].observations = []
+		let includesSummary = entries[transcriptIndex].duration > 20
 		entryProcessingPhases[entryID] = .reflecting
 		persist()
 
-		let reflection = await ReflectionEngine.reflect(on: transcript)
+		let reflection = await ReflectionEngine.reflect(
+			on: transcript,
+			includeSummary: includesSummary
+		)
 		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
 		guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
 			finishProcessing(entryID, token: token)
 			return
 		}
 		entries[index].headline = reflection.headline
+		entries[index].summary = reflection.summary
 		entries[index].observations = reflection.observations
 		entries[index].summaryModel = reflection.modelName
 		persist()

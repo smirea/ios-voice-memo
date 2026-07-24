@@ -82,7 +82,8 @@ struct EntryView: View {
 							.fixedSize(horizontal: false, vertical: true)
 							.frame(maxWidth: .infinity, alignment: .center)
 
-						if let model = currentEntry.summaryModel {
+						if currentEntry.summary?.isEmpty != false,
+							let model = currentEntry.summaryModel {
 							ModelAttribution(model: model)
 						}
 
@@ -94,9 +95,26 @@ struct EntryView: View {
 						}
 					}
 
+					if let summary = currentEntry.summary, !summary.isEmpty {
+						VStack(alignment: .leading, spacing: 10) {
+							Text(summary)
+								.font(.system(size: 18, weight: .medium))
+								.foregroundStyle(Color.white.opacity(0.94))
+								.lineSpacing(5)
+								.fixedSize(horizontal: false, vertical: true)
+
+							if let model = currentEntry.summaryModel {
+								ModelAttribution(model: model)
+							}
+						}
+					}
+
 					if store.settings.showTranscripts, !currentEntry.transcript.isEmpty {
 						VStack(alignment: .leading, spacing: 12) {
-							ExpandableTranscript(text: currentEntry.transcript)
+							SummaryToPopup(
+								text: currentEntry.transcript,
+								accessibilityName: "Transcript"
+							)
 								.contentTransition(.opacity)
 
 							if let model = currentEntry.transcriptModel {
@@ -260,76 +278,6 @@ private struct ModelAttribution: View {
 			.font(.system(size: 12, weight: .medium))
 			.foregroundStyle(AppStyle.tertiary)
 			.frame(maxWidth: .infinity, alignment: .trailing)
-	}
-}
-
-private struct ExpandableTranscript: View {
-	let text: String
-	@State private var isExpanded = false
-	@State private var availableWidth: CGFloat = 0
-
-	private var isTruncated: Bool {
-		guard availableWidth > 0 else { return false }
-		return textLineCount(width: availableWidth) > 4
-	}
-
-	var body: some View {
-		VStack(alignment: .trailing, spacing: 2) {
-			Text(text)
-				.font(.system(size: 16))
-				.foregroundStyle(Color.white.opacity(0.90))
-				.lineSpacing(5)
-				.lineLimit(isExpanded ? nil : 4)
-				.fixedSize(horizontal: false, vertical: true)
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.textSelection(.enabled)
-				.background {
-					GeometryReader { proxy in
-						Color.clear
-							.onAppear { availableWidth = proxy.size.width }
-							.onChange(of: proxy.size.width) { _, width in
-								availableWidth = width
-							}
-					}
-				}
-
-			if isTruncated {
-				Button {
-					withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
-				} label: {
-					Image(systemName: isExpanded ? "chevron.up.circle.fill" : "ellipsis.circle.fill")
-						.font(.system(size: 22))
-						.foregroundStyle(AppStyle.accent)
-						.frame(width: 44, height: 44)
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel(isExpanded ? "Collapse transcript" : "Expand transcript")
-			}
-		}
-	}
-
-	private func textLineCount(width: CGFloat) -> Int {
-		let textStorage = NSTextStorage(
-			string: text,
-			attributes: [.font: UIFont.systemFont(ofSize: 16)]
-		)
-		let layoutManager = NSLayoutManager()
-		let textContainer = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
-		textContainer.lineFragmentPadding = 0
-		textContainer.maximumNumberOfLines = 0
-		layoutManager.addTextContainer(textContainer)
-		textStorage.addLayoutManager(layoutManager)
-		layoutManager.ensureLayout(for: textContainer)
-
-		var lineCount = 0
-		var glyphIndex = 0
-		while glyphIndex < layoutManager.numberOfGlyphs {
-			var lineRange = NSRange()
-			layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineRange)
-			glyphIndex = NSMaxRange(lineRange)
-			lineCount += 1
-		}
-		return lineCount
 	}
 }
 

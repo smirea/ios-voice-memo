@@ -79,6 +79,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var createdAt: Date
 	var duration: TimeInterval
 	var transcript: String
+	var summary: String?
 	var headline: String
 	var observations: [String]
 	var audioFilename: String?
@@ -92,6 +93,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		createdAt: Date = .now,
 		duration: TimeInterval,
 		transcript: String,
+		summary: String? = nil,
 		headline: String,
 		observations: [String],
 		audioFilename: String? = nil,
@@ -104,6 +106,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.createdAt = createdAt
 		self.duration = duration
 		self.transcript = transcript
+		self.summary = summary
 		self.headline = headline
 		self.observations = observations
 		self.audioFilename = audioFilename
@@ -123,6 +126,7 @@ struct WeeklyReview: Sendable {
 
 struct ReflectionResult: Sendable {
 	var headline: String
+	var summary: String?
 	var observations: [String]
 	var modelName: String
 }
@@ -135,7 +139,7 @@ enum EntryProcessingPhase: Equatable, Sendable {
 	var title: String {
 		switch self {
 		case .transcribing: "Transcribing"
-		case .reflecting: "Creating title"
+		case .reflecting: "Analyzing"
 		case .complete: "Ready"
 		}
 	}
@@ -143,7 +147,7 @@ enum EntryProcessingPhase: Equatable, Sendable {
 	var compactTitle: String {
 		switch self {
 		case .transcribing: "Transcribing"
-		case .reflecting: "Creating title"
+		case .reflecting: "Analyzing"
 		case .complete: "Ready"
 		}
 	}
@@ -170,6 +174,7 @@ extension JournalEntry {
 				createdAt: date(2026, 7, 12, 8, 47),
 				duration: 94,
 				transcript: "The morning run felt good. I keep wondering if coming back to it means I am finally feeling like myself again.",
+				summary: "A good morning run felt like evidence that a familiar part of you may be returning.",
 				headline: "You’re letting one good run stand in for feeling like yourself again.",
 				observations: [
 					"The morning run felt good, and you gave it more meaning than the run itself.",
@@ -193,6 +198,7 @@ extension JournalEntry {
 				createdAt: date(2026, 7, 12, 7, 21),
 				duration: 58,
 				transcript: "I need to plan the day before it gets away from me. The review is first, then lunch, then I can finish the draft.",
+				summary: "You mapped out the review, lunch, and draft so the day would not get away from you.",
 				headline: "Planning the day",
 				observations: ["You were trying to give the day a shape before other people did."],
 				summaryModel: "SystemLanguageModel.default",
@@ -202,6 +208,7 @@ extension JournalEntry {
 				createdAt: date(2026, 7, 11, 22, 25),
 				duration: 312,
 				transcript: "The Figma review went long again and I spent the afternoon redoing the deck instead of the work that’s due Friday. I keep saying yes to everything and then it’s six p.m.",
+				summary: "The review and deck revisions consumed the afternoon while your own Friday work kept moving later.",
 				headline: "You keep calling everyone else’s work urgent and your own the thing that can wait.",
 				observations: [
 					"You keep calling everyone else’s work urgent and your own the thing that can wait.",
@@ -216,6 +223,7 @@ extension JournalEntry {
 				createdAt: date(2026, 7, 10, 21, 42),
 				duration: 187,
 				transcript: "The apartment stopped being the moment it became a choice you were making together.",
+				summary: "The apartment mattered less as a place than as a decision you were making together.",
 				headline: "The apartment stopped being the moment it became a choice you were making together.",
 				observations: ["You sounded less interested in the place than in what choosing it would mean."],
 				summaryModel: "SystemLanguageModel.default",

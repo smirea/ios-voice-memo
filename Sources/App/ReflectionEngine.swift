@@ -13,6 +13,19 @@ private struct GeneratedReflection {
 }
 
 @available(iOS 26.0, *)
+@Generable(description: "A concise title, short summary, and three grounded observations about a private voice memo")
+private struct GeneratedSummarizedReflection {
+	@Guide(description: "A sentence-case title of 4 to 12 words naming the memo's central theme, realization, decision, or next step")
+	var title: String
+
+	@Guide(description: "A factual summary of 1 or 2 sentences and no more than 60 words, covering the whole memo")
+	var summary: String
+
+	@Guide(description: "Three concise observations grounded in the speaker's words", .count(3))
+	var observations: [String]
+}
+
+@available(iOS 26.0, *)
 @Generable(description: "A concise weekly reflection based on private voice memos")
 private struct GeneratedWeeklyReview {
 	@Guide(description: "A sentence-case title under 12 words naming the week's central pattern")
@@ -24,13 +37,17 @@ private struct GeneratedWeeklyReview {
 #endif
 
 enum ReflectionEngine {
-	static func reflect(on transcript: String) async -> ReflectionResult {
+	static func reflect(on transcript: String, includeSummary: Bool) async -> ReflectionResult {
 		#if canImport(FoundationModels)
-		if #available(iOS 26.0, *), let generated = try? await modelReflection(on: transcript) {
+		if #available(iOS 26.0, *),
+			let generated = try? await modelReflection(
+				on: transcript,
+				includeSummary: includeSummary
+			) {
 			return generated
 		}
 		#endif
-		return fallbackReflection(on: transcript)
+		return fallbackReflection(on: transcript, includeSummary: includeSummary)
 	}
 
 	static func weeklyReview(entries: [JournalEntry], weekStart: Date) async -> WeeklyReview {
@@ -53,7 +70,10 @@ enum ReflectionEngine {
 		return WeeklyReview(weekStart: weekStart, title: title, body: body, trend: trend)
 	}
 
-	private static func fallbackReflection(on transcript: String) -> ReflectionResult {
+	private static func fallbackReflection(
+		on transcript: String,
+		includeSummary: Bool
+	) -> ReflectionResult {
 		let sentences = transcript
 			.split(whereSeparator: { ".!?".contains($0) })
 			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -74,6 +94,9 @@ enum ReflectionEngine {
 		}
 		return ReflectionResult(
 			headline: headline,
+			summary: includeSummary
+				? sentences.prefix(2).map(cleanSentence).joined(separator: ". ").nonempty
+				: nil,
 			observations: observations,
 			modelName: "MyVoiceMemo local parser"
 		)
@@ -81,17 +104,33 @@ enum ReflectionEngine {
 
 	#if canImport(FoundationModels)
 	@available(iOS 26.0, *)
-	private static func modelReflection(on transcript: String) async throws -> ReflectionResult? {
+	private static func modelReflection(
+		on transcript: String,
+		includeSummary: Bool
+	) async throws -> ReflectionResult? {
 		guard SystemLanguageModel.default.availability == .available else { return nil }
 		let session = LanguageModelSession(instructions: """
-		Read the entire private voice memo before responding. Identify its most meaningful theme, realization, decision, or next step. Ignore false starts, filler, transcription repetitions, and comments about making the recording. Never use the opening phrase as a title merely because it appears first. Keep the title natural, specific, sentence case, and free of ending punctuation. Make each observation specific, restrained, kind, and supported by the speaker's own words. Never give advice, diagnose, ask a question, or chat.
+		Read the entire private voice memo before responding. Identify its most meaningful theme, realization, decision, or next step. Ignore false starts, filler, transcription repetitions, and comments about making the recording. Never use the opening phrase as a title merely because it appears first. Keep the title natural, specific, sentence case, and free of ending punctuation. Summaries must cover the whole memo without interpretation or advice. Make each observation specific, restrained, kind, and supported by the speaker's own words. Never give advice, diagnose, ask a question, or chat.
 		""")
+		if includeSummary {
+			let response = try await session.respond(
+				to: transcript,
+				generating: GeneratedSummarizedReflection.self
+			)
+			return ReflectionResult(
+				headline: cleanTitle(response.content.title),
+				summary: cleanSentence(response.content.summary).nonempty,
+				observations: response.content.observations.map(cleanSentence),
+				modelName: "SystemLanguageModel.default · guided"
+			)
+		}
 		let response = try await session.respond(
 			to: transcript,
 			generating: GeneratedReflection.self
 		)
 		return ReflectionResult(
 			headline: cleanTitle(response.content.title),
+			summary: nil,
 			observations: response.content.observations.map(cleanSentence),
 			modelName: "SystemLanguageModel.default · guided"
 		)
@@ -132,5 +171,11 @@ enum ReflectionEngine {
 		sentence
 			.replacingOccurrences(of: "\n", with: " ")
 			.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+}
+
+private extension String {
+	var nonempty: String? {
+		isEmpty ? nil : self
 	}
 }
