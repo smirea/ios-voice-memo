@@ -151,6 +151,13 @@ final class JournalStore {
 		entryProcessingPhases[entryID]
 	}
 
+	func canReprocessEntry(id entryID: UUID) -> Bool {
+		guard let entry = entry(id: entryID),
+			let url = audioURL(for: entry)
+		else { return false }
+		return fileManager.fileExists(atPath: url.path)
+	}
+
 	@discardableResult
 	func beginRecordingLocationCapture() -> Task<JournalLocation?, Never> {
 		recordingLocationTask?.cancel()
@@ -213,13 +220,22 @@ final class JournalStore {
 		return entryID
 	}
 
-	private func startProcessing(entryID: UUID, url: URL) {
+	private func startProcessing(
+		entryID: UUID,
+		url: URL,
+		preserveExistingTranscriptOnFailure: Bool = false
+	) {
 		entryProcessingTasks[entryID]?.cancel()
 		let processingToken = UUID()
 		entryProcessingTokens[entryID] = processingToken
 		entryProcessingPhases[entryID] = .transcribing
 		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
-			await self?.processRecording(entryID: entryID, url: url, token: processingToken)
+			await self?.processRecording(
+				entryID: entryID,
+				url: url,
+				token: processingToken,
+				preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
+			)
 		}
 	}
 
@@ -250,13 +266,20 @@ final class JournalStore {
 		}
 	}
 
-	private func processRecording(entryID: UUID, url: URL, token: UUID) async {
+	private func processRecording(
+		entryID: UUID,
+		url: URL,
+		token: UUID,
+		preserveExistingTranscriptOnFailure: Bool
+	) async {
 		let transcription: TranscriptionResult?
+		var transcriptionError: Error?
 		do {
 			let result = try await AudioTranscriber.transcribe(
 				url: url,
 				preferElevenLabs: settings.preferElevenLabsTranscription
 			) { [weak self] partialResult in
+				guard !preserveExistingTranscriptOnFailure else { return }
 				Task { @MainActor [weak self] in
 					self?.updatePartialTranscript(partialResult, for: entryID, token: token)
 				}
@@ -265,13 +288,23 @@ final class JournalStore {
 			transcriptionAlertMessage = result.warning
 		} catch {
 			transcription = nil
-			if settings.preferElevenLabsTranscription, !Task.isCancelled {
+			transcriptionError = error
+			if settings.preferElevenLabsTranscription,
+				!preserveExistingTranscriptOnFailure,
+				!Task.isCancelled {
 				transcriptionAlertMessage = error.localizedDescription
 			}
 		}
 		let transcript = transcription?.transcript.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
 		guard let transcriptIndex = entries.firstIndex(where: { $0.id == entryID }) else {
+			finishProcessing(entryID, token: token)
+			return
+		}
+		if preserveExistingTranscriptOnFailure, transcript.isEmpty {
+			let reason = transcriptionError.map { " \($0.localizedDescription)" } ?? ""
+			transcriptionAlertMessage =
+				"Reprocessing could not transcribe this recording.\(reason) The existing transcript and analysis were kept."
 			finishProcessing(entryID, token: token)
 			return
 		}
@@ -286,15 +319,14 @@ final class JournalStore {
 	}
 
 	func reprocessEntry(id entryID: UUID) {
-		guard let entry = entry(id: entryID), !entry.transcript.isEmpty else { return }
-		entryProcessingTasks.removeValue(forKey: entryID)?.cancel()
-		let token = UUID()
-		entryProcessingTokens[entryID] = token
-		entryProcessingPhases[entryID] = .reflecting
-		enqueueEvaluation(
+		guard let entry = entry(id: entryID),
+			let url = audioURL(for: entry),
+			fileManager.fileExists(atPath: url.path)
+		else { return }
+		startProcessing(
 			entryID: entryID,
-			transcript: entry.transcript,
-			token: token
+			url: url,
+			preserveExistingTranscriptOnFailure: true
 		)
 	}
 

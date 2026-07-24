@@ -281,7 +281,7 @@ struct EntryView: View {
 			.padding(.horizontal, 16)
 			.frame(height: 52)
 			.disabled(
-				currentEntry.transcript.isEmpty
+				!store.canReprocessEntry(id: entry.id)
 					|| store.processingPhase(for: entry.id) != nil
 			)
 
