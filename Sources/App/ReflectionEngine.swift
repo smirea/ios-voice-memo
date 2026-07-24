@@ -96,13 +96,16 @@ enum ReflectionEngine {
 	) async throws -> ReflectionResult? {
 		guard SystemLanguageModel.default.availability == .available else { return nil }
 		let session = LanguageModelSession(instructions: """
-		Read the entire private voice memo before responding. Identify its most meaningful theme, realization, decision, or next step. Ignore false starts, filler, transcription repetitions, and comments about making the recording. Never use the opening phrase as a title merely because it appears first. Keep the title natural, specific, sentence case, and free of ending punctuation. Summaries must cover the whole memo without interpretation or advice. Address the memo owner directly as "you"; never call them "the user," "user," or "the speaker." Never give advice, diagnose, ask a question, or chat.
+		Read the entire private voice memo before responding. Identify its most meaningful theme, realization, decision, or next step. Ignore false starts, filler, transcription repetitions, and comments about making the recording. Never use the opening phrase as a title merely because it appears first. Keep the title natural, specific, sentence case, and free of ending punctuation. Summaries must cover the whole memo without interpretation or advice. Address the memo owner directly as "you"; never call them "the user," "user," or "the speaker." Never output filenames, logs, metadata, identifiers, or other tokens absent from the memo. Never give advice, diagnose, ask a question, or chat.
 		""")
 		if includeSummary {
 			let response = try await session.respond(
 				to: transcript,
 				generating: GeneratedSummarizedReflection.self
 			)
+			guard !containsUngroundedArtifact(response.content.title, transcript: transcript),
+				!containsUngroundedArtifact(response.content.summary, transcript: transcript)
+			else { return nil }
 			return ReflectionResult(
 				headline: cleanTitle(response.content.title),
 				summary: cleanSentence(response.content.summary).nonempty,
@@ -113,6 +116,9 @@ enum ReflectionEngine {
 			to: transcript,
 			generating: GeneratedReflection.self
 		)
+		guard !containsUngroundedArtifact(response.content.title, transcript: transcript) else {
+			return nil
+		}
 		return ReflectionResult(
 			headline: cleanTitle(response.content.title),
 			summary: nil,
@@ -155,6 +161,28 @@ enum ReflectionEngine {
 			.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard let first = cleaned.first else { return "" }
 		return first.uppercased() + cleaned.dropFirst()
+	}
+
+	static func containsUngroundedArtifact(
+		_ generated: String,
+		transcript: String
+	) -> Bool {
+		if (generated.contains("{") || generated.contains("}")),
+			!transcript.contains("{"),
+			!transcript.contains("}") {
+			return true
+		}
+		let pattern = #"(?i)\b[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*\.(?:log|json|txt|csv|md)\b"#
+		guard let expression = try? NSRegularExpression(pattern: pattern) else {
+			return false
+		}
+		let range = NSRange(generated.startIndex..., in: generated)
+		return expression.matches(in: generated, range: range).contains { match in
+			guard let matchRange = Range(match.range, in: generated) else { return false }
+			return !transcript.reminderNormalized.contains(
+				String(generated[matchRange]).reminderNormalized
+			)
+		}
 	}
 
 	private static func withGenerationTimeout<T: Sendable>(
