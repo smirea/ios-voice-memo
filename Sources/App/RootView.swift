@@ -55,11 +55,7 @@ struct RootView: View {
 				switch route {
 				case let .entry(entryID):
 					if let entry = store.entry(id: entryID) {
-						EntryView(
-							store: store,
-							entry: entry,
-							onBack: { path.removeAll() }
-						)
+						EntryView(store: store, entry: entry)
 					}
 				case .reminderBenchmark:
 					ReminderBenchmarkView()

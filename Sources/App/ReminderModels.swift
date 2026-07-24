@@ -43,25 +43,19 @@ enum EventReminderTimeBucket: String, Codable, CaseIterable, Hashable, Sendable 
 }
 
 struct EventSeriesReference: Codable, Hashable, Sendable {
-	var sourceEventID: String
 	var externalIdentifier: String?
 	var calendarIdentifier: String
 	var calendarTitle: String
 	var eventTitle: String
-	var location: String?
 	var startMinuteOfDay: Int
-	var isRecurring: Bool
 
 	init(event: JournalCalendarEvent, calendar: Calendar = .current) {
-		sourceEventID = event.id
 		externalIdentifier = event.externalIdentifier
 		calendarIdentifier = event.calendarIdentifier
 		calendarTitle = event.calendarTitle
 		eventTitle = event.title
-		location = event.location
 		let components = calendar.dateComponents([.hour, .minute], from: event.startDate)
 		startMinuteOfDay = (components.hour ?? 0) * 60 + (components.minute ?? 0)
-		isRecurring = event.isRecurring
 	}
 
 	func matches(_ event: JournalCalendarEvent, calendar: Calendar = .current) -> Bool {
@@ -99,14 +93,11 @@ struct FuzzyEventSelector: Codable, Hashable, Sendable {
 }
 
 enum EventReminderSelector: Codable, Hashable, Sendable {
-	case occurrence(JournalCalendarEvent)
 	case series(EventSeriesReference)
 	case fuzzy(FuzzyEventSelector)
 
 	var title: String {
-		return switch self {
-		case let .occurrence(event):
-			event.title
+		switch self {
 		case let .series(series):
 			series.eventTitle
 		case let .fuzzy(selector):
@@ -132,8 +123,6 @@ struct EventReminderRule: Codable, Hashable, Identifiable, Sendable {
 	var createdAt: Date
 	var expiresAt: Date?
 	var leadTimeOverrideMinutes: Int?
-	var isEnabled: Bool
-	var modelName: String?
 	var resolvedOccurrence: JournalCalendarEvent?
 
 	init(
@@ -146,8 +135,6 @@ struct EventReminderRule: Codable, Hashable, Identifiable, Sendable {
 		createdAt: Date = .now,
 		expiresAt: Date? = nil,
 		leadTimeOverrideMinutes: Int? = nil,
-		isEnabled: Bool = true,
-		modelName: String? = nil,
 		resolvedOccurrence: JournalCalendarEvent? = nil
 	) {
 		self.id = id
@@ -159,13 +146,11 @@ struct EventReminderRule: Codable, Hashable, Identifiable, Sendable {
 		self.createdAt = createdAt
 		self.expiresAt = expiresAt
 		self.leadTimeOverrideMinutes = leadTimeOverrideMinutes
-		self.isEnabled = isEnabled
-		self.modelName = modelName
 		self.resolvedOccurrence = resolvedOccurrence
 	}
 
 	func isActive(at date: Date) -> Bool {
-		isEnabled && (expiresAt == nil || expiresAt! >= date)
+		expiresAt.map { $0 >= date } ?? true
 	}
 }
 
@@ -174,22 +159,16 @@ enum ReminderFeedbackKind: String, Codable, Hashable, Sendable {
 	case manualRemoval
 }
 
-struct ReminderFeedback: Codable, Hashable, Identifiable, Sendable {
-	var id: UUID
-	var createdAt: Date
+struct ReminderFeedback: Codable, Hashable, Sendable {
 	var kind: ReminderFeedbackKind
 	var text: String
 	var focusedReminderID: UUID?
 
 	init(
-		id: UUID = UUID(),
-		createdAt: Date = .now,
 		kind: ReminderFeedbackKind,
 		text: String,
 		focusedReminderID: UUID? = nil
 	) {
-		self.id = id
-		self.createdAt = createdAt
 		self.kind = kind
 		self.text = text
 		self.focusedReminderID = focusedReminderID

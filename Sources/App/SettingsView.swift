@@ -1,7 +1,5 @@
 import SwiftUI
-#if os(iOS)
 import UIKit
-#endif
 
 struct SettingsView: View {
 	@Environment(\.dismiss) private var dismiss
@@ -51,7 +49,7 @@ struct SettingsView: View {
 				}
 			}
 			.scrollContentBackground(.hidden)
-			.background(.black)
+			.background(AppStyle.background)
 			.navigationTitle("Settings")
 			.toolbar {
 				ToolbarItem(placement: .confirmationAction) {
@@ -60,7 +58,7 @@ struct SettingsView: View {
 			}
 		}
 		.preferredColorScheme(.dark)
-		.presentationBackground(.black)
+		.presentationBackground(AppStyle.background)
 		.onChange(of: draft) { _, newValue in store.updateSettings(newValue) }
 		.alert("Delete the journal?", isPresented: $showsClearConfirmation) {
 			Button("Cancel", role: .cancel) {}

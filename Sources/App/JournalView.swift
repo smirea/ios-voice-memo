@@ -9,35 +9,31 @@ struct JournalView: View {
 
 	@State private var entryPendingDeletion: JournalEntry?
 
-	private var visibleEntries: [JournalEntry] {
-		store.entries.sorted { $0.createdAt > $1.createdAt }
-	}
-
 	var body: some View {
 		ZStack(alignment: .bottom) {
-			Color.black.ignoresSafeArea()
+			AppStyle.background.ignoresSafeArea()
 
 			List {
 				header
 					.padding(.horizontal, 20)
 					.padding(.bottom, 20)
 				.listRowInsets(EdgeInsets())
-				.listRowBackground(Color.black)
+				.listRowBackground(AppStyle.background)
 				.listRowSeparator(.hidden)
 
-				if visibleEntries.isEmpty {
+				if store.entries.isEmpty {
 					emptyState
 						.listRowInsets(EdgeInsets())
-						.listRowBackground(Color.black)
+						.listRowBackground(AppStyle.background)
 						.listRowSeparator(.hidden)
 				} else {
-					ForEach(visibleEntries) { entry in
+					ForEach(store.entries) { entry in
 						Button { onSelectEntry(entry) } label: {
 							EntryCard(entry: entry, processingPhase: store.processingPhase(for: entry.id))
 						}
 						.buttonStyle(.plain)
 						.listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 9, trailing: 20))
-						.listRowBackground(Color.black)
+						.listRowBackground(AppStyle.background)
 						.listRowSeparator(.hidden)
 						.swipeActions(edge: .trailing, allowsFullSwipe: false) {
 							Button {
@@ -53,7 +49,7 @@ struct JournalView: View {
 				Color.clear
 					.frame(height: 95)
 					.listRowInsets(EdgeInsets())
-					.listRowBackground(Color.black)
+					.listRowBackground(AppStyle.background)
 					.listRowSeparator(.hidden)
 			}
 			.listStyle(.plain)
@@ -187,7 +183,7 @@ private struct EntryCard: View {
 						} else {
 							ProgressView().controlSize(.mini)
 						}
-						Text(processingPhase.compactTitle)
+						Text(processingPhase.title)
 					}
 					.font(.system(size: 12, weight: .semibold))
 					.foregroundStyle(AppStyle.accent)

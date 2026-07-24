@@ -5,9 +5,9 @@ import SwiftUI
 import UIKit
 
 struct EntryView: View {
+	@Environment(\.dismiss) private var dismiss
 	@Bindable var store: JournalStore
 	let entry: JournalEntry
-	let onBack: () -> Void
 	@State private var playback = AudioPlayback()
 	@State private var presentedCalendarEvent: PresentedCalendarEvent?
 	@State private var isMissingCalendarEventAlertPresented = false
@@ -17,18 +17,9 @@ struct EntryView: View {
 		store.entry(id: entry.id) ?? entry
 	}
 
-	private var headerDate: String {
-		let formatter = DateFormatter()
-		formatter.locale = .current
-		let currentYear = Calendar.current.component(.year, from: .now)
-		let entryYear = Calendar.current.component(.year, from: currentEntry.createdAt)
-		formatter.dateFormat = entryYear == currentYear ? "EEE MMM d" : "EEE MMM d yyyy"
-		return formatter.string(from: currentEntry.createdAt)
-	}
-
 	var body: some View {
 		ZStack {
-			Color.black.ignoresSafeArea()
+			AppStyle.background.ignoresSafeArea()
 
 			ScrollView {
 				VStack(alignment: .leading, spacing: 32) {
@@ -40,7 +31,7 @@ struct EntryView: View {
 								.lineLimit(1)
 								.truncationMode(.tail)
 							Spacer(minLength: 0)
-							Text(headerDate)
+							Text(currentEntry.createdAt.compactHeaderText)
 								.font(.system(size: 25, weight: .semibold))
 								.foregroundStyle(.white)
 								.lineLimit(1)
@@ -148,18 +139,9 @@ struct EntryView: View {
 			}
 			.scrollIndicators(.hidden)
 		}
-		.presentationBackground(.black)
+		.presentationBackground(AppStyle.background)
 		.toolbar(.hidden, for: .navigationBar)
-		.simultaneousGesture(
-			DragGesture(minimumDistance: 16)
-				.onEnded { value in
-					guard value.startLocation.x <= 32,
-						value.translation.width >= 64,
-						value.translation.width > abs(value.translation.height)
-					else { return }
-					onBack()
-				}
-		)
+		.background(NativeBackSwipeEnabler())
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
 		.task {
@@ -179,7 +161,7 @@ struct EntryView: View {
 		} message: {
 			Text("This event is no longer available in the calendars on this iPhone.")
 		}
-		.accessibilityAction(.escape, onBack)
+		.accessibilityAction(.escape) { dismiss() }
 	}
 
 	private func openCalendarEvent(_ event: JournalCalendarEvent) {

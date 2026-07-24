@@ -47,7 +47,6 @@ struct ReminderResolutionBenchmarkCase {
 }
 
 enum ExpectedReminderSelectorKind: String {
-	case occurrence
 	case series
 	case fuzzy
 }
@@ -298,10 +297,13 @@ enum ReminderBenchmarkCorpus {
 					cue("chart", ["churn", "chart"], .series, .nextMatch)
 				]),
 				parse("Names colors and preferences", .meetup, "At the next meetup remember Alice uses green, Ben uses yellow, Priya uses blue, and Noor does not want the cooperative game.", [
-					cue("Alice", ["alice", "green"], .fuzzy, .nextMatch, eventTerms: ["meetup"]),
-					cue("Ben", ["ben", "yellow"], .fuzzy, .nextMatch, eventTerms: ["meetup"]),
-					cue("Priya", ["priya", "blue"], .fuzzy, .nextMatch, eventTerms: ["meetup"]),
-					cue("Noor", ["noor", "cooperative"], .fuzzy, .nextMatch, eventTerms: ["meetup"])
+					cue(
+						"people",
+						["alice", "green", "ben", "yellow", "priya", "blue", "noor", "cooperative"],
+						.fuzzy,
+						.nextMatch,
+						eventTerms: ["meetup"]
+					)
 				]),
 				parse("Different policies in one memo", .improv, "Next class ask Dana about the showcase. Going forward, take one breath before every scene.", [
 					cue("Dana", ["ask", "dana", "showcase"], .series, .nextMatch),

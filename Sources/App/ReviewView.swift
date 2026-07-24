@@ -7,7 +7,7 @@ struct ReviewView: View {
 
 	var body: some View {
 		ZStack {
-			Color.black.ignoresSafeArea()
+			AppStyle.background.ignoresSafeArea()
 
 			if let review {
 				ScrollView {
@@ -45,7 +45,7 @@ struct ReviewView: View {
 				}
 			}
 		}
-		.presentationBackground(.black)
+		.presentationBackground(AppStyle.background)
 		.navigationTitle("Weekly review")
 		.navigationBarTitleDisplayMode(.inline)
 		.toolbar(.visible, for: .navigationBar)

@@ -54,11 +54,9 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 		}
 
 		do {
-			#if os(iOS)
 			let session = AVAudioSession.sharedInstance()
 			try session.setCategory(.playback, mode: .spokenAudio)
 			try session.setActive(true)
-			#endif
 			guard player.play() else { return }
 			isPlaying = true
 			startTimer()
@@ -103,9 +101,7 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 	}
 
 	private func deactivateSession() {
-		#if os(iOS)
 		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-		#endif
 	}
 
 	nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {

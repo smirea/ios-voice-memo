@@ -1,10 +1,6 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
-#if canImport(Darwin)
 import Darwin
-#endif
 
 struct ReminderBenchmarkProgress {
 	var completed: Int
@@ -14,7 +10,6 @@ struct ReminderBenchmarkProgress {
 }
 
 struct ReminderBenchmarkCaseResult: Identifiable {
-	var id: String
 	var groupID: String
 	var name: String
 	var passed: Bool
@@ -27,6 +22,7 @@ struct ReminderBenchmarkCaseResult: Identifiable {
 	var generated: [String]
 	var issues: [String]
 	var duration: TimeInterval
+	var id: String { "\(groupID)|\(name)" }
 
 	var consoleReport: String {
 		let output = generated.isEmpty ? "none" : generated.joined(separator: " | ")
@@ -48,9 +44,6 @@ struct ReminderBenchmarkCheckResult: Identifiable {
 }
 
 struct ReminderBenchmarkRun {
-	var startedAt: Date
-	var finishedAt: Date
-	var groups: [ReminderBenchmarkGroup]
 	var results: [ReminderBenchmarkCaseResult]
 	var checks: [ReminderBenchmarkCheckResult]
 
@@ -122,33 +115,22 @@ struct ReminderBenchmarkSummary {
 @MainActor
 enum ReminderBenchmark {
 	static var modelStatus: String {
-		#if canImport(FoundationModels)
-		if #available(iOS 26.0, *) {
-			switch SystemLanguageModel.default.availability {
-			case .available:
-				return "SystemLanguageModel.default is available"
-			case let .unavailable(reason):
-				return "SystemLanguageModel.default is unavailable: \(reason)"
-			}
+		switch SystemLanguageModel.default.availability {
+		case .available:
+			return "SystemLanguageModel.default is available"
+		case let .unavailable(reason):
+			return "SystemLanguageModel.default is unavailable: \(reason)"
 		}
-		#endif
-		return "Foundation Models is unavailable on this OS"
 	}
 
 	static var canRun: Bool {
-		#if canImport(FoundationModels)
-		if #available(iOS 26.0, *) {
-			return SystemLanguageModel.default.availability == .available
-		}
-		#endif
-		return false
+		SystemLanguageModel.default.availability == .available
 	}
 
 	static func run(
 		groups: [ReminderBenchmarkGroup] = ReminderBenchmarkCorpus.groups,
 		progress: (ReminderBenchmarkProgress) -> Void = { _ in }
 	) async -> ReminderBenchmarkRun {
-		let startedAt = Date()
 		let total = groups.reduce(0) { $0 + $1.cases.count }
 		var completed = 0
 		var results: [ReminderBenchmarkCaseResult] = []
@@ -175,9 +157,6 @@ enum ReminderBenchmark {
 		}
 
 		return ReminderBenchmarkRun(
-			startedAt: startedAt,
-			finishedAt: Date(),
-			groups: groups,
 			results: results,
 			checks: checks
 		)
@@ -260,7 +239,6 @@ enum ReminderBenchmark {
 				duration: 60,
 				transcript: "Benchmark fixture",
 				headline: "Benchmark",
-				observations: [],
 				calendarEvent: test.sourceEvent,
 				reminders: [test.rule]
 			)
@@ -277,7 +255,6 @@ enum ReminderBenchmark {
 					"expected \(test.expectedEventIDs.sorted().joined(separator: ", ")); matched \(actual.sorted().joined(separator: ", "))"
 				]
 			return ReminderBenchmarkCaseResult(
-				id: "\(groupID)|\(test.name)",
 				groupID: groupID,
 				name: test.name,
 				passed: passed,
@@ -395,7 +372,6 @@ enum ReminderBenchmark {
 			&& grounded == actual.count
 
 		return ReminderBenchmarkCaseResult(
-			id: "\(groupID)|\(name)",
 			groupID: groupID,
 			name: name,
 			passed: passed,
@@ -432,7 +408,6 @@ enum ReminderBenchmark {
 		_ selector: EventReminderSelector
 	) -> ExpectedReminderSelectorKind {
 		switch selector {
-		case .occurrence: .occurrence
 		case .series: .series
 		case .fuzzy: .fuzzy
 		}
@@ -582,7 +557,6 @@ enum ReminderBenchmark {
 			duration: 30,
 			transcript: "Benchmark",
 			headline: "Benchmark",
-			observations: [],
 			calendarEvent: event,
 			reminders: [rule]
 		)
@@ -612,12 +586,12 @@ enum ReminderBenchmark {
 			createdAt: ReminderBenchmarkCorpus.createdAt,
 			duration: 30,
 			transcript: "Old entry",
-			headline: "Old entry",
-			observations: []
+			headline: "Old entry"
 		)
 		guard let data = try? JSONEncoder().encode(entry),
 			var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
 		else { return false }
+		object["observations"] = ["Legacy observation"]
 		object.removeValue(forKey: "reminders")
 		object.removeValue(forKey: "reminderFeedback")
 		object.removeValue(forKey: "reminderModel")
@@ -642,11 +616,18 @@ enum ReminderBenchmark {
 			duration: 30,
 			transcript: "Bring electrolytes",
 			headline: "Benchmark",
-			observations: [],
 			reminders: [reminder]
 		)
 		guard let data = try? JSONEncoder().encode(entry),
-			let decoded = try? JSONDecoder().decode(JournalEntry.self, from: data)
+			var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+			var reminders = object["reminders"] as? [[String: Any]],
+			!reminders.isEmpty
+		else { return false }
+		reminders[0]["isEnabled"] = true
+		reminders[0]["modelName"] = "Legacy reminder model"
+		object["reminders"] = reminders
+		guard let legacyData = try? JSONSerialization.data(withJSONObject: object),
+			let decoded = try? JSONDecoder().decode(JournalEntry.self, from: legacyData)
 		else { return false }
 		return decoded.reminders.count == 1
 			&& decoded.reminders[0].resolvedOccurrence == nil

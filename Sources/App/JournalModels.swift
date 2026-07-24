@@ -97,7 +97,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		case transcript
 		case summary
 		case headline
-		case observations
 		case audioFilename
 		case location
 		case calendarEvent
@@ -114,7 +113,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var transcript: String
 	var summary: String?
 	var headline: String
-	var observations: [String]
 	var audioFilename: String?
 	var location: JournalLocation?
 	var calendarEvent: JournalCalendarEvent?
@@ -131,7 +129,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		transcript: String,
 		summary: String? = nil,
 		headline: String,
-		observations: [String],
 		audioFilename: String? = nil,
 		location: JournalLocation? = nil,
 		calendarEvent: JournalCalendarEvent? = nil,
@@ -147,7 +144,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.transcript = transcript
 		self.summary = summary
 		self.headline = headline
-		self.observations = observations
 		self.audioFilename = audioFilename
 		self.location = location
 		self.calendarEvent = calendarEvent
@@ -166,7 +162,6 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		transcript = try container.decode(String.self, forKey: .transcript)
 		summary = try container.decodeIfPresent(String.self, forKey: .summary)
 		headline = try container.decode(String.self, forKey: .headline)
-		observations = try container.decodeIfPresent([String].self, forKey: .observations) ?? []
 		audioFilename = try container.decodeIfPresent(String.self, forKey: .audioFilename)
 		location = try container.decodeIfPresent(JournalLocation.self, forKey: .location)
 		calendarEvent = try container.decodeIfPresent(JournalCalendarEvent.self, forKey: .calendarEvent)
@@ -188,7 +183,6 @@ struct WeeklyReview: Sendable {
 struct ReflectionResult: Sendable {
 	var headline: String
 	var summary: String?
-	var observations: [String]
 	var modelName: String
 }
 
@@ -205,13 +199,6 @@ enum EntryProcessingPhase: Equatable, Sendable {
 		}
 	}
 
-	var compactTitle: String {
-		switch self {
-		case .transcribing: "Transcribing"
-		case .reflecting: "Analyzing"
-		case .complete: "Ready"
-		}
-	}
 }
 
 extension JournalEntry {
@@ -272,11 +259,6 @@ extension JournalEntry {
 				transcript: "The morning run felt good, but I faded early. Next time I should bring electrolytes. I should also ask Maya which dentist she recommended. For morning group runs this month I want to wear the red shorts so they are easy to spot.",
 				summary: "The run felt encouraging, with a few concrete preparations you want to carry into the next one.",
 				headline: "The run felt good enough to plan for the next one.",
-				observations: [
-					"You felt the run fade earlier than you wanted.",
-					"You connected hydration with being better prepared next time.",
-					"You left yourself two specific things to remember."
-				],
 				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
 				calendarEvent: morningRun,
 				summaryModel: "SystemLanguageModel.default",
@@ -288,8 +270,7 @@ extension JournalEntry {
 						evidence: "Next time I should bring electrolytes.",
 						selector: .series(runSeries),
 						occurrencePolicy: .everyMatch,
-						createdAt: date(2026, 7, 12, 8, 47),
-						modelName: "SystemLanguageModel.default · guided"
+						createdAt: date(2026, 7, 12, 8, 47)
 					),
 					EventReminderRule(
 						text: "Ask Maya which dentist she recommended",
@@ -297,8 +278,7 @@ extension JournalEntry {
 						evidence: "I should also ask Maya which dentist she recommended.",
 						selector: .series(runSeries),
 						occurrencePolicy: .nextMatch,
-						createdAt: date(2026, 7, 12, 8, 47),
-						modelName: "SystemLanguageModel.default · guided"
+						createdAt: date(2026, 7, 12, 8, 47)
 					),
 					EventReminderRule(
 						text: "Wear the red shorts",
@@ -323,8 +303,7 @@ extension JournalEntry {
 						)),
 						occurrencePolicy: .everyMatch,
 						createdAt: date(2026, 7, 12, 8, 47),
-						expiresAt: date(2026, 8, 12, 8, 47),
-						modelName: "SystemLanguageModel.default · guided"
+						expiresAt: date(2026, 8, 12, 8, 47)
 					)
 				],
 				reminderModel: "SystemLanguageModel.default · guided"
@@ -335,7 +314,6 @@ extension JournalEntry {
 				transcript: "I need to plan the day before it gets away from me. The review is first, then lunch, then I can finish the draft.",
 				summary: "You mapped out the review, lunch, and draft so the day would not get away from you.",
 				headline: "Planning the day",
-				observations: ["You were trying to give the day a shape before other people did."],
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
 			),
@@ -345,11 +323,6 @@ extension JournalEntry {
 				transcript: "The Figma review went long again and I spent the afternoon redoing the deck instead of the work that’s due Friday. I keep saying yes to everything and then it’s six p.m.",
 				summary: "The review and deck revisions consumed the afternoon while your own Friday work kept moving later.",
 				headline: "You keep calling everyone else’s work urgent and your own the thing that can wait.",
-				observations: [
-					"You keep calling everyone else’s work urgent and your own the thing that can wait.",
-					"Six p.m. arrives in your telling like weather, not like a series of yeses.",
-					"The deck got redone; the work that’s due Friday got talked about."
-				],
 				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
@@ -360,7 +333,6 @@ extension JournalEntry {
 				transcript: "The apartment stopped being the moment it became a choice you were making together.",
 				summary: "The apartment mattered less as a place than as a decision you were making together.",
 				headline: "The apartment stopped being the moment it became a choice you were making together.",
-				observations: ["You sounded less interested in the place than in what choosing it would mean."],
 				summaryModel: "SystemLanguageModel.default",
 				transcriptModel: "Apple Speech · en-US"
 			)

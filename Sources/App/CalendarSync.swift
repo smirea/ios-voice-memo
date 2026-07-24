@@ -25,7 +25,6 @@ enum PreferredCalendarApp: String, Codable, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class CalendarSync {
-	private(set) var authorizationStatus = EKEventStore.authorizationStatus(for: .event)
 	private(set) var calendars: [CalendarSource] = []
 	private(set) var events: [JournalCalendarEvent] = []
 
@@ -35,13 +34,6 @@ final class CalendarSync {
 
 	init(isDemoMode: Bool = false) {
 		self.isDemoMode = isDemoMode
-		if isDemoMode {
-			authorizationStatus = .fullAccess
-		}
-	}
-
-	var hasAccess: Bool {
-		isDemoMode || authorizationStatus == .fullAccess
 	}
 
 	func requestAccess() async -> Bool {
@@ -51,13 +43,11 @@ final class CalendarSync {
 		}
 		do {
 			let granted = try await eventStore.requestFullAccessToEvents()
-			authorizationStatus = EKEventStore.authorizationStatus(for: .event)
 			if granted {
 				loadCalendars()
 			}
 			return granted
 		} catch {
-			authorizationStatus = EKEventStore.authorizationStatus(for: .event)
 			return false
 		}
 	}
@@ -81,8 +71,7 @@ final class CalendarSync {
 			return
 		}
 
-		authorizationStatus = EKEventStore.authorizationStatus(for: .event)
-		guard authorizationStatus == .fullAccess else {
+		guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
 			calendars = []
 			events = []
 			return
@@ -137,7 +126,7 @@ final class CalendarSync {
 			return event
 		}
 
-		guard authorizationStatus == .fullAccess else { return nil }
+		guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
 
 		for identifier in [storedEvent.localIdentifier, storedEvent.id].compactMap({ $0 }) {
 			if let event = eventStore.event(withIdentifier: identifier)
@@ -178,7 +167,6 @@ final class CalendarSync {
 		refreshID = UUID()
 		events = []
 		calendars = []
-		authorizationStatus = EKEventStore.authorizationStatus(for: .event)
 	}
 
 	private func loadCalendars() {

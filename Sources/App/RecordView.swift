@@ -1,7 +1,5 @@
 import SwiftUI
-#if os(iOS)
 import UIKit
-#endif
 
 struct RecordView: View {
 	@Bindable var store: JournalStore
@@ -43,18 +41,9 @@ struct RecordView: View {
 		Calendar.current.startOfDay(for: selectedDate)
 	}
 
-	private var selectedDateTitle: String {
-		let formatter = DateFormatter()
-		formatter.locale = .current
-		let selectedYear = Calendar.current.component(.year, from: selectedDate)
-		let currentYear = Calendar.current.component(.year, from: .now)
-		formatter.dateFormat = selectedYear == currentYear ? "EEE MMM d" : "EEE MMM d yyyy"
-		return formatter.string(from: selectedDate)
-	}
-
 	var body: some View {
 		ZStack {
-			Color.black.ignoresSafeArea()
+			AppStyle.background.ignoresSafeArea()
 
 			if hasStartedRecording || isVisualDemo {
 				recordingView
@@ -62,7 +51,7 @@ struct RecordView: View {
 				setupView
 			}
 		}
-		.presentationBackground(.black)
+		.presentationBackground(AppStyle.background)
 		.task {
 			if startsImmediately || isVisualDemo {
 				hasStartedRecording = true
@@ -77,9 +66,7 @@ struct RecordView: View {
 			liveActivity.end()
 			if !isFinishing {
 				discardActiveRecording()
-				#if os(iOS)
 				UIApplication.shared.isIdleTimerDisabled = false
-				#endif
 			}
 		}
 		.onChange(of: recorder.duration) { _, duration in
@@ -142,7 +129,7 @@ struct RecordView: View {
 						showsDatePicker = true
 					} label: {
 						HStack(spacing: 9) {
-							Text(selectedDateTitle)
+							Text(selectedDate.compactHeaderText)
 								.font(.system(size: 30, weight: .semibold))
 								.foregroundStyle(.white)
 							Image(systemName: "chevron.down")
@@ -151,7 +138,7 @@ struct RecordView: View {
 						}
 					}
 					.buttonStyle(.plain)
-					.accessibilityLabel("Recording date, \(selectedDateTitle)")
+					.accessibilityLabel("Recording date, \(selectedDate.compactHeaderText)")
 					.accessibilityHint("Opens the calendar picker")
 
 					Toggle(isOn: $isAttachedToEvent) {
@@ -396,11 +383,9 @@ struct RecordView: View {
 				guard activeRecordingURL == url else { return }
 				liveActivity.setLocation(location?.displayName)
 			}
-			#if os(iOS)
 			if store.settings.keepScreenAwakeWhileRecording {
 				UIApplication.shared.isIdleTimerDisabled = true
 			}
-			#endif
 		} catch {
 			discardActiveRecording(fallbackURL: destination)
 			guard !Task.isCancelled else { return }
@@ -414,9 +399,7 @@ struct RecordView: View {
 		activeRecordingURL = nil
 		liveActivity.end()
 		isFinishing = true
-		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
-		#endif
 		impact(.medium)
 		let entryID = store.finishRecording(
 			at: recording.url,
@@ -429,9 +412,7 @@ struct RecordView: View {
 	private func cancel() {
 		discardActiveRecording()
 		liveActivity.end()
-		#if os(iOS)
 		UIApplication.shared.isIdleTimerDisabled = false
-		#endif
 		notification(.warning)
 		onClose()
 	}
@@ -457,7 +438,6 @@ struct RecordView: View {
 		store.checkpointRecording(at: activeRecordingURL, duration: duration)
 	}
 
-	#if os(iOS)
 	private func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
 		guard store.settings.hapticsEnabled else { return }
 		UIImpactFeedbackGenerator(style: style).impactOccurred()
@@ -467,7 +447,6 @@ struct RecordView: View {
 		guard store.settings.hapticsEnabled else { return }
 		UINotificationFeedbackGenerator().notificationOccurred(type)
 	}
-	#endif
 }
 
 private struct EventSelectionRow: View {

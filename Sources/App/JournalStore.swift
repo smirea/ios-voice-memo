@@ -7,7 +7,6 @@ import Observation
 final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
-	private(set) var reminderOccurrences: [EventReminderOccurrence] = []
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
 
@@ -116,7 +115,6 @@ final class JournalStore {
 			duration: duration,
 			transcript: "",
 			headline: "Processing recording",
-			observations: [],
 			audioFilename: url.lastPathComponent,
 			calendarEvent: calendarEvent
 		)
@@ -185,7 +183,6 @@ final class JournalStore {
 		entries[transcriptIndex].transcript = transcript.isEmpty ? "No transcript available." : transcript
 		entries[transcriptIndex].summary = nil
 		entries[transcriptIndex].transcriptModel = transcription?.modelName
-		entries[transcriptIndex].observations = []
 		let includesSummary = entries[transcriptIndex].duration > 20
 		entryProcessingPhases[entryID] = .reflecting
 		persist()
@@ -201,7 +198,6 @@ final class JournalStore {
 		}
 		entries[index].headline = reflection.headline
 		entries[index].summary = reflection.summary
-		entries[index].observations = reflection.observations
 		entries[index].summaryModel = reflection.modelName
 		if settings.eventRemindersEnabled {
 			let reminderResult = await ReminderEngine.parse(
@@ -356,7 +352,6 @@ final class JournalStore {
 	func refreshCalendar(on date: Date = .now) async {
 		guard settings.calendarSyncEnabled else {
 			calendarSync.clear()
-			reminderOccurrences = []
 			await reminderActivityManager.endAll()
 			return
 		}
@@ -369,7 +364,6 @@ final class JournalStore {
 
 	func refreshReminderSchedule(now: Date = .now) async {
 		guard settings.calendarSyncEnabled, settings.eventRemindersEnabled else {
-			reminderOccurrences = []
 			await reminderActivityManager.endAll()
 			return
 		}
@@ -381,7 +375,6 @@ final class JournalStore {
 			includedCalendarIdentifiers: settings.includedCalendarIdentifiers
 		)
 		let result = await ReminderEngine.resolve(entries: entries, events: events, now: now)
-		reminderOccurrences = result.occurrences
 
 		var rulesChanged = false
 		for entryIndex in entries.indices {
@@ -403,7 +396,7 @@ final class JournalStore {
 		}
 		if rulesChanged { persist() }
 		await reminderActivityManager.synchronize(
-			occurrences: reminderOccurrences,
+			occurrences: result.occurrences,
 			settings: settings,
 			now: now
 		)
@@ -412,9 +405,7 @@ final class JournalStore {
 	private func prepareStorage() {
 		do {
 			try fileManager.createDirectory(at: recordingsURL, withIntermediateDirectories: true)
-			#if os(iOS)
 			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: rootURL.path)
-			#endif
 			try includeInBackup(rootURL)
 			try includeInBackup(recordingsURL)
 		} catch {
@@ -432,9 +423,7 @@ final class JournalStore {
 		guard !isDemoMode, let data = try? JSONEncoder().encode(entries) else { return false }
 		do {
 			try data.write(to: entriesURL, options: [.atomic])
-			#if os(iOS)
 			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: entriesURL.path)
-			#endif
 			try includeInBackup(entriesURL)
 			for entry in deletedEntries {
 				pendingICloudDeletionReferences.insert(entry.id.uuidString)
@@ -504,7 +493,6 @@ final class JournalStore {
 				duration: duration,
 				transcript: "",
 				headline: "Processing recording",
-				observations: [],
 				audioFilename: url.lastPathComponent,
 				calendarEvent: matchingPending?.calendarEvent
 			))
@@ -533,12 +521,10 @@ final class JournalStore {
 	private func writePendingRecording(_ pending: PendingRecording) throws {
 		let data = try JSONEncoder().encode(pending)
 		try data.write(to: pendingRecordingURL, options: [.atomic])
-		#if os(iOS)
 		try fileManager.setAttributes(
 			[.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
 			ofItemAtPath: pendingRecordingURL.path
 		)
-		#endif
 		try includeInBackup(pendingRecordingURL)
 	}
 

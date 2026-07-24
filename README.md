@@ -1,6 +1,6 @@
 # MyVoiceMemo
 
-An iPhone voice memo app that records, transcribes, titles, and organizes spoken notes.
+An iPhone voice memo app that records, transcribes, organizes, and carries useful context into upcoming calendar events.
 
 ## Goals
 
@@ -22,6 +22,10 @@ An iPhone voice memo app that records, transcribes, titles, and organizes spoken
 - Model provenance stored with generated content
 - Read-only calendar sync with per-calendar inclusion
 - Optional calendar-event attachment before recording
+- On-device extraction of event-specific reminders with recurring, one-time, fuzzy, and expiring schedules
+- Reminder correction by disposable voice feedback
+- Configurable pre-event reminder Live Activities
+- A permanent 72-case on-device reminder benchmark
 - Exact calendar event details with direct Google Calendar links when available
 - Reverse-chronological timeline, weekly reviews, and recorded locations
 - Swipe-to-delete notes with confirmation
@@ -30,7 +34,7 @@ An iPhone voice memo app that records, transcribes, titles, and organizes spoken
 
 ## Storage
 
-The app keeps its working data in the private `Application Support/MyVoiceMemo` container for reliable offline recording and playback. It also mirrors every completed recording to `iCloud Drive/MyVoiceMemo` as a matching `.m4a` and `.json` pair named `YYYY-MM-DD_<city>__<UUID>`. The JSON contains the note ID, timestamp, duration, transcript, title, location, attached calendar event, and model provenance. Existing recordings are backfilled when the app launches. Deleting a note removes both mirrored files; edits made directly to the exports are not imported back into the app.
+The app keeps its working data in the private `Application Support/MyVoiceMemo` container for reliable offline recording and playback. It also mirrors every completed recording to `iCloud Drive/MyVoiceMemo` as a matching `.m4a` and `.json` pair named `YYYY-MM-DD_<city>__<UUID>`. The JSON contains the transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance. Existing recordings are backfilled when the app launches. Deleting a note removes both mirrored files; edits made directly to the exports are not imported back into the app.
 
 ## Requirements
 
@@ -42,7 +46,9 @@ The app keeps its working data in the private `Application Support/MyVoiceMemo` 
 
 Open `VoiceMemo.xcodeproj`, select the `VoiceMemo` scheme, and run on an iOS 26 iPhone target.
 
-Add `-demo` to load sample content. The additional `-demo-entry`, `-demo-review`, and `-demo-recording` launch arguments open those states directly.
+Add `-demo` to load sample content. Use `-demo-entry`, `-demo-reminders`, `-demo-reminder-feedback`, `-demo-review`, `-demo-recording`, `-demo-settings`, or `-demo-reminder-benchmark` to open a state directly.
+
+See [`docs/reminder-model-evaluation.md`](docs/reminder-model-evaluation.md) for simulator benchmark commands and the current baseline.
 
 ## TestFlight
 

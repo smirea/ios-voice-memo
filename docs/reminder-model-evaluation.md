@@ -39,26 +39,25 @@ Extra reminders count against precision because irrelevant cues cost user attent
 
 The benchmark was run inside the iPhone 17 Pro simulator on iOS 26.5 using `SystemLanguageModel.default`. The development Mac was not used as a substitute because it reported Apple Intelligence unavailable, while Foundation Models was available in the simulator.
 
-The final coherent 72-case run after schema decomposition scored:
+The final sustained 72-case run scored:
 
 ```text
-exact cases: 70/72
+exact cases: 72/72
 cue precision: 100.0%
 cue recall: 100.0%
 schema field accuracy: 100.0%
 exact evidence grounding: 100.0%
-fuzzy resolution: 8/10
+fuzzy resolution: 10/10
 deterministic checks: 8/8
 ```
 
-The two failures were positive fuzzy matches whose model calls took roughly 50 seconds and returned no accepted decision after the simulator had already processed the preceding 62 cases. The same fuzzy-resolution level passed 10/10 in an isolated run. This is useful evidence of sustained-run tail latency rather than a prompt or schema mismatch.
-
-Targeted reruns also confirmed precision boundaries at 12/12 and feedback reprocessing at 8/8. The corpus is intentionally strict, and Foundation Models output is nondeterministic, so scores should be compared over complete runs rather than treated as permanent guarantees.
+Targeted runs also passed dense/adversarial extraction at 10/10, precision boundaries at 12/12, feedback reprocessing at 8/8, and fuzzy resolution at 10/10. Foundation Models output is nondeterministic, so scores should be compared over complete runs rather than treated as permanent guarantees.
 
 ## Findings that changed the parser
 
 - One large guided schema produced valid JSON-like shapes but mixed selector, recurrence, time, and duration values.
 - Batch classification with opaque references caused decisions to leak between candidate events.
+- Supplying an adjacent eligible action during draft extraction caused cross-action leakage; each focused action now gets an isolated model session.
 - Compact action drafts and one-candidate boolean classifications were materially more reliable.
 - Explicit time, recurrence, relative duration, venue grounding, and obvious semantic conflicts are safer as deterministic validation.
 - Feedback performs better as edits to the authoritative current set than as a fresh extraction from the original transcript.

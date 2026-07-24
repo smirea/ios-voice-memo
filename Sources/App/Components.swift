@@ -58,7 +58,7 @@ private struct FullScreenTextReader: View {
 
 	var body: some View {
 		ZStack {
-			Color.black.ignoresSafeArea()
+			AppStyle.background.ignoresSafeArea()
 
 			ScrollView {
 				Text(text)
@@ -127,7 +127,7 @@ private struct FullScreenTextReader: View {
 	}
 }
 
-private struct NativeBackSwipeEnabler: UIViewControllerRepresentable {
+struct NativeBackSwipeEnabler: UIViewControllerRepresentable {
 	func makeUIViewController(context: Context) -> Controller {
 		Controller()
 	}
@@ -183,8 +183,16 @@ extension Date.FormatStyle {
 	static var journalHeader: Date.FormatStyle {
 		Date.FormatStyle().month(.wide).day().year()
 	}
+}
 
-	static var entryHeader: Date.FormatStyle {
-		Date.FormatStyle().weekday(.abbreviated).month(.abbreviated).day().year()
+extension Date {
+	var compactHeaderText: String {
+		let formatter = DateFormatter()
+		formatter.locale = .current
+		formatter.dateFormat = Calendar.current.component(.year, from: self)
+			== Calendar.current.component(.year, from: .now)
+			? "EEE MMM d"
+			: "EEE MMM d yyyy"
+		return formatter.string(from: self)
 	}
 }

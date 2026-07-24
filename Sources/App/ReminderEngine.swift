@@ -1,29 +1,18 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
 
-@available(iOS 26.0, *)
-@Generable(description: "Event-specific reminders extracted from a voice memo")
-private struct GeneratedReminderBatch {
-	@Guide(description: "Every useful event-specific reminder in the memo. Return an empty array when there are none.", .minimumCount(0))
-	var reminders: [GeneratedReminderDraft]
-}
-
-@available(iOS 26.0, *)
 @Generable(description: "All event-specific actions in an excerpt already confirmed to contain at least one reminder")
 private struct GeneratedRequiredReminderBatch {
 	@Guide(description: "Every distinct reminder action in the eligible excerpt.", .minimumCount(1))
 	var reminders: [GeneratedReminderDraft]
 }
 
-@available(iOS 26.0, *)
 @Generable(description: "Whether one memo excerpt contains an eligible event reminder")
 private struct GeneratedCueEligibility {
 	@Guide(description: "eligible only for an affirmative instruction the speaker gives their future self for a future event; otherwise exclude", .anyOf(["eligible", "exclude"]))
 	var classification: String
 }
 
-@available(iOS 26.0, *)
 @Generable(description: "One event-reminder action grounded in a memo excerpt")
 private struct GeneratedReminderDraft {
 	@Guide(description: "A short imperative checklist item")
@@ -36,7 +25,6 @@ private struct GeneratedReminderDraft {
 	var evidence: String
 }
 
-@available(iOS 26.0, *)
 @Generable(description: "The semantic calendar-event target for one reminder")
 private struct GeneratedReminderSchedule {
 	@Guide(description: "Describe only the event class stated in the evidence, without adding the attached event")
@@ -50,7 +38,7 @@ private struct GeneratedReminder {
 	var text: String
 	var motivation: String
 	var evidence: String
-	var selectorKind: String
+	var attachesToSource: Bool
 	var eventDescription: String
 	var locationDescription: String
 	var occurrencePolicy: EventReminderOccurrencePolicy
@@ -66,7 +54,7 @@ private struct GeneratedReminder {
 		text = draft.text
 		motivation = draft.motivation
 		evidence = draft.evidence
-		selectorKind = attachesToSource ? "attachedEventType" : "semanticEventClass"
+		self.attachesToSource = attachesToSource
 		eventDescription = schedule.eventDescription
 		locationDescription = schedule.locationDescription
 		self.occurrencePolicy = occurrencePolicy
@@ -79,7 +67,6 @@ private struct ReminderRelativeValidity {
 	var component: Calendar.Component
 }
 
-@available(iOS 26.0, *)
 @Generable(description: "A conservative decision about one candidate calendar event")
 private struct GeneratedEventMatch {
 	@Guide(description: "Whether the candidate clearly matches every stated selector constraint")
@@ -88,7 +75,6 @@ private struct GeneratedEventMatch {
 	@Guide(description: "A short explanation grounded in the candidate and selector")
 	var reason: String
 }
-#endif
 
 struct ReminderParsingResult: Sendable {
 	var reminders: [EventReminderRule]
@@ -126,23 +112,16 @@ enum ReminderEngine {
 			)
 		}
 
-		#if canImport(FoundationModels)
-		if #available(iOS 26.0, *),
-			let generated = try? await generatedReminders(
-				transcript: transcript,
-				sourceEvent: sourceEvent,
-				currentReminders: currentReminders,
-				feedback: feedback
-			) {
-			let evidenceCorpus = ([transcript] + feedback.map(\.text))
-				.joined(separator: "\n")
-				.reminderNormalized
+		if let generated = try? await generatedReminders(
+			transcript: transcript,
+			sourceEvent: sourceEvent
+		) {
+			let evidenceCorpus = transcript.reminderNormalized
 			let rules = generated.compactMap {
 				rule(
 					from: $0,
 					sourceEvent: sourceEvent,
 					createdAt: createdAt,
-					currentReminders: currentReminders,
 					evidenceCorpus: evidenceCorpus
 				)
 			}
@@ -151,11 +130,10 @@ enum ReminderEngine {
 				modelName: "SystemLanguageModel.default · guided reminders"
 			)
 		}
-		#endif
 
 		return ReminderParsingResult(
 			reminders: currentReminders,
-			modelName: currentReminders.first?.modelName
+			modelName: nil
 		)
 	}
 
@@ -307,8 +285,6 @@ enum ReminderEngine {
 				let matchedEvents: [JournalCalendarEvent]
 
 				switch reminder.selector {
-				case let .occurrence(event):
-					matchedEvents = candidatesAfterCreation.filter { $0.focusKey == event.focusKey }
 				case let .series(series):
 					matchedEvents = candidatesAfterCreation.filter { series.matches($0) }
 				case let .fuzzy(selector):
@@ -355,23 +331,16 @@ enum ReminderEngine {
 		)
 	}
 
-	#if canImport(FoundationModels)
-	@available(iOS 26.0, *)
 	private static func generatedReminders(
 		transcript: String,
-		sourceEvent: JournalCalendarEvent,
-		currentReminders: [EventReminderRule],
-		feedback: [ReminderFeedback]
+		sourceEvent: JournalCalendarEvent
 	) async throws -> [GeneratedReminder]? {
 		guard SystemLanguageModel.default.availability == .available else { return nil }
-		let eligibleExcerpts = try await eligibleCueExcerpts(
-			transcript: transcript,
-			sourceEvent: sourceEvent
-		)
-		guard !eligibleExcerpts.isEmpty || !feedback.isEmpty else { return [] }
+		let eligibleExcerpts = try await eligibleCueExcerpts(transcript: transcript)
+		guard !eligibleExcerpts.isEmpty else { return [] }
 
 		let draftInstructions = """
-		Extract only affirmative instructions the speaker gives their future self for immediately before or during a future calendar event.
+		This excerpt has already been confirmed to contain at least one event reminder. Extract every action the speaker gives their future self for immediately before or during that event. Do not reclassify the excerpt. Include actions conditional on the event's time or other stated traits.
 
 		Hard exclusions:
 		- Never turn a past observation into a reminder.
@@ -382,105 +351,43 @@ enum ReminderEngine {
 
 		Copy a short exact contiguous evidence excerpt. Preserve every stated action, name, and color. Return every useful cue, including zero; never fill a quota. Prefer omission when uncertain. A later pass assigns event matching, repetition, time, location, and duration.
 
-		Without feedback, extract from the eligible memo excerpts.
-
-		With feedback, the current reminder set is the authoritative baseline. Apply only the requested additions, changes, and removals. Do not restore something from the original memo merely because it is absent from the current set. A manual removal must stay removed. The output is the complete edited set, not a patch.
-
-		Feedback examples:
-		- Current: electrolytes, dentist. Feedback: "Remove dentist but keep electrolytes." Output only electrolytes.
-		- Current: electrolytes. Feedback: "You missed that I want to ask Rob next time." Output electrolytes plus Ask Rob, using the feedback as Ask Rob's evidence.
-		- Current: red pants for morning games. Feedback: "Those are for evening games, not morning." Output only red pants for evening games, using the feedback as evidence.
-		- Feedback: "Remove all reminders." Output an empty array.
 		"""
-		let current = currentReminders.isEmpty
-			? "None"
-			: currentReminders.map {
+		var drafts: [GeneratedReminderDraft] = []
+		for excerpt in eligibleExcerpts {
+			for focusExcerpt in actionFocusExcerpts(excerpt) {
+				let prompt = """
+				Attached event: \(sourceEvent.title)
+
+				Focus excerpt:
+				\(focusExcerpt)
 				"""
-				- Action: \($0.text)
-				  Evidence: \($0.evidence)
-				  Target: \($0.selector.title)
-				  Policy: \($0.occurrencePolicy.rawValue)
-				  Expires: \($0.expiresAt?.formatted(date: .abbreviated, time: .omitted) ?? "never")
-				"""
-			}.joined(separator: "\n")
-		let corrections = feedback.isEmpty
-			? "None"
-			: feedback.map { "- [\($0.kind.rawValue)] \($0.text)" }.joined(separator: "\n")
-		let sharedContext = """
-		Attached event:
-		Title: \(sourceEvent.title)
-		Calendar: \(sourceEvent.calendarTitle)
-		Start: \(sourceEvent.startDate.formatted(date: .abbreviated, time: .shortened))
-		Location: \(sourceEvent.location ?? "None")
-		Recurring according to Calendar: \(sourceEvent.isRecurring ? "yes" : "no")
+				var excerptDrafts: [GeneratedReminderDraft]?
+				for _ in 0..<2 where excerptDrafts == nil {
+					let session = LanguageModelSession(instructions: """
+					\(draftInstructions)
+					Extract actions stated in the focus excerpt only.
 
-		Eligible memo excerpts:
-		\(eligibleExcerpts.isEmpty ? "None" : eligibleExcerpts.map { "- \($0)" }.joined(separator: "\n"))
-		"""
-
-		let drafts: [GeneratedReminderDraft]
-		if feedback.isEmpty {
-			var collected: [GeneratedReminderDraft] = []
-			for (excerptIndex, excerpt) in eligibleExcerpts.enumerated() {
-				for focusExcerpt in actionFocusExcerpts(excerpt) {
-					let localContext = [
-						excerptIndex > 0 ? eligibleExcerpts[excerptIndex - 1] : nil,
-						excerpt
-					]
-					.compactMap { $0 }
-					.joined(separator: "\n")
-					let prompt = """
-					Attached event: \(sourceEvent.title)
-
-					Local memo context:
-					\(localContext)
-
-					Focus excerpt:
-					\(focusExcerpt)
-					"""
-					var excerptDrafts: [GeneratedReminderDraft]?
-					for _ in 0..<2 where excerptDrafts == nil {
-						let session = LanguageModelSession(instructions: """
-						\(draftInstructions)
-						Extract actions stated in the focus excerpt only. Surrounding context can resolve pronouns or shared event details, but must not create additional actions.
-
-						A self-correction such as "bring the red notebook—sorry, not red, bring the blue notebook" produces only "Bring the blue notebook."
-						The action is the speaker's imperative verb phrase, never attendance at the event. "Next class ask Dana about the showcase" produces "Ask Dana about the showcase," never "Go to class."
-						Keep related people facts in one compact reminder. "Remember Alice plays green, Ben hosts, and Priya likes cooperative games" is one reminder containing all three facts, not three reminders. A negative preference such as "Noor does not want cooperative games" is a fact to preserve, not a canceled instruction.
-						""")
-						excerptDrafts = try? await withGenerationTimeout {
-							let response = try await session.respond(
-								to: prompt,
-								generating: GeneratedRequiredReminderBatch.self
-							)
-							return response.content.reminders
-						}
+					A self-correction such as "bring the red notebook—sorry, not red, bring the blue notebook" produces only "Bring the blue notebook."
+					The action is the speaker's imperative verb phrase, never attendance at the event. "Next class ask Dana about the showcase" produces "Ask Dana about the showcase," never "Go to class."
+					A time branch such as "If it starts in the evening, wear the blue shirt" is an affirmative instruction and produces "Wear the blue shirt."
+					Keep related people facts in one compact reminder. "Remember Alice plays green, Ben hosts, and Priya likes cooperative games" is one reminder containing all three facts, not three reminders. A negative preference such as "Noor does not want cooperative games" is a fact to preserve, not a canceled instruction.
+					""")
+					excerptDrafts = try? await withGenerationTimeout {
+						let response = try await session.respond(
+							to: prompt,
+							generating: GeneratedRequiredReminderBatch.self
+						)
+						return response.content.reminders
 					}
-					collected.append(contentsOf: (excerptDrafts ?? []).map {
-						var draft = $0
-						draft.evidence = focusExcerpt
-						return draft
-					})
 				}
-			}
-			drafts = collected
-		} else {
-			let session = LanguageModelSession(instructions: draftInstructions)
-			let prompt = """
-			\(sharedContext)
-
-			Current reminder set:
-			\(current)
-
-			Later corrections:
-			\(corrections)
-			"""
-			drafts = try await withGenerationTimeout {
-				let response = try await session.respond(
-					to: prompt,
-					generating: GeneratedReminderBatch.self
-				)
-				return response.content.reminders
+				drafts.append(contentsOf: compactRelatedFacts(
+					excerptDrafts ?? [],
+					in: focusExcerpt
+				).map {
+					var draft = $0
+					draft.evidence = focusExcerpt
+					return draft
+				})
 			}
 		}
 		var reminders: [GeneratedReminder] = []
@@ -503,11 +410,7 @@ enum ReminderEngine {
 				draft: draft,
 				schedule: schedule,
 				attachesToSource: attachesToSource,
-				occurrencePolicy: occurrencePolicy(
-					in: scheduleText,
-					draft: draft,
-					currentReminders: currentReminders
-				),
+				occurrencePolicy: occurrencePolicy(in: scheduleText),
 				validity: relativeValidity(in: scheduleText)
 			)
 			reminders.append(reminder)
@@ -515,7 +418,6 @@ enum ReminderEngine {
 		return reminders
 	}
 
-	@available(iOS 26.0, *)
 	private static func generatedSchedule(
 		for draft: GeneratedReminderDraft,
 		sourceEvent: JournalCalendarEvent,
@@ -562,11 +464,7 @@ enum ReminderEngine {
 		}) ?? fallback
 	}
 
-	@available(iOS 26.0, *)
-	private static func eligibleCueExcerpts(
-		transcript: String,
-		sourceEvent: JournalCalendarEvent
-	) async throws -> [String] {
+	private static func eligibleCueExcerpts(transcript: String) async throws -> [String] {
 		let allExcerpts = sentenceExcerpts(transcript)
 		let candidates = allExcerpts.enumerated().filter { hasFutureCueSignal($0.element) }
 		guard !candidates.isEmpty else { return [] }
@@ -648,7 +546,7 @@ enum ReminderEngine {
 	}
 
 	private static func actionFocusExcerpts(_ excerpt: String) -> [String] {
-		let pattern = #",\s*(?:and\s+)?(?=(?:at|in)\s+(?:the\s+)?(?:morning|afternoon|evening|gaming|role))"#
+		let pattern = #",\s*(?:(?:and\s+)?(?=in\s+(?:the\s+)?(?:morning|afternoon|evening))|and\s+(?=at\s+(?:the\s+)?(?:morning|afternoon|evening|gaming|role)))"#
 		guard let expression = try? NSRegularExpression(pattern: pattern) else {
 			return [excerpt]
 		}
@@ -667,6 +565,34 @@ enum ReminderEngine {
 			let value = excerpt[$0].trimmingCharacters(in: .whitespacesAndNewlines)
 			return value.isEmpty ? nil : value
 		}
+	}
+
+	private static func compactRelatedFacts(
+		_ drafts: [GeneratedReminderDraft],
+		in excerpt: String
+	) -> [GeneratedReminderDraft] {
+		let excerpt = excerpt.reminderNormalized
+		guard drafts.count > 1,
+			excerpt.contains("remember "),
+			!excerpt.contains("remember to "),
+			drafts.allSatisfy({
+				let text = clean($0.text).lowercased()
+				return text.hasPrefix("remember ")
+					|| text.hasPrefix("keep in mind ")
+			})
+		else { return drafts }
+
+		let prefixes = ["Remember that ", "Remember ", "Keep in mind that ", "Keep in mind "]
+		let facts = drafts.map { draft in
+			let text = clean(draft.text)
+			let prefix = prefixes.first {
+				text.lowercased().hasPrefix($0.lowercased())
+			}
+			return prefix.map { String(text.dropFirst($0.count)) } ?? text
+		}
+		var combined = drafts[0]
+		combined.text = "Remember " + facts.joined(separator: "; ")
+		return [combined]
 	}
 
 	private static func hasFutureCueSignal(_ excerpt: String) -> Bool {
@@ -880,9 +806,7 @@ enum ReminderEngine {
 	}
 
 	private static func occurrencePolicy(
-		in scheduleText: String,
-		draft: GeneratedReminderDraft,
-		currentReminders: [EventReminderRule]
+		in scheduleText: String
 	) -> EventReminderOccurrencePolicy {
 		let normalized = scheduleText.reminderNormalized
 		let standingSignals = [
@@ -935,9 +859,6 @@ enum ReminderEngine {
 		if lastOneTime != nil {
 			return .nextMatch
 		}
-		if let current = mostSimilarReminder(to: draft.text, in: currentReminders) {
-			return current.occurrencePolicy
-		}
 		return .nextMatch
 	}
 
@@ -988,26 +909,6 @@ enum ReminderEngine {
 		return latest?.validity
 	}
 
-	private static func mostSimilarReminder(
-		to text: String,
-		in reminders: [EventReminderRule]
-	) -> EventReminderRule? {
-		let words = Set(text.reminderNormalized.split(separator: " ").map(String.init))
-		guard let reminder = reminders.max(by: {
-			let left = words.intersection(
-				Set($0.text.reminderNormalized.split(separator: " ").map(String.init))
-			).count
-			let right = words.intersection(
-				Set($1.text.reminderNormalized.split(separator: " ").map(String.init))
-			).count
-			return left < right
-		}) else { return nil }
-		let overlap = words.intersection(
-			Set(reminder.text.reminderNormalized.split(separator: " ").map(String.init))
-		).count
-		return overlap > 0 ? reminder : nil
-	}
-
 	private static func shouldAttachToSource(
 		evidence: String,
 		sourceEvent: JournalCalendarEvent
@@ -1049,12 +950,10 @@ enum ReminderEngine {
 		}
 	}
 
-	@available(iOS 26.0, *)
 	private static func rule(
 		from generated: GeneratedReminder,
 		sourceEvent: JournalCalendarEvent,
 		createdAt: Date,
-		currentReminders: [EventReminderRule],
 		evidenceCorpus: String
 	) -> EventReminderRule? {
 		let text = clean(generated.text)
@@ -1067,13 +966,10 @@ enum ReminderEngine {
 			actionIsGrounded(text, in: evidence)
 		else { return nil }
 
-		let existing = mostSimilarReminder(to: text, in: currentReminders)
 		let selector: EventReminderSelector
-		if explicitEventDescription(in: evidence) == nil, let existing {
-			selector = existing.selector
-		} else if generated.selectorKind == "attachedEventType" {
+		if generated.attachesToSource {
 			selector = .series(EventSeriesReference(event: sourceEvent))
-		} else if generated.selectorKind == "semanticEventClass" {
+		} else {
 			let description = clean(generated.eventDescription)
 			guard !description.isEmpty else { return nil }
 			selector = .fuzzy(FuzzyEventSelector(
@@ -1085,39 +981,25 @@ enum ReminderEngine {
 				),
 				examples: []
 			))
-		} else {
-			return nil
-		}
-		let retained = existing ?? currentReminders.first {
-			$0.text.reminderNormalized == text.reminderNormalized
-				&& $0.selector.title.reminderNormalized == selector.title.reminderNormalized
 		}
 
 		return EventReminderRule(
-			id: retained?.id ?? UUID(),
 			text: text,
 			motivation: motivation,
 			evidence: evidence,
 			selector: selector,
 			occurrencePolicy: generated.occurrencePolicy,
-			createdAt: retained?.createdAt ?? createdAt,
+			createdAt: createdAt,
 			expiresAt: generated.validity.flatMap {
 				Calendar.current.date(
 					byAdding: $0.component,
 					value: $0.value,
 					to: createdAt
 				)
-			},
-			leadTimeOverrideMinutes: retained?.leadTimeOverrideMinutes,
-			isEnabled: retained?.isEnabled ?? true,
-			modelName: "SystemLanguageModel.default · guided reminders",
-			resolvedOccurrence: generated.occurrencePolicy == .nextMatch
-				? retained?.resolvedOccurrence
-				: nil
+			}
 		)
 	}
 
-	@available(iOS 26.0, *)
 	private static func match(
 		selector: FuzzyEventSelector,
 		candidates: [JournalCalendarEvent]
@@ -1210,8 +1092,6 @@ enum ReminderEngine {
 			}
 		}
 	}
-	#endif
-
 	private static func matchExamples(
 		from events: [JournalCalendarEvent],
 		selector: FuzzyEventSelector,
@@ -1281,8 +1161,6 @@ enum ReminderEngine {
 		return value
 	}
 
-	#if canImport(FoundationModels)
-	@available(iOS 26.0, *)
 	private static func withGenerationTimeout<T: Sendable>(
 		_ operation: @escaping @Sendable () async throws -> T
 	) async throws -> T {
@@ -1299,7 +1177,6 @@ enum ReminderEngine {
 			return result
 		}
 	}
-	#endif
 }
 
 private struct EventMatchAssessment {

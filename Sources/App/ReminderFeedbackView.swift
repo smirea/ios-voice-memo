@@ -55,7 +55,7 @@ struct ReminderFeedbackView: View {
 					.padding(.horizontal, 32)
 			}
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
-			.background(.black)
+			.background(AppStyle.background)
 			.navigationTitle("Add feedback")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -69,7 +69,7 @@ struct ReminderFeedbackView: View {
 			}
 		}
 		.preferredColorScheme(.dark)
-		.presentationBackground(.black)
+		.presentationBackground(AppStyle.background)
 		.presentationDetents([.medium])
 		.interactiveDismissDisabled(isSubmitting)
 		.task {

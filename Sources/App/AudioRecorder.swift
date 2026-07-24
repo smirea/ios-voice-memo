@@ -54,7 +54,6 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		}
 		try Task.checkCancellation()
 
-		#if os(iOS)
 		let session = AVAudioSession.sharedInstance()
 		try session.setCategory(
 			.playAndRecord,
@@ -62,7 +61,6 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 			options: [.defaultToSpeaker, .allowBluetoothHFP, .bluetoothHighQualityRecording]
 		)
 		try session.setActive(true)
-		#endif
 
 		let settings: [String: Any] = [
 			AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -91,9 +89,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		guard let recorder else { return }
 		if isPaused {
 			do {
-				#if os(iOS)
 				try AVAudioSession.sharedInstance().setActive(true)
-				#endif
 				guard recorder.record() else { return }
 				isPaused = false
 				statusMessage = nil
@@ -167,7 +163,6 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	}
 
 	private func observeAudioSession() {
-		#if os(iOS)
 		let session = AVAudioSession.sharedInstance()
 		interruptionTask = Task { @MainActor [weak self] in
 			for await notification in NotificationCenter.default.notifications(
@@ -185,10 +180,8 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 				await self?.recoverAfterRouteChange()
 			}
 		}
-		#endif
 	}
 
-	#if os(iOS)
 	private func handleInterruption(_ notification: Notification) {
 		guard isRecording,
 			let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
@@ -231,15 +224,12 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 			statusMessage = "Recording paused until the microphone is available."
 		}
 	}
-	#endif
 
 	private func makeFileRecoverable(at url: URL) throws {
-		#if os(iOS)
 		try FileManager.default.setAttributes(
 			[.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
 			ofItemAtPath: url.path
 		)
-		#endif
 		var url = url
 		var values = URLResourceValues()
 		values.isExcludedFromBackup = false
@@ -247,9 +237,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	}
 
 	private func deactivateSession() {
-		#if os(iOS)
 		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-		#endif
 	}
 
 	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
