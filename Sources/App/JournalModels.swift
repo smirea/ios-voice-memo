@@ -173,6 +173,15 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	}
 }
 
+extension JournalEntry {
+	func jsonData() throws -> Data {
+		let encoder = JSONEncoder()
+		encoder.dateEncodingStrategy = .iso8601
+		encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+		return try encoder.encode(self)
+	}
+}
+
 struct WeeklyReview: Sendable {
 	var weekStart: Date
 	var title: String

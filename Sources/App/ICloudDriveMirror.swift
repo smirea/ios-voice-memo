@@ -62,7 +62,7 @@ actor ICloudDriveMirror {
 		let metadataURL = exportedAudioURL.deletingPathExtension().appendingPathExtension("json")
 		var exportedEntry = entry
 		exportedEntry.audioFilename = exportedAudioFilename
-		guard let metadata = try? Self.metadataEncoder.encode(exportedEntry) else { return }
+		guard let metadata = try? exportedEntry.jsonData() else { return }
 		do {
 			try metadata.write(to: metadataURL, options: .atomic)
 		} catch {
@@ -169,11 +169,4 @@ actor ICloudDriveMirror {
 		let attributes = try? fileManager.attributesOfItem(atPath: url.path)
 		return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
 	}
-
-	private static let metadataEncoder: JSONEncoder = {
-		let encoder = JSONEncoder()
-		encoder.dateEncodingStrategy = .iso8601
-		encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-		return encoder
-	}()
 }

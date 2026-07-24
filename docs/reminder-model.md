@@ -132,7 +132,7 @@ Morning, afternoon, and evening are app-defined local-time buckets. The model ch
 
 ## Review and correction
 
-The source note shows its reminder section immediately below the summary. Each reminder shows its action and schedule in a compact row. Fuzzy rules can reveal representative matches and nonmatches, the source evidence, and motivation.
+The source note shows reminders immediately below the summary with no section heading. Tapping a row reveals its evidence, motivation, and fuzzy match examples; a native trailing swipe removes it immediately. With no reminders, the section is only the **No reminders: Add feedback** action.
 
 Removing a reminder deletes the rule and adds a manual-removal feedback record. This prevents a later reprocessing pass from recreating the same reminder from the original transcript.
 
@@ -143,6 +143,8 @@ Removing a reminder deletes the rule and adds a manual-removal feedback record. 
 - the new feedback.
 
 The current set is authoritative, so a correction cannot silently resurrect a reminder the user already removed. Explicit removal, time, recurrence, and duration edits are applied deterministically. Additions and replacement actions pass through the same grounded on-device action parser. Reprocessing changes reminders only; it does not rewrite the note title, summary, or transcript.
+
+Full note reprocessing starts with a fresh extraction from the stored transcript, then reapplies every stored feedback correction and manual removal before replacing the reminders. It also regenerates the note title and summary, but never retranscribes or changes the source transcript.
 
 ## Live Activity
 

@@ -24,6 +24,7 @@ An iPhone voice memo app that records, transcribes, organizes, and carries usefu
 - Optional calendar-event attachment before recording
 - On-device extraction of event-specific reminders with recurring, one-time, fuzzy, and expiring schedules
 - Reminder correction by disposable voice feedback
+- Native note actions for model-label visibility, full reprocessing, and JSON sharing
 - Configurable pre-event reminder Live Activities
 - A permanent 72-case on-device reminder benchmark
 - Exact calendar event details with direct Google Calendar links when available

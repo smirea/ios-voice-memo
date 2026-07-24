@@ -183,35 +183,68 @@ final class JournalStore {
 		entries[transcriptIndex].transcript = transcript.isEmpty ? "No transcript available." : transcript
 		entries[transcriptIndex].summary = nil
 		entries[transcriptIndex].transcriptModel = transcription?.modelName
-		let includesSummary = entries[transcriptIndex].duration > 20
 		entryProcessingPhases[entryID] = .reflecting
 		persist()
 
+		await evaluateEntry(entryID: entryID, transcript: transcript, token: token)
+	}
+
+	func reprocessEntry(id entryID: UUID) {
+		guard let entry = entry(id: entryID), !entry.transcript.isEmpty else { return }
+		entryProcessingTasks.removeValue(forKey: entryID)?.cancel()
+		let token = UUID()
+		entryProcessingTokens[entryID] = token
+		entryProcessingPhases[entryID] = .reflecting
+		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
+			await self?.evaluateEntry(
+				entryID: entryID,
+				transcript: entry.transcript,
+				token: token
+			)
+		}
+	}
+
+	private func evaluateEntry(entryID: UUID, transcript: String, token: UUID) async {
+		guard !Task.isCancelled,
+			entryProcessingTokens[entryID] == token,
+			let source = entry(id: entryID)
+		else { return }
 		let reflection = await ReflectionEngine.reflect(
 			on: transcript,
-			includeSummary: includesSummary
+			includeSummary: source.duration > 20
 		)
-		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
-		guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
-			finishProcessing(entryID, token: token)
-			return
+
+		var reminderResult: ReminderParsingResult?
+		if settings.eventRemindersEnabled {
+			let fresh = await ReminderEngine.parse(
+				transcript: transcript,
+				sourceEvent: source.calendarEvent,
+				createdAt: source.createdAt,
+				currentReminders: source.reminders
+			)
+			if source.reminderFeedback.isEmpty {
+				reminderResult = fresh
+			} else {
+				reminderResult = await ReminderEngine.parse(
+					transcript: transcript,
+					sourceEvent: source.calendarEvent,
+					createdAt: source.createdAt,
+					currentReminders: fresh.reminders,
+					feedback: source.reminderFeedback
+				)
+			}
 		}
+
+		guard !Task.isCancelled,
+			entryProcessingTokens[entryID] == token,
+			let index = entries.firstIndex(where: { $0.id == entryID })
+		else { return }
 		entries[index].headline = reflection.headline
 		entries[index].summary = reflection.summary
 		entries[index].summaryModel = reflection.modelName
-		if settings.eventRemindersEnabled {
-			let reminderResult = await ReminderEngine.parse(
-				transcript: transcript,
-				sourceEvent: entries[index].calendarEvent,
-				createdAt: entries[index].createdAt
-			)
-			guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
-			guard let reminderIndex = entries.firstIndex(where: { $0.id == entryID }) else {
-				finishProcessing(entryID, token: token)
-				return
-			}
-			entries[reminderIndex].reminders = reminderResult.reminders
-			entries[reminderIndex].reminderModel = reminderResult.modelName
+		if let reminderResult {
+			entries[index].reminders = reminderResult.reminders
+			entries[index].reminderModel = reminderResult.modelName
 		}
 		persist()
 		Task { @MainActor [weak self] in

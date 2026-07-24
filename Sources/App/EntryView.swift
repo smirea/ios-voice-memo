@@ -3,6 +3,7 @@ import EventKitUI
 import MapKit
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct EntryView: View {
 	@Environment(\.dismiss) private var dismiss
@@ -12,6 +13,10 @@ struct EntryView: View {
 	@State private var presentedCalendarEvent: PresentedCalendarEvent?
 	@State private var isMissingCalendarEventAlertPresented = false
 	@State private var showsReminderFeedback = false
+	@State private var showsModelAttribution = true
+	@State private var showsNoteActions = false
+	@State private var sharedEntry: JournalEntry?
+	@Namespace private var noteActionsNamespace
 
 	private var currentEntry: JournalEntry {
 		store.entry(id: entry.id) ?? entry
@@ -21,123 +26,183 @@ struct EntryView: View {
 		ZStack {
 			AppStyle.background.ignoresSafeArea()
 
-			ScrollView {
-				VStack(alignment: .leading, spacing: 32) {
-					VStack(alignment: .leading, spacing: 6) {
-						HStack(alignment: .firstTextBaseline, spacing: 16) {
-							Text(currentEntry.location?.displayName ?? "Voice memo")
-								.font(.system(size: 25, weight: .semibold))
-								.foregroundStyle(.white)
-								.lineLimit(1)
-								.truncationMode(.tail)
-							Spacer(minLength: 0)
-							Text(currentEntry.createdAt.compactHeaderText)
-								.font(.system(size: 25, weight: .semibold))
-								.foregroundStyle(.white)
-								.lineLimit(1)
-								.fixedSize(horizontal: true, vertical: false)
-								.layoutPriority(1)
-						}
-
-						if let calendarEvent = currentEntry.calendarEvent {
-							Button {
-								openCalendarEvent(calendarEvent)
-							} label: {
-								HStack(spacing: 10) {
-									Image(systemName: "calendar")
-										.foregroundStyle(AppStyle.accent)
-									Text(calendarEvent.title)
-										.font(.system(size: 16, weight: .semibold))
-										.foregroundStyle(.white)
-										.lineLimit(1)
-									Spacer(minLength: 0)
-								}
-								.frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-								.contentShape(Rectangle())
-							}
-							.buttonStyle(.plain)
-							.accessibilityHint("Opens the event details")
-						}
-					}
-					.padding(.top, 10)
-
-					if let phase = store.processingPhase(for: entry.id) {
-						EntryProcessingStatusView(phase: phase)
-							.transition(.move(edge: .top).combined(with: .opacity))
-					}
-
-					VStack(alignment: .leading, spacing: 16) {
-						Text(currentEntry.headline)
-							.font(.system(size: 22, weight: .semibold))
+			List {
+				VStack(alignment: .leading, spacing: 6) {
+					HStack(alignment: .firstTextBaseline, spacing: 16) {
+						Text(currentEntry.location?.displayName ?? "Voice memo")
+							.font(.system(size: 25, weight: .semibold))
 							.foregroundStyle(.white)
-							.multilineTextAlignment(.center)
-							.fixedSize(horizontal: false, vertical: true)
-							.frame(maxWidth: .infinity, alignment: .center)
+							.lineLimit(1)
+							.truncationMode(.tail)
+						Spacer(minLength: 0)
+						Text(currentEntry.createdAt.compactHeaderText)
+							.font(.system(size: 25, weight: .semibold))
+							.foregroundStyle(.white)
+							.lineLimit(1)
+							.fixedSize(horizontal: true, vertical: false)
+							.layoutPriority(1)
+					}
 
-						if currentEntry.summary?.isEmpty != false,
+					if let calendarEvent = currentEntry.calendarEvent {
+						Button {
+							openCalendarEvent(calendarEvent)
+						} label: {
+							HStack(spacing: 10) {
+								Image(systemName: "calendar")
+									.foregroundStyle(AppStyle.accent)
+								Text(calendarEvent.title)
+									.font(.system(size: 16, weight: .semibold))
+									.foregroundStyle(.white)
+									.lineLimit(1)
+								Spacer(minLength: 0)
+							}
+							.frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+							.contentShape(Rectangle())
+						}
+						.buttonStyle(.plain)
+						.accessibilityHint("Opens the event details")
+					}
+				}
+				.padding(.top, 10)
+				.entryListRow()
+
+				if let phase = store.processingPhase(for: entry.id) {
+					EntryProcessingStatusView(phase: phase)
+						.transition(.move(edge: .top).combined(with: .opacity))
+						.entryListRow()
+				}
+
+				VStack(alignment: .leading, spacing: 16) {
+					Text(currentEntry.headline)
+						.font(.system(size: 22, weight: .semibold))
+						.foregroundStyle(.white)
+						.multilineTextAlignment(.center)
+						.fixedSize(horizontal: false, vertical: true)
+						.frame(maxWidth: .infinity, alignment: .center)
+
+					if showsModelAttribution,
+						currentEntry.summary?.isEmpty != false,
+						let model = currentEntry.summaryModel {
+						ModelAttribution(model: model)
+					}
+
+					if let audioURL = store.audioURL(for: currentEntry) {
+						EntryAudioPlayer(playback: playback, duration: currentEntry.duration)
+							.task(id: audioURL) {
+								await playback.load(url: audioURL, fallbackDuration: currentEntry.duration)
+							}
+					}
+				}
+				.entryListRow()
+
+				if let summary = currentEntry.summary, !summary.isEmpty {
+					VStack(alignment: .leading, spacing: 10) {
+						Text(summary)
+							.font(.system(size: 18, weight: .medium))
+							.foregroundStyle(Color.white.opacity(0.94))
+							.lineSpacing(5)
+							.fixedSize(horizontal: false, vertical: true)
+
+						if showsModelAttribution,
 							let model = currentEntry.summaryModel {
 							ModelAttribution(model: model)
 						}
+					}
+						.entryListRow()
+				}
 
-						if let audioURL = store.audioURL(for: currentEntry) {
-							EntryAudioPlayer(playback: playback, duration: currentEntry.duration)
-								.task(id: audioURL) {
-									await playback.load(url: audioURL, fallbackDuration: currentEntry.duration)
+				if currentEntry.calendarEvent != nil {
+					if currentEntry.reminders.isEmpty {
+						reminderFeedbackButton(empty: true)
+							.entryListRow()
+					} else {
+						ForEach(currentEntry.reminders) { reminder in
+							ReminderRuleRow(reminder: reminder)
+								.listRowInsets(EdgeInsets(
+									top: 0,
+									leading: 24,
+									bottom: 0,
+									trailing: 24
+								))
+								.listRowBackground(AppStyle.background)
+								.listRowSeparator(
+									reminder.id == currentEntry.reminders.last?.id
+										? .hidden
+										: .visible
+								)
+								.listRowSeparatorTint(Color.white.opacity(0.14))
+								.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+									Button(role: .destructive) {
+										withAnimation(.easeOut(duration: 0.2)) {
+											store.removeReminder(
+												entryID: entry.id,
+												reminderID: reminder.id
+											)
+										}
+									} label: {
+										Label("Remove", systemImage: "trash")
+									}
 								}
 						}
-					}
 
-					if let summary = currentEntry.summary, !summary.isEmpty {
-						VStack(alignment: .leading, spacing: 10) {
-							Text(summary)
-								.font(.system(size: 18, weight: .medium))
-								.foregroundStyle(Color.white.opacity(0.94))
-								.lineSpacing(5)
-								.fixedSize(horizontal: false, vertical: true)
-
-							if let model = currentEntry.summaryModel {
+						VStack(alignment: .leading, spacing: 14) {
+							reminderFeedbackButton(empty: false)
+							if showsModelAttribution,
+								let model = currentEntry.reminderModel {
 								ModelAttribution(model: model)
 							}
 						}
-					}
-
-					if currentEntry.calendarEvent != nil {
-						EntryReminderSection(
-							entry: currentEntry,
-							isProcessing: store.processingPhase(for: entry.id) != nil,
-							isEnabled: store.settings.eventRemindersEnabled,
-							onRemove: { reminderID in
-								withAnimation(.easeOut(duration: 0.2)) {
-									store.removeReminder(entryID: entry.id, reminderID: reminderID)
-								}
-							},
-							onAddFeedback: { showsReminderFeedback = true }
-						)
-					}
-
-					if store.settings.showTranscripts, !currentEntry.transcript.isEmpty {
-						VStack(alignment: .leading, spacing: 12) {
-							SummaryToPopup(
-								text: currentEntry.transcript,
-								accessibilityName: "Transcript"
-							)
-								.contentTransition(.opacity)
-
-							if let model = currentEntry.transcriptModel {
-								ModelAttribution(model: model)
-							}
-						}
-					}
-
-					if let location = currentEntry.location {
-						EntryLocationMap(location: location)
-							.transition(.move(edge: .bottom).combined(with: .opacity))
+						.entryListRow()
 					}
 				}
-				.padding(.horizontal, 24)
-				.padding(.bottom, 40)
+
+				if store.settings.showTranscripts, !currentEntry.transcript.isEmpty {
+					VStack(alignment: .leading, spacing: 12) {
+						SummaryToPopup(
+							text: currentEntry.transcript,
+							accessibilityName: "Transcript"
+						)
+							.contentTransition(.opacity)
+
+						if showsModelAttribution,
+							let model = currentEntry.transcriptModel {
+							ModelAttribution(model: model)
+						}
+					}
+						.entryListRow()
+				}
+
+				if let location = currentEntry.location {
+					EntryLocationMap(location: location)
+						.transition(.move(edge: .bottom).combined(with: .opacity))
+						.entryListRow()
+				}
+
+				Color.clear
+					.frame(height: 64)
+					.listRowInsets(EdgeInsets())
+					.listRowBackground(AppStyle.background)
+					.listRowSeparator(.hidden)
 			}
+			.listStyle(.plain)
+			.scrollContentBackground(.hidden)
 			.scrollIndicators(.hidden)
+			.environment(\.defaultMinListRowHeight, 0)
+		}
+		.overlay {
+			ZStack(alignment: .bottomLeading) {
+				if showsNoteActions {
+					Color.clear
+						.contentShape(Rectangle())
+						.onTapGesture { setNoteActionsPresented(false) }
+						.accessibilityHidden(true)
+				}
+
+				noteActionsMenu
+					.padding(.leading, 20)
+					.padding(.bottom, 10)
+			}
+			.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 		}
 		.presentationBackground(AppStyle.background)
 		.toolbar(.hidden, for: .navigationBar)
@@ -156,12 +221,120 @@ struct EntryView: View {
 		.sheet(isPresented: $showsReminderFeedback) {
 			ReminderFeedbackView(store: store, entryID: entry.id)
 		}
+		.sheet(item: $sharedEntry) { entry in
+			JournalEntryShareSheet(entry: entry)
+		}
 		.alert("Event unavailable", isPresented: $isMissingCalendarEventAlertPresented) {
 			Button("OK", role: .cancel) {}
 		} message: {
 			Text("This event is no longer available in the calendars on this iPhone.")
 		}
 		.accessibilityAction(.escape) { dismiss() }
+	}
+
+	private var noteActionsMenu: some View {
+		GlassEffectContainer(spacing: 16) {
+			if showsNoteActions {
+				noteActionsPanel
+					.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
+					.glassEffectID("note-actions", in: noteActionsNamespace)
+					.glassEffectTransition(.matchedGeometry)
+			} else {
+				Button {
+					setNoteActionsPresented(true)
+				} label: {
+					Image(systemName: "ellipsis")
+						.font(.system(size: 18, weight: .bold))
+						.foregroundStyle(.white)
+						.frame(width: 50, height: 50)
+						.contentShape(Circle())
+				}
+				.buttonStyle(.plain)
+				.glassEffect(.regular.interactive(), in: Circle())
+				.glassEffectID("note-actions", in: noteActionsNamespace)
+				.glassEffectTransition(.matchedGeometry)
+				.accessibilityLabel("Note actions")
+			}
+		}
+	}
+
+	private var noteActionsPanel: some View {
+		VStack(spacing: 0) {
+			HStack(spacing: 16) {
+				Label("Show Models", systemImage: "apple.intelligence")
+					.lineLimit(1)
+					.accessibilityHidden(true)
+				Spacer(minLength: 0)
+				Toggle("Show Models", isOn: $showsModelAttribution)
+					.labelsHidden()
+					.scaleEffect(0.8, anchor: .trailing)
+					.accessibilityLabel("Show Models")
+			}
+			.padding(.horizontal, 16)
+			.frame(height: 52)
+
+			Divider()
+
+			Button {
+				setNoteActionsPresented(false)
+				store.reprocessEntry(id: entry.id)
+			} label: {
+				Label("Reprocess", systemImage: "dice.fill")
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.padding(.horizontal, 16)
+			.frame(height: 52)
+			.disabled(
+				currentEntry.transcript.isEmpty
+					|| store.processingPhase(for: entry.id) != nil
+			)
+
+			Divider()
+
+			Button {
+				let entryToShare = currentEntry
+				setNoteActionsPresented(false)
+				Task { @MainActor in
+					try? await Task.sleep(for: .milliseconds(250))
+					sharedEntry = entryToShare
+				}
+			} label: {
+				Label("Share", systemImage: "square.and.arrow.up")
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.padding(.horizontal, 16)
+			.frame(height: 52)
+		}
+		.frame(width: 260)
+	}
+
+	private func setNoteActionsPresented(_ isPresented: Bool) {
+		withAnimation(.spring(duration: 0.34, bounce: 0.18)) {
+			showsNoteActions = isPresented
+		}
+	}
+
+	private func reminderFeedbackButton(empty: Bool) -> some View {
+		Button {
+			showsReminderFeedback = true
+		} label: {
+			Label(
+				empty ? "No reminders: Add feedback" : "Add feedback",
+				systemImage: "waveform"
+			)
+				.font(.system(size: 15, weight: .semibold))
+				.foregroundStyle(AppStyle.accent)
+		}
+		.buttonStyle(.plain)
+		.disabled(
+			!store.settings.eventRemindersEnabled
+				|| store.processingPhase(for: entry.id) != nil
+		)
+		.accessibilityHint("Records a temporary correction and reprocesses these reminders")
 	}
 
 	private func openCalendarEvent(_ event: JournalCalendarEvent) {
@@ -180,75 +353,77 @@ struct EntryView: View {
 	}
 }
 
-private struct EntryReminderSection: View {
+private struct JournalEntryShareSheet: UIViewControllerRepresentable {
 	let entry: JournalEntry
-	let isProcessing: Bool
-	let isEnabled: Bool
-	let onRemove: (UUID) -> Void
-	let onAddFeedback: () -> Void
 
-	var body: some View {
-		VStack(alignment: .leading, spacing: 14) {
-			HStack {
-				Label("Event reminders", systemImage: "checklist")
-					.font(.system(size: 18, weight: .semibold))
-					.foregroundStyle(.white)
-				Spacer()
-				if !entry.reminders.isEmpty {
-					Text(entry.reminders.count, format: .number)
-						.font(.caption.weight(.semibold))
-						.foregroundStyle(AppStyle.secondary)
-				}
-			}
+	func makeUIViewController(context: Context) -> UIActivityViewController {
+		let item = try? JournalEntryActivityItem(entry: entry)
+		return UIActivityViewController(
+			activityItems: item.map { [$0] } ?? [entry.headline],
+			applicationActivities: nil
+		)
+	}
 
-			if isProcessing && entry.reminders.isEmpty {
-				HStack(spacing: 9) {
-					ProgressView()
-						.controlSize(.small)
-						.tint(AppStyle.accent)
-					Text("Finding useful event cues")
-						.foregroundStyle(AppStyle.secondary)
-				}
-			} else if entry.reminders.isEmpty {
-				Text(isEnabled
-					? "No event-specific reminders found."
-					: "Event reminders are off in Settings.")
-					.font(.system(size: 15, weight: .medium))
-					.foregroundStyle(AppStyle.secondary)
-			} else {
-				VStack(spacing: 0) {
-					ForEach(entry.reminders) { reminder in
-						ReminderRuleRow(reminder: reminder) {
-							onRemove(reminder.id)
-						}
-						if reminder.id != entry.reminders.last?.id {
-							Divider()
-								.overlay(Color.white.opacity(0.14))
-								.padding(.leading, 28)
-						}
-					}
-				}
-			}
+	func updateUIViewController(
+		_ uiViewController: UIActivityViewController,
+		context: Context
+	) {}
+}
 
-			Button(action: onAddFeedback) {
-				Label("Add feedback", systemImage: "waveform")
-					.font(.system(size: 15, weight: .semibold))
-					.foregroundStyle(AppStyle.accent)
-			}
-			.buttonStyle(.plain)
-			.disabled(!isEnabled || isProcessing)
-			.accessibilityHint("Records a temporary correction and reprocesses these reminders")
+private final class JournalEntryActivityItem: NSObject, UIActivityItemSource {
+	private let fileURL: URL
+	private let jsonText: String
+	private let subject: String
 
-			if let model = entry.reminderModel, !entry.reminders.isEmpty {
-				ModelAttribution(model: model)
-			}
-		}
+	init(entry: JournalEntry) throws {
+		let data = try entry.jsonData()
+		fileURL = FileManager.default.temporaryDirectory
+			.appendingPathComponent("MyVoiceMemo_\(entry.id.uuidString).json")
+		jsonText = String(decoding: data, as: UTF8.self)
+		subject = entry.headline
+		try data.write(to: fileURL, options: .atomic)
+	}
+
+	func activityViewControllerPlaceholderItem(
+		_ activityViewController: UIActivityViewController
+	) -> Any {
+		fileURL
+	}
+
+	func activityViewController(
+		_ activityViewController: UIActivityViewController,
+		itemForActivityType activityType: UIActivity.ActivityType?
+	) -> Any? {
+		activityType == .copyToPasteboard ? jsonText : fileURL
+	}
+
+	func activityViewController(
+		_ activityViewController: UIActivityViewController,
+		subjectForActivityType activityType: UIActivity.ActivityType?
+	) -> String {
+		subject
+	}
+
+	func activityViewController(
+		_ activityViewController: UIActivityViewController,
+		dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
+	) -> String {
+		activityType == .copyToPasteboard
+			? UTType.utf8PlainText.identifier
+			: UTType.json.identifier
+	}
+}
+
+private extension View {
+	func entryListRow(bottom: CGFloat = 32) -> some View {
+		listRowInsets(EdgeInsets(top: 0, leading: 24, bottom: bottom, trailing: 24))
+			.listRowBackground(AppStyle.background)
+			.listRowSeparator(.hidden)
 	}
 }
 
 private struct ReminderRuleRow: View {
 	let reminder: EventReminderRule
-	let onRemove: () -> Void
 	@State private var isExpanded = false
 
 	private var scheduleText: String {
@@ -259,40 +434,41 @@ private struct ReminderRuleRow: View {
 		return parts.joined(separator: " · ")
 	}
 
+	private var hasDetails: Bool {
+		!reminder.evidence.isEmpty
+			|| !reminder.motivation.isEmpty
+			|| !reminder.selector.examples.isEmpty
+	}
+
 	var body: some View {
-		VStack(alignment: .leading, spacing: 10) {
-			HStack(alignment: .top, spacing: 11) {
-				Image(systemName: "circle")
-					.font(.system(size: 17, weight: .medium))
-					.foregroundStyle(AppStyle.accent)
-					.padding(.top, 2)
-
-				VStack(alignment: .leading, spacing: 4) {
-					Text(reminder.text)
-						.font(.system(size: 16, weight: .semibold))
-						.foregroundStyle(.white)
-						.fixedSize(horizontal: false, vertical: true)
-					Text(scheduleText)
-						.font(.system(size: 12, weight: .medium))
-						.foregroundStyle(AppStyle.secondary)
-						.fixedSize(horizontal: false, vertical: true)
-				}
-
-				Spacer(minLength: 4)
-
-				Button(role: .destructive, action: onRemove) {
-					Image(systemName: "xmark")
-						.font(.system(size: 11, weight: .bold))
-						.foregroundStyle(AppStyle.secondary)
-						.frame(width: 28, height: 28)
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Remove \(reminder.text)")
+		Button {
+			guard hasDetails else { return }
+			withAnimation(.easeOut(duration: 0.2)) {
+				isExpanded.toggle()
 			}
+		} label: {
+			VStack(alignment: .leading, spacing: 10) {
+				HStack(alignment: .top, spacing: 11) {
+					Image(systemName: "circle")
+						.font(.system(size: 17, weight: .medium))
+						.foregroundStyle(AppStyle.accent)
+						.padding(.top, 2)
 
-			if !reminder.evidence.isEmpty || !reminder.motivation.isEmpty
-				|| !reminder.selector.examples.isEmpty {
-				DisclosureGroup(isExpanded: $isExpanded) {
+					VStack(alignment: .leading, spacing: 4) {
+						Text(reminder.text)
+							.font(.system(size: 16, weight: .semibold))
+							.foregroundStyle(.white)
+							.fixedSize(horizontal: false, vertical: true)
+						Text(scheduleText)
+							.font(.system(size: 12, weight: .medium))
+							.foregroundStyle(AppStyle.secondary)
+							.fixedSize(horizontal: false, vertical: true)
+					}
+
+					Spacer(minLength: 4)
+				}
+
+				if hasDetails && isExpanded {
 					VStack(alignment: .leading, spacing: 10) {
 						if !reminder.motivation.isEmpty {
 							ReminderDetail(label: "Why", text: reminder.motivation)
@@ -315,16 +491,15 @@ private struct ReminderRuleRow: View {
 							}
 						}
 					}
-					.padding(.top, 8)
-				} label: {
-					Text("Why this will appear")
-						.font(.system(size: 13, weight: .semibold))
-						.foregroundStyle(AppStyle.secondary)
+					.padding(.leading, 28)
 				}
-				.tint(AppStyle.secondary)
-				.padding(.leading, 28)
 			}
 		}
+		.buttonStyle(.plain)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.contentShape(Rectangle())
+		.accessibilityValue(hasDetails ? (isExpanded ? "Expanded" : "Collapsed") : "")
+		.accessibilityHint(hasDetails ? "Shows or hides why this reminder appears" : "")
 		.padding(.vertical, 10)
 	}
 }

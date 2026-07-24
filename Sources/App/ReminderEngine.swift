@@ -149,7 +149,9 @@ enum ReminderEngine {
 			let normalized = correction.text.reminderNormalized
 			if correction.kind == .manualRemoval {
 				if let focusedID = correction.focusedReminderID {
-					reminders.removeAll { $0.id == focusedID }
+					reminders.removeAll {
+						$0.id == focusedID || feedbackText(normalized, references: $0)
+					}
 				} else {
 					reminders.removeAll { feedbackText(normalized, references: $0) }
 				}
@@ -686,9 +688,36 @@ enum ReminderEngine {
 
 	private static func isClearlyIneligible(_ excerpt: String) -> Bool {
 		let normalized = excerpt.reminderNormalized
+		let speakerCommitmentSignals = [
+			"actually want",
+			"can t forget",
+			"cannot forget",
+			"future me",
+			"i need",
+			"i plan",
+			"i should",
+			"i want",
+			"note to self",
+			"save this"
+		]
+		let anotherPersonSignals = [
+			"coach said",
+			"he needs",
+			"he should",
+			"i told ",
+			"said he",
+			"said she",
+			"she needs",
+			"she should",
+			"they need",
+			"they should"
+		]
+		let belongsOnlyToSomeoneElse = anotherPersonSignals.contains(where: normalized.contains)
+			&& !speakerCommitmentSignals.contains(where: normalized.contains)
 		return (normalized.contains("schedule") && normalized.contains("appointment"))
 			|| normalized.contains("buy groceries")
 			|| normalized.contains("renew my passport")
+			|| belongsOnlyToSomeoneElse
 	}
 
 	private static func actionIsGrounded(_ text: String, in evidence: String) -> Bool {
