@@ -10,7 +10,7 @@
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.
 - Treats local data as authoritative: iCloud exports are not imported, and deleting a note removes its local audio and exports.
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
-- Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
+- Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback, and alerts when ElevenLabs could not be used; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
 - Generates summaries only for recordings longer than 20 seconds.
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md).
 - Captures the recording coordinates and city when location access is available.

@@ -7,6 +7,7 @@ import Observation
 final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
+	var transcriptionAlertMessage: String?
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
 
@@ -173,12 +174,22 @@ final class JournalStore {
 	}
 
 	private func processRecording(entryID: UUID, url: URL, token: UUID) async {
-		let transcription = try? await AudioTranscriber.transcribe(
-			url: url,
-			preferElevenLabs: settings.preferElevenLabsTranscription
-		) { [weak self] partialResult in
-			Task { @MainActor [weak self] in
-				self?.updatePartialTranscript(partialResult, for: entryID, token: token)
+		let transcription: TranscriptionResult?
+		do {
+			let result = try await AudioTranscriber.transcribe(
+				url: url,
+				preferElevenLabs: settings.preferElevenLabsTranscription
+			) { [weak self] partialResult in
+				Task { @MainActor [weak self] in
+					self?.updatePartialTranscript(partialResult, for: entryID, token: token)
+				}
+			}
+			transcription = result
+			transcriptionAlertMessage = result.warning
+		} catch {
+			transcription = nil
+			if settings.preferElevenLabsTranscription, !Task.isCancelled {
+				transcriptionAlertMessage = error.localizedDescription
 			}
 		}
 		let transcript = transcription?.transcript.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -365,6 +376,7 @@ final class JournalStore {
 			url: audioURL,
 			preferElevenLabs: settings.preferElevenLabsTranscription
 		)
+		transcriptionAlertMessage = transcription.warning
 		let feedbackText = transcription.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !feedbackText.isEmpty else { throw ReminderFeedbackError.emptyTranscript }
 
@@ -422,6 +434,10 @@ final class JournalStore {
 	func setShowModelNames(_ showModelNames: Bool) {
 		settings.showModelNames = showModelNames
 		settings.save()
+	}
+
+	func clearTranscriptionAlert() {
+		transcriptionAlertMessage = nil
 	}
 
 	func requestCalendarAccess() async -> Bool {

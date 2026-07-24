@@ -263,6 +263,21 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 struct TranscriptionResult: Sendable {
 	let transcript: String
 	let modelName: String
+	let warning: String?
+
+	init(transcript: String, modelName: String, warning: String? = nil) {
+		self.transcript = transcript
+		self.modelName = modelName
+		self.warning = warning
+	}
+
+	func warningThatElevenLabsFailed(_ reason: String) -> TranscriptionResult {
+		TranscriptionResult(
+			transcript: transcript,
+			modelName: modelName,
+			warning: "\(reason) Apple Speech was used instead."
+		)
+	}
 }
 
 enum AudioTranscriber {
@@ -271,8 +286,14 @@ enum AudioTranscriber {
 		preferElevenLabs: Bool,
 		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void = { _ in }
 	) async throws -> TranscriptionResult {
-		guard preferElevenLabs, let apiKey = ElevenLabsTranscriber.apiKey else {
+		guard preferElevenLabs else {
 			return try await transcribeWithApple(url: url, onUpdate: onUpdate)
+		}
+		guard let apiKey = ElevenLabsTranscriber.apiKey else {
+			return try await transcribeWithApple(url: url, onUpdate: onUpdate)
+				.warningThatElevenLabsFailed(
+					"ElevenLabs is enabled, but its API key is missing from this build."
+				)
 		}
 
 		let appleTask = Task {
@@ -288,7 +309,15 @@ enum AudioTranscriber {
 				appleTask.cancel()
 				throw CancellationError()
 			}
-			return try await appleTask.value
+			let reason = (error as? LocalizedError)?.errorDescription
+				?? error.localizedDescription
+			do {
+				return try await appleTask.value.warningThatElevenLabsFailed(
+					"ElevenLabs transcription failed: \(reason)."
+				)
+			} catch {
+				throw AudioTranscriptionError.allServicesFailed(reason)
+			}
 		}
 	}
 
@@ -403,15 +432,37 @@ enum AudioTranscriber {
 	}
 }
 
+private enum AudioTranscriptionError: LocalizedError {
+	case allServicesFailed(String)
+
+	var errorDescription: String? {
+		switch self {
+		case let .allServicesFailed(elevenLabsReason):
+			"ElevenLabs transcription failed: \(elevenLabsReason). Apple Speech also could not transcribe this recording."
+		}
+	}
+}
+
 private enum ElevenLabsTranscriber {
 	private struct Response: Decodable {
 		let text: String
 	}
 
-	private enum TranscriptionError: Error {
+	private enum TranscriptionError: LocalizedError {
 		case invalidResponse
 		case requestFailed(Int)
 		case emptyTranscript
+
+		var errorDescription: String? {
+			switch self {
+			case .invalidResponse:
+				"the server returned an invalid response"
+			case let .requestFailed(status):
+				"the server returned HTTP \(status)"
+			case .emptyTranscript:
+				"the server returned an empty transcript"
+			}
+		}
 	}
 
 	static var apiKey: String? {

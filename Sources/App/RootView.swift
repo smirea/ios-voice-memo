@@ -79,6 +79,14 @@ struct RootView: View {
 		.sheet(isPresented: $showsSettings) {
 			SettingsView(store: store)
 		}
+		.alert("ElevenLabs wasn’t used", isPresented: Binding(
+			get: { store.transcriptionAlertMessage != nil },
+			set: { if !$0 { store.clearTranscriptionAlert() } }
+		)) {
+			Button("OK", role: .cancel) { store.clearTranscriptionAlert() }
+		} message: {
+			Text(store.transcriptionAlertMessage ?? "")
+		}
 		.onOpenURL { url in
 			guard url.scheme == "myvoicememo" else { return }
 			switch url.host {
