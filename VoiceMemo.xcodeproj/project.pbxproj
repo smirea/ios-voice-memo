@@ -39,6 +39,9 @@
 		A1000000000000000000001E /* ReminderBenchmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001E /* ReminderBenchmark.swift */; };
 		A1000000000000000000001F /* ReminderBenchmarkCases.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001F /* ReminderBenchmarkCases.swift */; };
 		A10000000000000000000020 /* ReminderBenchmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* ReminderBenchmarkView.swift */; };
+		A10000000000000000000021 /* LocationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000021 /* LocationModels.swift */; };
+		A10000000000000000000022 /* MapLocationSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* MapLocationSearch.swift */; };
+		A10000000000000000000023 /* LocationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000023 /* LocationContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +101,9 @@
 		B1000000000000000000001E /* ReminderBenchmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBenchmark.swift; sourceTree = "<group>"; };
 		B1000000000000000000001F /* ReminderBenchmarkCases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBenchmarkCases.swift; sourceTree = "<group>"; };
 		B10000000000000000000020 /* ReminderBenchmarkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBenchmarkView.swift; sourceTree = "<group>"; };
+		B10000000000000000000021 /* LocationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationModels.swift; sourceTree = "<group>"; };
+		B10000000000000000000022 /* MapLocationSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapLocationSearch.swift; sourceTree = "<group>"; };
+		B10000000000000000000023 /* LocationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationContractChecks.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* MyVoiceMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyVoiceMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C10000000000000000000002 /* VoiceMemoWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VoiceMemoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -136,6 +142,8 @@
 			children = (
 				B10000000000000000000001 /* VoiceMemoApp.swift */,
 				B10000000000000000000002 /* JournalModels.swift */,
+				B10000000000000000000021 /* LocationModels.swift */,
+				B10000000000000000000023 /* LocationContractChecks.swift */,
 				B10000000000000000000003 /* JournalStore.swift */,
 				B10000000000000000000018 /* CalendarSync.swift */,
 				B10000000000000000000019 /* ReminderModels.swift */,
@@ -158,6 +166,7 @@
 				B1000000000000000000000F /* RecordingActivityManager.swift */,
 				B1000000000000000000001C /* ReminderActivityManager.swift */,
 				B10000000000000000000014 /* EntryLocationCapture.swift */,
+				B10000000000000000000022 /* MapLocationSearch.swift */,
 			);
 			name = Sources;
 			path = Sources/App;
@@ -349,6 +358,8 @@
 			files = (
 				A10000000000000000000001 /* VoiceMemoApp.swift in Sources */,
 				A10000000000000000000002 /* JournalModels.swift in Sources */,
+				A10000000000000000000021 /* LocationModels.swift in Sources */,
+				A10000000000000000000023 /* LocationContractChecks.swift in Sources */,
 				A10000000000000000000003 /* JournalStore.swift in Sources */,
 				A10000000000000000000017 /* CalendarSync.swift in Sources */,
 				A10000000000000000000018 /* ReminderModels.swift in Sources */,
@@ -371,6 +382,7 @@
 				A1000000000000000000000E /* RecordingActivityManager.swift in Sources */,
 				A1000000000000000000001B /* ReminderActivityManager.swift in Sources */,
 				A10000000000000000000014 /* EntryLocationCapture.swift in Sources */,
+				A10000000000000000000022 /* MapLocationSearch.swift in Sources */,
 				A1000000000000000000000F /* RecordingActivityAttributes.swift in Sources */,
 				A1000000000000000000001C /* ReminderActivityAttributes.swift in Sources */,
 			);

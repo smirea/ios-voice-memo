@@ -390,7 +390,7 @@ struct RecordView: View {
 			Task { @MainActor in
 				let location = await locationTask.value
 				guard activeRecordingURL == url else { return }
-				liveActivity.setLocation(location?.displayName)
+				liveActivity.setLocation(location.map(store.displayName(for:)))
 			}
 			if store.settings.keepScreenAwakeWhileRecording {
 				UIApplication.shared.isIdleTimerDisabled = true

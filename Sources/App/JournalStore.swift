@@ -7,6 +7,7 @@ import Observation
 final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
+	private(set) var namedLocations: [NamedJournalLocation] = []
 	var transcriptionAlertMessage: String?
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
@@ -16,6 +17,7 @@ final class JournalStore {
 	private let rootURL: URL
 	private let recordingsURL: URL
 	private let entriesURL: URL
+	private let configurationURL: URL
 	private let pendingRecordingURL: URL
 	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
 	@ObservationIgnored private let reminderActivityManager = ReminderActivityManager()
@@ -27,6 +29,7 @@ final class JournalStore {
 	@ObservationIgnored private var entryEvaluationWorker: Task<Void, Never>?
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
+	@ObservationIgnored private var isConfigurationRestorePending = false
 
 	init() {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
@@ -34,6 +37,7 @@ final class JournalStore {
 		rootURL = applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		entriesURL = rootURL.appendingPathComponent("entries.json")
+		configurationURL = rootURL.appendingPathComponent("config.json")
 		pendingRecordingURL = rootURL.appendingPathComponent("pending-recording.json")
 		calendarSync = CalendarSync(
 			isDemoMode: isDemoMode,
@@ -45,14 +49,28 @@ final class JournalStore {
 
 		if isDemoMode {
 			entries = JournalEntry.demo
+			namedLocations = NamedJournalLocation.demo
 			settings.calendarSyncEnabled = true
 		} else {
 			entries = []
 			prepareStorage()
+			if let configuration = loadConfiguration() {
+				settings = configuration.settings
+				namedLocations = configuration.locations
+				settings.save()
+			} else {
+				isConfigurationRestorePending = true
+			}
 			entries = loadEntries()
 			recoverUnreferencedRecordings()
 			resumeInterruptedProcessing()
-			scheduleICloudDriveMirror()
+			if isConfigurationRestorePending {
+				Task { @MainActor [weak self] in
+					await self?.restoreConfigurationFromICloud()
+				}
+			} else {
+				scheduleICloudDriveMirror()
+			}
 		}
 	}
 
@@ -64,6 +82,65 @@ final class JournalStore {
 
 	func entry(id: UUID) -> JournalEntry? {
 		entries.first { $0.id == id }
+	}
+
+	func namedLocation(for location: JournalLocation) -> NamedJournalLocation? {
+		NamedLocationResolver.resolve(LocationCoordinate(location), in: namedLocations)
+	}
+
+	func displayName(for location: JournalLocation) -> String {
+		namedLocation(for: location)?.name ?? location.displayName
+	}
+
+	func nearbyNamedLocations(
+		to location: JournalLocation,
+		excluding excludedID: UUID? = nil
+	) -> [NearbyNamedLocation] {
+		NamedLocationResolver.nearby(
+			to: LocationCoordinate(location),
+			locations: namedLocations,
+			entries: entries,
+			excluding: excludedID
+		)
+	}
+
+	func saveNamedLocation(
+		id: UUID?,
+		name: String,
+		address: String,
+		pin: LocationCoordinate,
+		for source: JournalLocation
+	) {
+		let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !name.isEmpty else { return }
+		let address = address.trimmingCharacters(in: .whitespacesAndNewlines)
+		let sourceCoordinate = LocationCoordinate(source)
+		let locationID = id ?? UUID()
+
+		removeExactAlias(sourceCoordinate, excluding: locationID)
+		if let index = namedLocations.firstIndex(where: { $0.id == locationID }) {
+			namedLocations[index].name = name
+			namedLocations[index].address = address.isEmpty ? nil : address
+			namedLocations[index].pin = pin
+			appendAlias(sourceCoordinate, at: index)
+		} else {
+			namedLocations.append(NamedJournalLocation(
+				id: locationID,
+				name: name,
+				address: address.isEmpty ? nil : address,
+				pin: pin,
+				aliases: [sourceCoordinate]
+			))
+		}
+		commitConfiguration()
+	}
+
+	func assign(_ source: JournalLocation, to locationID: UUID) {
+		guard let index = namedLocations.firstIndex(where: { $0.id == locationID }) else { return }
+		let coordinate = LocationCoordinate(source)
+		removeExactAlias(coordinate, excluding: locationID)
+		appendAlias(coordinate, at: index)
+		commitConfiguration()
 	}
 
 	func audioURL(for entry: JournalEntry) -> URL? {
@@ -417,13 +494,13 @@ final class JournalStore {
 		let calendarScopeChanged = self.settings.calendarSyncEnabled != settings.calendarSyncEnabled
 			|| self.settings.includedCalendarIdentifiers != settings.includedCalendarIdentifiers
 		self.settings = settings
-		settings.save()
+		commitConfiguration()
 		Task { await refreshCalendar(force: calendarScopeChanged) }
 	}
 
 	func setShowModelNames(_ showModelNames: Bool) {
 		settings.showModelNames = showModelNames
-		settings.save()
+		commitConfiguration()
 	}
 
 	func clearTranscriptionAlert() {
@@ -496,6 +573,58 @@ final class JournalStore {
 		return (try? JSONDecoder().decode([JournalEntry].self, from: data))?.sorted { $0.createdAt > $1.createdAt } ?? []
 	}
 
+	private func loadConfiguration() -> AppConfiguration? {
+		guard let data = try? Data(contentsOf: configurationURL) else { return nil }
+		return try? JSONDecoder().decode(AppConfiguration.self, from: data)
+	}
+
+	private func restoreConfigurationFromICloud() async {
+		guard isConfigurationRestorePending else { return }
+		let configuration = await iCloudDriveMirror.loadConfiguration()
+		guard isConfigurationRestorePending else { return }
+		if let configuration {
+			settings = configuration.settings
+			namedLocations = configuration.locations
+		}
+		isConfigurationRestorePending = false
+		commitConfiguration()
+		Task { await refreshCalendar(force: true) }
+	}
+
+	private func commitConfiguration() {
+		isConfigurationRestorePending = false
+		settings.save()
+		guard !isDemoMode else { return }
+		let configuration = AppConfiguration(settings: settings, locations: namedLocations)
+		guard let data = try? configuration.jsonData() else { return }
+		do {
+			try data.write(to: configurationURL, options: [.atomic])
+			try fileManager.setAttributes(
+				[.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+				ofItemAtPath: configurationURL.path
+			)
+			try includeInBackup(configurationURL)
+			scheduleICloudDriveMirror()
+		} catch {
+			assertionFailure("Could not save the app configuration: \(error)")
+		}
+	}
+
+	private func removeExactAlias(_ coordinate: LocationCoordinate, excluding locationID: UUID) {
+		for index in namedLocations.indices where namedLocations[index].id != locationID {
+			namedLocations[index].aliases.removeAll {
+				$0.location.distance(from: coordinate.location) < 5
+			}
+		}
+	}
+
+	private func appendAlias(_ coordinate: LocationCoordinate, at index: Int) {
+		guard !namedLocations[index].matchingCoordinates.contains(where: {
+			$0.location.distance(from: coordinate.location) < 5
+		}) else { return }
+		namedLocations[index].aliases.append(coordinate)
+	}
+
 	@discardableResult
 	private func persist(deleting deletedEntries: [JournalEntry] = []) -> Bool {
 		guard !isDemoMode, let data = try? JSONEncoder().encode(entries) else { return false }
@@ -519,17 +648,19 @@ final class JournalStore {
 	}
 
 	private func scheduleICloudDriveMirror() {
-		guard !isDemoMode else { return }
+		guard !isDemoMode, !isConfigurationRestorePending else { return }
 		iCloudRevision += 1
 		let revision = iCloudRevision
 		let entries = entries
 		let recordingsURL = recordingsURL
+		let configuration = AppConfiguration(settings: settings, locations: namedLocations)
 		let mirror = iCloudDriveMirror
 		let deletedRecordingReferences = pendingICloudDeletionReferences
 		Task {
 			let completedDeletions = await mirror.sync(
 				entries: entries,
 				recordingsURL: recordingsURL,
+				configuration: configuration,
 				deletedRecordingReferences: deletedRecordingReferences,
 				revision: revision
 			)
@@ -648,7 +779,7 @@ private struct PendingEntryEvaluation {
 	var token: UUID
 }
 
-struct JournalSettings: Codable, Equatable {
+struct JournalSettings: Codable, Equatable, Sendable {
 	var keepScreenAwakeWhileRecording = true
 	var hapticsEnabled = true
 	var showTranscripts = true

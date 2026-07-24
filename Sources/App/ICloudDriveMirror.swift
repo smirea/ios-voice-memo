@@ -14,6 +14,7 @@ actor ICloudDriveMirror {
 	func sync(
 		entries: [JournalEntry],
 		recordingsURL: URL,
+		configuration: AppConfiguration,
 		deletedRecordingReferences: Set<String>,
 		revision: Int
 	) -> Set<String> {
@@ -35,10 +36,31 @@ actor ICloudDriveMirror {
 			return completedDeletions
 		}
 
+		export(configuration, to: documentsURL)
 		for entry in entries {
 			export(entry, recordingsURL: recordingsURL, documentsURL: documentsURL)
 		}
 		return completedDeletions
+	}
+
+	func loadConfiguration() async -> AppConfiguration? {
+		guard let url = documentsURL()?.appendingPathComponent("config.json") else { return nil }
+		var startedDownload = false
+		for _ in 0..<20 {
+			if fileManager.fileExists(atPath: url.path) {
+				if !startedDownload,
+					(try? url.resourceValues(forKeys: [.isUbiquitousItemKey]).isUbiquitousItem) == true {
+					try? fileManager.startDownloadingUbiquitousItem(at: url)
+					startedDownload = true
+				}
+				if let data = try? Data(contentsOf: url),
+					let configuration = try? JSONDecoder().decode(AppConfiguration.self, from: data) {
+					return configuration
+				}
+			}
+			try? await Task.sleep(for: .milliseconds(250))
+		}
+		return nil
 	}
 
 	private func documentsURL() -> URL? {
@@ -48,6 +70,14 @@ actor ICloudDriveMirror {
 		return fileManager
 			.url(forUbiquityContainerIdentifier: Self.containerIdentifier)?
 			.appendingPathComponent("Documents", isDirectory: true)
+	}
+
+	private func export(_ configuration: AppConfiguration, to documentsURL: URL) {
+		guard let data = try? configuration.jsonData() else { return }
+		try? data.write(
+			to: documentsURL.appendingPathComponent("config.json"),
+			options: .atomic
+		)
 	}
 
 	private func export(_ entry: JournalEntry, recordingsURL: URL, documentsURL: URL) {

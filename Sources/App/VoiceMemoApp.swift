@@ -11,6 +11,9 @@ struct VoiceMemoApp: App {
 				.tint(AppStyle.accent)
 				.task {
 					await ReminderBenchmark.runFromLaunchArguments()
+					#if DEBUG
+					await LocationContractChecks.runFromLaunchArguments()
+					#endif
 				}
 		}
 	}

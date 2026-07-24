@@ -27,7 +27,7 @@ struct EntryView: View {
 			List {
 				VStack(alignment: .leading, spacing: 6) {
 					HStack(alignment: .firstTextBaseline, spacing: 16) {
-						Text(currentEntry.location?.displayName ?? "Voice memo")
+						Text(currentEntry.location.map(store.displayName(for:)) ?? "Voice memo")
 							.font(.system(size: 25, weight: .semibold))
 							.foregroundStyle(.white)
 							.lineLimit(1)
@@ -171,7 +171,7 @@ struct EntryView: View {
 				}
 
 				if let location = currentEntry.location {
-					EntryLocationMap(location: location)
+					EntryLocationMap(store: store, location: location)
 						.transition(.move(edge: .bottom).combined(with: .opacity))
 						.entryListRow()
 				}
@@ -668,28 +668,70 @@ private struct CalendarEventDetail: UIViewControllerRepresentable {
 }
 
 private struct EntryLocationMap: View {
+	@Bindable var store: JournalStore
 	let location: JournalLocation
+	@State private var isEditing = false
+	@State private var name = ""
+	@State private var address = ""
+	@State private var resolvedAddress = ""
+	@State private var editedPin: LocationCoordinate
+	@State private var editedLocationID: UUID?
+	@State private var isSaving = false
+	@State private var mapPosition: MapCameraPosition
+	@State private var search: MapLocationSearch
+	@FocusState private var focusedField: Field?
+
+	private enum Field {
+		case address
+		case name
+	}
+
+	init(store: JournalStore, location: JournalLocation) {
+		self.store = store
+		self.location = location
+		let coordinate = LocationCoordinate(location)
+		let namedLocation = store.namedLocation(for: location)
+		let pin = namedLocation?.pin ?? coordinate
+		_editedPin = State(initialValue: pin)
+		_editedLocationID = State(initialValue: namedLocation?.id)
+		_mapPosition = State(initialValue: Self.position(for: pin))
+		_search = State(initialValue: MapLocationSearch(center: coordinate))
+	}
+
+	private var namedLocation: NamedJournalLocation? {
+		store.namedLocation(for: location)
+	}
+
+	private var shownPin: LocationCoordinate {
+		isEditing ? editedPin : namedLocation?.pin ?? LocationCoordinate(location)
+	}
+
+	private var shownName: String {
+		let editedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		if isEditing, !editedName.isEmpty {
+			return editedName
+		}
+		return namedLocation?.name ?? location.displayName
+	}
 
 	private var coordinate: CLLocationCoordinate2D {
-		CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
+		CLLocationCoordinate2D(latitude: shownPin.latitude, longitude: shownPin.longitude)
+	}
+
+	private var nearbyLocations: [NearbyNamedLocation] {
+		store.nearbyNamedLocations(to: location, excluding: editedLocationID)
 	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 13) {
-			Label(location.displayName, systemImage: "mappin.circle.fill")
-				.font(.system(size: 17, weight: .semibold))
-				.foregroundStyle(AppStyle.accent)
+			locationControls
 
 			ZStack {
 				Map(
-					initialPosition: .region(MKCoordinateRegion(
-						center: coordinate,
-						latitudinalMeters: 2_400,
-						longitudinalMeters: 2_400
-					)),
+					position: $mapPosition,
 					interactionModes: []
 				) {
-					Marker(location.displayName, coordinate: coordinate)
+					Marker(shownName, coordinate: coordinate)
 						.tint(AppStyle.accent)
 				}
 				.mapStyle(.standard(elevation: .flat))
@@ -697,22 +739,334 @@ private struct EntryLocationMap: View {
 				.allowsHitTesting(false)
 
 				Button {
-					ExternalLinks.openGoogleMaps(location: location)
+					ExternalLinks.openGoogleMaps(coordinate: shownPin)
 				} label: {
 					Rectangle()
 						.fill(.clear)
 						.contentShape(Rectangle())
 				}
 				.buttonStyle(.plain)
-				.accessibilityLabel("Open \(location.displayName) in Google Maps")
+				.accessibilityLabel("Open \(shownName) in Google Maps")
 			}
 		}
+		.animation(.snappy(duration: 0.38, extraBounce: 0.04), value: isEditing)
+		.animation(.smooth(duration: 0.3), value: shownPin)
+	}
+
+	private var locationControls: some View {
+		VStack(alignment: .leading, spacing: 12) {
+			if isEditing {
+				HStack(spacing: 11) {
+					Image(systemName: "building.2")
+						.foregroundStyle(AppStyle.secondary)
+						.frame(width: 20)
+
+					TextField("Address", text: $address)
+						.textContentType(.fullStreetAddress)
+						.textInputAutocapitalization(.words)
+						.submitLabel(.search)
+						.focused($focusedField, equals: .address)
+						.onChange(of: address) { _, newValue in
+							guard focusedField == .address else { return }
+							search.search(for: newValue)
+						}
+						.onSubmit { resolveTypedAddress() }
+
+					if search.isResolving {
+						ProgressView()
+							.controlSize(.small)
+					}
+				}
+				.transition(.move(edge: .bottom).combined(with: .opacity))
+
+				Divider()
+					.overlay(Color.white.opacity(0.18))
+					.transition(.opacity)
+			}
+
+			HStack(spacing: 11) {
+				Image(systemName: "mappin.circle.fill")
+					.foregroundStyle(AppStyle.accent)
+					.frame(width: 20)
+					.contentShape(Rectangle())
+					.onTapGesture {
+						guard !isEditing else { return }
+						beginEditing()
+					}
+					.accessibilityHidden(true)
+
+				if isEditing {
+					TextField("Location name", text: $name)
+						.font(.system(size: 17, weight: .semibold))
+						.foregroundStyle(AppStyle.accent)
+						.textInputAutocapitalization(.words)
+						.submitLabel(.done)
+						.focused($focusedField, equals: .name)
+						.onSubmit { save() }
+						.transition(.opacity)
+
+					editorControls
+						.transition(.scale(scale: 0.8).combined(with: .opacity))
+				} else {
+					Button {
+						beginEditing()
+					} label: {
+						Text(shownName)
+							.font(.system(size: 17, weight: .semibold))
+							.foregroundStyle(AppStyle.accent)
+							.contentShape(Rectangle())
+					}
+					.buttonStyle(.plain)
+					.accessibilityHint("Edits this location")
+					.transition(.opacity)
+				}
+			}
+
+			if focusedField == .address, !search.suggestions.isEmpty {
+				addressSuggestions
+					.transition(.move(edge: .top).combined(with: .opacity))
+			}
+
+			if isEditing, !nearbyLocations.isEmpty {
+				nearbyLocationList
+					.transition(.move(edge: .top).combined(with: .opacity))
+			}
+		}
+	}
+
+	private var editorControls: some View {
+		GlassEffectContainer(spacing: 8) {
+			HStack(spacing: 8) {
+				Button {
+					endEditing()
+				} label: {
+					Image(systemName: "xmark")
+						.font(.system(size: 12, weight: .bold))
+						.frame(width: 34, height: 34)
+						.contentShape(Circle())
+				}
+				.buttonStyle(.plain)
+				.glassEffect(.regular.interactive(), in: Circle())
+				.accessibilityLabel("Cancel")
+
+				Button {
+					save()
+				} label: {
+					Image(systemName: "checkmark")
+						.font(.system(size: 12, weight: .bold))
+						.frame(width: 34, height: 34)
+						.contentShape(Circle())
+				}
+				.buttonStyle(.plain)
+				.glassEffect(.regular.interactive(), in: Circle())
+				.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+				.accessibilityLabel("Save location")
+			}
+		}
+	}
+
+	private var addressSuggestions: some View {
+		VStack(spacing: 0) {
+			ForEach(Array(search.suggestions.enumerated()), id: \.offset) { index, suggestion in
+				Button {
+					select(suggestion)
+				} label: {
+					VStack(alignment: .leading, spacing: 3) {
+						Text(suggestion.title)
+							.font(.system(size: 15, weight: .medium))
+							.foregroundStyle(.white)
+							.lineLimit(1)
+						if !suggestion.subtitle.isEmpty {
+							Text(suggestion.subtitle)
+								.font(.system(size: 13))
+								.foregroundStyle(AppStyle.tertiary)
+								.lineLimit(1)
+						}
+					}
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.padding(.vertical, 9)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+
+				if index < search.suggestions.count - 1 {
+					Divider()
+						.overlay(Color.white.opacity(0.12))
+				}
+			}
+		}
+	}
+
+	private var nearbyLocationList: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Text("Nearby locations")
+				.font(.system(size: 13, weight: .semibold))
+				.foregroundStyle(AppStyle.tertiary)
+				.padding(.bottom, 4)
+
+			ForEach(Array(nearbyLocations.enumerated()), id: \.element.id) { index, nearby in
+				Button {
+					withAnimation(.snappy(duration: 0.34)) {
+						store.assign(location, to: nearby.id)
+						endEditing()
+					}
+				} label: {
+					HStack(spacing: 10) {
+						Text(nearby.location.name)
+							.font(.system(size: 15, weight: .medium))
+							.foregroundStyle(.white)
+							.lineLimit(1)
+
+						Spacer(minLength: 12)
+
+						Text("×\(nearby.useCount)")
+							.font(.system(size: 13, weight: .medium))
+							.foregroundStyle(AppStyle.secondary)
+							.monospacedDigit()
+
+						Text(formattedDistance(nearby.distance))
+							.font(.system(size: 13))
+							.foregroundStyle(AppStyle.tertiary)
+							.monospacedDigit()
+							.frame(minWidth: 54, alignment: .trailing)
+					}
+					.frame(maxWidth: .infinity)
+					.padding(.vertical, 10)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel(
+					"\(nearby.location.name), used \(nearby.useCount) times, \(formattedDistance(nearby.distance)) away"
+				)
+
+				if index < nearbyLocations.count - 1 {
+					Divider()
+						.overlay(Color.white.opacity(0.12))
+				}
+			}
+		}
+	}
+
+	private func beginEditing() {
+		let existing = namedLocation
+		name = existing?.name ?? ""
+		address = existing?.address ?? ""
+		resolvedAddress = address
+		editedPin = existing?.pin ?? LocationCoordinate(location)
+		editedLocationID = existing?.id
+		search.clear()
+		withAnimation(.snappy(duration: 0.38, extraBounce: 0.04)) {
+			isEditing = true
+		}
+		focusedField = .name
+
+		guard existing?.address == nil else { return }
+		Task {
+			guard let candidate = await search.reverseGeocode(LocationCoordinate(location)),
+				isEditing,
+				address.isEmpty
+			else { return }
+			address = candidate.address
+			resolvedAddress = candidate.address
+			editedPin = candidate.coordinate
+			updateMapPosition()
+		}
+	}
+
+	private func endEditing() {
+		focusedField = nil
+		search.clear()
+		withAnimation(.snappy(duration: 0.34, extraBounce: 0.02)) {
+			isEditing = false
+		}
+		let pin = namedLocation?.pin ?? LocationCoordinate(location)
+		editedPin = pin
+		mapPosition = Self.position(for: pin)
+	}
+
+	private func select(_ suggestion: MKLocalSearchCompletion) {
+		Task {
+			guard let candidate = await search.resolve(suggestion), isEditing else { return }
+			address = candidate.address
+			resolvedAddress = candidate.address
+			editedPin = candidate.coordinate
+			search.clear()
+			focusedField = .name
+			updateMapPosition()
+		}
+	}
+
+	private func resolveTypedAddress() {
+		Task {
+			if let candidate = await search.resolveAddress(address), isEditing {
+				address = candidate.address
+				resolvedAddress = candidate.address
+				editedPin = candidate.coordinate
+				search.clear()
+				updateMapPosition()
+			}
+			focusedField = .name
+		}
+	}
+
+	private func save() {
+		guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+			!isSaving
+		else { return }
+		isSaving = true
+		Task {
+			let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+			if !trimmedAddress.isEmpty,
+				trimmedAddress != resolvedAddress,
+				let candidate = await search.resolveAddress(address),
+				isEditing {
+				address = candidate.address
+				resolvedAddress = candidate.address
+				editedPin = candidate.coordinate
+			}
+			guard isEditing else {
+				isSaving = false
+				return
+			}
+			store.saveNamedLocation(
+				id: editedLocationID,
+				name: name,
+				address: address,
+				pin: editedPin,
+				for: location
+			)
+			isSaving = false
+			endEditing()
+		}
+	}
+
+	private func updateMapPosition() {
+		withAnimation(.smooth(duration: 0.35)) {
+			mapPosition = Self.position(for: editedPin)
+		}
+	}
+
+	private func formattedDistance(_ distance: CLLocationDistance) -> String {
+		let formatter = MKDistanceFormatter()
+		formatter.unitStyle = .abbreviated
+		return formatter.string(fromDistance: distance)
+	}
+
+	private static func position(for coordinate: LocationCoordinate) -> MapCameraPosition {
+		.region(MKCoordinateRegion(
+			center: CLLocationCoordinate2D(
+				latitude: coordinate.latitude,
+				longitude: coordinate.longitude
+			),
+			latitudinalMeters: 2_400,
+			longitudinalMeters: 2_400
+		))
 	}
 }
 
 @MainActor
 private enum ExternalLinks {
-	static func openGoogleMaps(location: JournalLocation) {
+	static func openGoogleMaps(coordinate location: LocationCoordinate) {
 		let coordinate = "\(location.latitude),\(location.longitude)"
 		var components = URLComponents(string: "https://www.google.com/maps/search/")
 		components?.queryItems = [
