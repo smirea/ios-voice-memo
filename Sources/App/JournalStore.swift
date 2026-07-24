@@ -22,6 +22,8 @@ final class JournalStore {
 	@ObservationIgnored private var pendingICloudDeletionReferences = Set<String>()
 	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var entryProcessingTokens: [UUID: UUID] = [:]
+	@ObservationIgnored private var pendingEntryEvaluations: [PendingEntryEvaluation] = []
+	@ObservationIgnored private var entryEvaluationWorker: Task<Void, Never>?
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
 
@@ -186,7 +188,7 @@ final class JournalStore {
 		entryProcessingPhases[entryID] = .reflecting
 		persist()
 
-		await evaluateEntry(entryID: entryID, transcript: transcript, token: token)
+		enqueueEvaluation(entryID: entryID, transcript: transcript, token: token)
 	}
 
 	func reprocessEntry(id entryID: UUID) {
@@ -195,11 +197,39 @@ final class JournalStore {
 		let token = UUID()
 		entryProcessingTokens[entryID] = token
 		entryProcessingPhases[entryID] = .reflecting
-		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
-			await self?.evaluateEntry(
-				entryID: entryID,
-				transcript: entry.transcript,
-				token: token
+		enqueueEvaluation(
+			entryID: entryID,
+			transcript: entry.transcript,
+			token: token
+		)
+	}
+
+	private func enqueueEvaluation(entryID: UUID, transcript: String, token: UUID) {
+		pendingEntryEvaluations.removeAll { $0.entryID == entryID }
+		pendingEntryEvaluations.append(PendingEntryEvaluation(
+			entryID: entryID,
+			transcript: transcript,
+			token: token
+		))
+		guard entryEvaluationWorker == nil else {
+			entryProcessingPhases[entryID] = .queued
+			return
+		}
+		entryEvaluationWorker = Task { @MainActor [weak self] in
+			await self?.drainEntryEvaluations()
+		}
+	}
+
+	private func drainEntryEvaluations() async {
+		defer { entryEvaluationWorker = nil }
+		while !Task.isCancelled, !pendingEntryEvaluations.isEmpty {
+			let evaluation = pendingEntryEvaluations.removeFirst()
+			guard entryProcessingTokens[evaluation.entryID] == evaluation.token else { continue }
+			entryProcessingPhases[evaluation.entryID] = .reflecting
+			await evaluateEntry(
+				entryID: evaluation.entryID,
+				transcript: evaluation.transcript,
+				token: evaluation.token
 			)
 		}
 	}
@@ -214,6 +244,8 @@ final class JournalStore {
 			includeSummary: source.duration > 20
 		)
 
+		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
+		entryProcessingPhases[entryID] = .reminders
 		var reminderResult: ReminderParsingResult?
 		if settings.eventRemindersEnabled {
 			let fresh = await ReminderEngine.parse(
@@ -275,6 +307,7 @@ final class JournalStore {
 	func deleteEntry(id entryID: UUID) {
 		guard let entry = entries.first(where: { $0.id == entryID }) else { return }
 		entryProcessingTasks.removeValue(forKey: entryID)?.cancel()
+		pendingEntryEvaluations.removeAll { $0.entryID == entryID }
 		entryProcessingTokens.removeValue(forKey: entryID)
 		entryProcessingPhases.removeValue(forKey: entryID)
 		entryLocationTasks.removeValue(forKey: entryID)?.cancel()
@@ -293,8 +326,11 @@ final class JournalStore {
 		recordingLocationTask = nil
 		for task in entryProcessingTasks.values { task.cancel() }
 		for task in entryLocationTasks.values { task.cancel() }
+		entryEvaluationWorker?.cancel()
+		entryEvaluationWorker = nil
 		entryProcessingTasks.removeAll()
 		entryProcessingTokens.removeAll()
+		pendingEntryEvaluations.removeAll()
 		entryProcessingPhases.removeAll()
 		entryLocationTasks.removeAll()
 		let deletedEntries = entries
@@ -370,6 +406,11 @@ final class JournalStore {
 		self.settings = settings
 		settings.save()
 		Task { await refreshCalendar() }
+	}
+
+	func setShowModelNames(_ showModelNames: Bool) {
+		settings.showModelNames = showModelNames
+		settings.save()
 	}
 
 	func requestCalendarAccess() async -> Bool {
@@ -597,10 +638,17 @@ private struct PendingRecording: Codable {
 	var calendarEvent: JournalCalendarEvent?
 }
 
+private struct PendingEntryEvaluation {
+	var entryID: UUID
+	var transcript: String
+	var token: UUID
+}
+
 struct JournalSettings: Codable, Equatable {
 	var keepScreenAwakeWhileRecording = true
 	var hapticsEnabled = true
 	var showTranscripts = true
+	var showModelNames = true
 	var calendarSyncEnabled = false
 	var includedCalendarIdentifiers: Set<String>?
 	var preferredCalendarApp = PreferredCalendarApp.google
@@ -620,6 +668,7 @@ struct JournalSettings: Codable, Equatable {
 		) ?? true
 		hapticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .hapticsEnabled) ?? true
 		showTranscripts = try container.decodeIfPresent(Bool.self, forKey: .showTranscripts) ?? true
+		showModelNames = try container.decodeIfPresent(Bool.self, forKey: .showModelNames) ?? true
 		calendarSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .calendarSyncEnabled) ?? false
 		includedCalendarIdentifiers = try container.decodeIfPresent(
 			Set<String>.self,

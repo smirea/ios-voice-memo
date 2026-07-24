@@ -10,7 +10,7 @@
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.
 - Treats local data as authoritative: iCloud exports are not imported, and deleting a note removes its local audio and exports.
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
-- Transcribes recordings and generates titles, summaries, reminders, and weekly reviews on-device, with live partial transcripts and deterministic fallbacks when supported models are unavailable.
+- Transcribes recordings and generates titles, summaries, reminders, and weekly reviews on-device, addressing the note owner as **you**, with live partial transcripts and deterministic fallbacks when supported models are unavailable.
 - Generates summaries only for recordings longer than 20 seconds.
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md).
 - Captures the recording coordinates and city when location access is available.
@@ -46,9 +46,9 @@
 - Tapping an attached event opens that exact event using its provider link when available, otherwise in a native event detail view.
 - Shows the generated title, processing status, and audio controls with waveform progress and remaining time; playback stops on exit.
 - Shows a short generated summary for recordings longer than 20 seconds and attributes the analysis model below the summary or title.
-- Shows event reminders directly below the summary with their target and duration; tapping expands its rationale, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
+- Shows event reminders directly below the summary with their target and duration; tapping uses native disclosure to expand its rationale, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
 - **Add Feedback** records and transcribes a short correction, deletes the temporary audio, and reprocesses only the reminders.
-- A bottom-left note actions menu switches model names on or off, reprocesses all generated analysis from the transcript, and shares complete metadata as a JSON file while **Copy** places the JSON text on the clipboard.
+- A bottom-left note actions menu persists **Show Models** app-wide with the whole toggle row tappable, reprocesses all generated analysis from the transcript even after leaving the note while safely queuing other reprocesses, and shares complete metadata as a JSON file while **Copy** places the JSON text on the clipboard.
 - When enabled in Settings, shows a four-line transcript preview and its transcription model.
 - Tapping the transcript opens a selectable full-screen reader with Copy, Close, and native back-swipe controls.
 - Shows the city above a noninteractive Apple map when recorded coordinates are available.

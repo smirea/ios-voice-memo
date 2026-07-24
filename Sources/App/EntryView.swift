@@ -13,7 +13,6 @@ struct EntryView: View {
 	@State private var presentedCalendarEvent: PresentedCalendarEvent?
 	@State private var isMissingCalendarEventAlertPresented = false
 	@State private var showsReminderFeedback = false
-	@State private var showsModelAttribution = true
 	@State private var showsNoteActions = false
 	@State private var sharedEntry: JournalEntry?
 	@Namespace private var noteActionsNamespace
@@ -80,7 +79,7 @@ struct EntryView: View {
 						.fixedSize(horizontal: false, vertical: true)
 						.frame(maxWidth: .infinity, alignment: .center)
 
-					if showsModelAttribution,
+					if store.settings.showModelNames,
 						currentEntry.summary?.isEmpty != false,
 						let model = currentEntry.summaryModel {
 						ModelAttribution(model: model)
@@ -103,7 +102,7 @@ struct EntryView: View {
 							.lineSpacing(5)
 							.fixedSize(horizontal: false, vertical: true)
 
-						if showsModelAttribution,
+						if store.settings.showModelNames,
 							let model = currentEntry.summaryModel {
 							ModelAttribution(model: model)
 						}
@@ -147,7 +146,7 @@ struct EntryView: View {
 
 						VStack(alignment: .leading, spacing: 14) {
 							reminderFeedbackButton(empty: false)
-							if showsModelAttribution,
+							if store.settings.showModelNames,
 								let model = currentEntry.reminderModel {
 								ModelAttribution(model: model)
 							}
@@ -164,7 +163,7 @@ struct EntryView: View {
 						)
 							.contentTransition(.opacity)
 
-						if showsModelAttribution,
+						if store.settings.showModelNames,
 							let model = currentEntry.transcriptModel {
 							ModelAttribution(model: model)
 						}
@@ -260,16 +259,12 @@ struct EntryView: View {
 
 	private var noteActionsPanel: some View {
 		VStack(spacing: 0) {
-			HStack(spacing: 16) {
+			Toggle(isOn: showModelNamesBinding) {
 				Label("Show Models", systemImage: "apple.intelligence")
 					.lineLimit(1)
-					.accessibilityHidden(true)
-				Spacer(minLength: 0)
-				Toggle("Show Models", isOn: $showsModelAttribution)
-					.labelsHidden()
-					.scaleEffect(0.8, anchor: .trailing)
-					.accessibilityLabel("Show Models")
 			}
+			.toggleStyle(.switch)
+			.controlSize(.small)
 			.padding(.horizontal, 16)
 			.frame(height: 52)
 
@@ -316,6 +311,13 @@ struct EntryView: View {
 		withAnimation(.spring(duration: 0.34, bounce: 0.18)) {
 			showsNoteActions = isPresented
 		}
+	}
+
+	private var showModelNamesBinding: Binding<Bool> {
+		Binding(
+			get: { store.settings.showModelNames },
+			set: { store.setShowModelNames($0) }
+		)
 	}
 
 	private func reminderFeedbackButton(empty: Bool) -> some View {
@@ -441,66 +443,73 @@ private struct ReminderRuleRow: View {
 	}
 
 	var body: some View {
-		Button {
-			guard hasDetails else { return }
-			withAnimation(.easeOut(duration: 0.2)) {
-				isExpanded.toggle()
-			}
-		} label: {
-			VStack(alignment: .leading, spacing: 10) {
-				HStack(alignment: .top, spacing: 11) {
-					Image(systemName: "circle")
-						.font(.system(size: 17, weight: .medium))
-						.foregroundStyle(AppStyle.accent)
-						.padding(.top, 2)
-
-					VStack(alignment: .leading, spacing: 4) {
-						Text(reminder.text)
-							.font(.system(size: 16, weight: .semibold))
-							.foregroundStyle(.white)
-							.fixedSize(horizontal: false, vertical: true)
-						Text(scheduleText)
-							.font(.system(size: 12, weight: .medium))
-							.foregroundStyle(AppStyle.secondary)
-							.fixedSize(horizontal: false, vertical: true)
-					}
-
-					Spacer(minLength: 4)
+		Group {
+			if hasDetails {
+				DisclosureGroup(isExpanded: $isExpanded) {
+					reminderDetails
+						.padding(.top, 10)
+						.padding(.leading, 28)
+				} label: {
+					reminderLabel
 				}
-
-				if hasDetails && isExpanded {
-					VStack(alignment: .leading, spacing: 10) {
-						if !reminder.motivation.isEmpty {
-							ReminderDetail(label: "Why", text: reminder.motivation)
-						}
-						if !reminder.evidence.isEmpty {
-							ReminderDetail(label: "From your recordings", text: "“\(reminder.evidence)”")
-						}
-						ForEach(reminder.selector.examples) { example in
-							HStack(alignment: .top, spacing: 8) {
-								Image(systemName: example.matches ? "checkmark.circle.fill" : "xmark.circle")
-									.foregroundStyle(example.matches ? AppStyle.accent : AppStyle.tertiary)
-								VStack(alignment: .leading, spacing: 2) {
-									Text(example.event.title)
-										.font(.system(size: 13, weight: .semibold))
-										.foregroundStyle(.white)
-									Text(example.reason)
-										.font(.caption)
-										.foregroundStyle(AppStyle.secondary)
-								}
-							}
-						}
-					}
-					.padding(.leading, 28)
-				}
+			} else {
+				reminderLabel
 			}
 		}
-		.buttonStyle(.plain)
+		.tint(AppStyle.secondary)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.contentShape(Rectangle())
 		.accessibilityValue(hasDetails ? (isExpanded ? "Expanded" : "Collapsed") : "")
 		.accessibilityHint(hasDetails ? "Shows or hides why this reminder appears" : "")
 		.padding(.vertical, 10)
+	}
+
+	private var reminderLabel: some View {
+		HStack(alignment: .top, spacing: 11) {
+			Image(systemName: "circle")
+				.font(.system(size: 17, weight: .medium))
+				.foregroundStyle(AppStyle.accent)
+				.padding(.top, 2)
+
+			VStack(alignment: .leading, spacing: 4) {
+				Text(reminder.text)
+					.font(.system(size: 16, weight: .semibold))
+					.foregroundStyle(.white)
+					.fixedSize(horizontal: false, vertical: true)
+				Text(scheduleText)
+					.font(.system(size: 12, weight: .medium))
+					.foregroundStyle(AppStyle.secondary)
+					.fixedSize(horizontal: false, vertical: true)
+			}
+
+			Spacer(minLength: 4)
+		}
+	}
+
+	@ViewBuilder
+	private var reminderDetails: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			if !reminder.motivation.isEmpty {
+				ReminderDetail(label: "Why", text: reminder.motivation)
+			}
+			if !reminder.evidence.isEmpty {
+				ReminderDetail(label: "From your recordings", text: "“\(reminder.evidence)”")
+			}
+			ForEach(reminder.selector.examples) { example in
+				HStack(alignment: .top, spacing: 11) {
+					Image(systemName: example.matches ? "checkmark.circle.fill" : "xmark.circle")
+						.foregroundStyle(example.matches ? AppStyle.accent : AppStyle.tertiary)
+					VStack(alignment: .leading, spacing: 4) {
+						Text(example.event.title)
+							.font(.system(size: 13, weight: .semibold))
+							.foregroundStyle(.white)
+						Text(example.reason)
+							.font(.caption)
+							.foregroundStyle(AppStyle.secondary)
+					}
+				}
+			}
+		}
 	}
 }
 

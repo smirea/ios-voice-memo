@@ -9,7 +9,7 @@ private struct GeneratedRequiredReminderBatch {
 
 @Generable(description: "Whether one memo excerpt contains an eligible event reminder")
 private struct GeneratedCueEligibility {
-	@Guide(description: "eligible only for an affirmative instruction the speaker gives their future self for a future event; otherwise exclude", .anyOf(["eligible", "exclude"]))
+	@Guide(description: "eligible only for an affirmative instruction you give your future self for a future event; otherwise exclude", .anyOf(["eligible", "exclude"]))
 	var classification: String
 }
 
@@ -18,7 +18,7 @@ private struct GeneratedReminderDraft {
 	@Guide(description: "A short imperative checklist item")
 	var text: String
 
-	@Guide(description: "Why this reminder will be useful at the matching event")
+	@Guide(description: "Why this reminder will be useful at the matching event, addressing the note owner as you and never as user or speaker")
 	var motivation: String
 
 	@Guide(description: "A brief exact contiguous excerpt from the memo or later correction that supports the reminder")
@@ -30,7 +30,7 @@ private struct GeneratedReminderSchedule {
 	@Guide(description: "Describe only the event class stated in the evidence, without adding the attached event")
 	var eventDescription: String
 
-	@Guide(description: "A required location stated by the speaker, or none when there is no location constraint")
+	@Guide(description: "A required location you stated, or none when there is no location constraint")
 	var locationDescription: String
 }
 
@@ -342,16 +342,16 @@ enum ReminderEngine {
 		guard !eligibleExcerpts.isEmpty else { return [] }
 
 		let draftInstructions = """
-		This excerpt has already been confirmed to contain at least one event reminder. Extract every action the speaker gives their future self for immediately before or during that event. Do not reclassify the excerpt. Include actions conditional on the event's time or other stated traits.
+		This excerpt has already been confirmed to contain at least one event reminder. Extract every action you gave your future self for immediately before or during that event. Do not reclassify the excerpt. Include actions conditional on the event's time or other stated traits.
 
 		Hard exclusions:
 		- Never turn a past observation into a reminder.
 		- Never extract a negated, canceled, or rejected idea.
-		- Never assign another person's intention or obligation to the speaker.
+		- Never assign another person's intention or obligation to you.
 		- Never invent an action, object, name, event constraint, repetition, or duration.
 		- Never extract general tasks, errands, or appointments to schedule.
 
-		Copy a short exact contiguous evidence excerpt. Preserve every stated action, name, and color. Return every useful cue, including zero; never fill a quota. Prefer omission when uncertain. A later pass assigns event matching, repetition, time, location, and duration.
+		Copy a short exact contiguous evidence excerpt. Preserve every stated action, name, and color. Write each motivation directly to the note owner as "you"; never say "the user," "user," or "the speaker." Return every useful cue, including zero; never fill a quota. Prefer omission when uncertain. A later pass assigns event matching, repetition, time, location, and duration.
 
 		"""
 		var drafts: [GeneratedReminderDraft] = []
@@ -370,7 +370,7 @@ enum ReminderEngine {
 					Extract actions stated in the focus excerpt only.
 
 					A self-correction such as "bring the red notebook—sorry, not red, bring the blue notebook" produces only "Bring the blue notebook."
-					The action is the speaker's imperative verb phrase, never attendance at the event. "Next class ask Dana about the showcase" produces "Ask Dana about the showcase," never "Go to class."
+					The action is your imperative verb phrase, never attendance at the event. "Next class ask Dana about the showcase" produces "Ask Dana about the showcase," never "Go to class."
 					A time branch such as "If it starts in the evening, wear the blue shirt" is an affirmative instruction and produces "Wear the blue shirt."
 					Keep related people facts in one compact reminder. "Remember Alice plays green, Ben hosts, and Priya likes cooperative games" is one reminder containing all three facts, not three reminders. A negative preference such as "Noor does not want cooperative games" is a fact to preserve, not a canceled instruction.
 					""")
@@ -484,7 +484,7 @@ enum ReminderEngine {
 				continue
 			}
 			let session = LanguageModelSession(instructions: """
-			Classify one memo excerpt conservatively. Mark eligible only when it contains an affirmative instruction the speaker gives their future self for immediately before or during a future calendar event. The named future event may be the attached event, a broader event class, or a completely different event class. Exclude past observations, descriptions without a future instruction, negated or rejected ideas, another person's intentions, and general tasks such as scheduling appointments or errands. If the excerpt contains both excluded material and a valid event cue, mark it eligible; a later pass will extract only the valid cue.
+			Classify one memo excerpt conservatively. Mark eligible only when it contains an affirmative instruction you give your future self for immediately before or during a future calendar event. The named future event may be the attached event, a broader event class, or a completely different event class. Exclude past observations, descriptions without a future instruction, negated or rejected ideas, another person's intentions, and general tasks such as scheduling appointments or errands. If the excerpt contains both excluded material and a valid event cue, mark it eligible; a later pass will extract only the valid cue.
 
 			The previous excerpt may resolve a pronoun, event class, or shared duration, but classify only the current excerpt.
 
@@ -986,7 +986,7 @@ enum ReminderEngine {
 		evidenceCorpus: String
 	) -> EventReminderRule? {
 		let text = clean(generated.text)
-		let motivation = clean(generated.motivation)
+		let motivation = sentenceCase(generated.motivation)
 		let evidence = clean(generated.evidence)
 		guard !text.isEmpty,
 			!motivation.isEmpty,
@@ -1173,6 +1173,12 @@ enum ReminderEngine {
 		value
 			.replacingOccurrences(of: "\n", with: " ")
 			.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	private static func sentenceCase(_ value: String) -> String {
+		let value = clean(value)
+		guard let first = value.first else { return "" }
+		return first.uppercased() + value.dropFirst()
 	}
 
 	private static func optionalConstraint(_ value: String) -> String? {

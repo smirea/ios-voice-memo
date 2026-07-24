@@ -41,17 +41,7 @@ private struct FullScreenTextReader: View {
 		ZStack {
 			AppStyle.background.ignoresSafeArea()
 
-			ScrollView {
-				Text(text)
-					.font(.system(size: 18))
-					.foregroundStyle(Color.white.opacity(0.94))
-					.lineSpacing(6)
-					.textSelection(.enabled)
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.padding(.horizontal, 24)
-					.padding(.vertical, 24)
-			}
-			.scrollIndicators(.hidden)
+			SelectableTextView(text: text, accessibilityName: accessibilityName)
 		}
 		.safeAreaInset(edge: .top, spacing: 0) {
 			HStack {
@@ -105,6 +95,42 @@ private struct FullScreenTextReader: View {
 		.buttonStyle(.plain)
 		.glassEffect(.regular.interactive(), in: Capsule())
 		.accessibilityLabel(didCopy ? "Copied" : "Copy \(accessibilityName.lowercased())")
+	}
+}
+
+private struct SelectableTextView: UIViewRepresentable {
+	let text: String
+	let accessibilityName: String
+
+	func makeUIView(context: Context) -> UITextView {
+		let textView = UITextView()
+		textView.isEditable = false
+		textView.isSelectable = true
+		textView.backgroundColor = .clear
+		textView.showsVerticalScrollIndicator = false
+		textView.adjustsFontForContentSizeCategory = true
+		textView.textContainerInset = UIEdgeInsets(top: 24, left: 19, bottom: 24, right: 19)
+		textView.accessibilityLabel = accessibilityName
+		applyText(to: textView)
+		return textView
+	}
+
+	func updateUIView(_ textView: UITextView, context: Context) {
+		guard textView.text != text else { return }
+		applyText(to: textView)
+	}
+
+	private func applyText(to textView: UITextView) {
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineSpacing = 6
+		textView.attributedText = NSAttributedString(
+			string: text,
+			attributes: [
+				.font: UIFont.preferredFont(forTextStyle: .body),
+				.foregroundColor: UIColor.white.withAlphaComponent(0.94),
+				.paragraphStyle: paragraph
+			]
+		)
 	}
 }
 

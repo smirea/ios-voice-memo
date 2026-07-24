@@ -190,8 +190,5 @@ private struct EntryCard: View {
 			}
 		}
 		.padding(.vertical, 16)
-		.overlay(alignment: .bottom) {
-			Divider().overlay(Color.white.opacity(0.14))
-		}
 	}
 }

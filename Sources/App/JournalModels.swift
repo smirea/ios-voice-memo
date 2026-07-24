@@ -197,13 +197,17 @@ struct ReflectionResult: Sendable {
 
 enum EntryProcessingPhase: Equatable, Sendable {
 	case transcribing
+	case queued
 	case reflecting
+	case reminders
 	case complete
 
 	var title: String {
 		switch self {
 		case .transcribing: "Transcribing"
+		case .queued: "Waiting"
 		case .reflecting: "Analyzing"
+		case .reminders: "Finding reminders"
 		case .complete: "Ready"
 		}
 	}
