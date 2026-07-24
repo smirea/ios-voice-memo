@@ -4,6 +4,7 @@
 
 - Supports only the latest iOS and uses native interactions and components where possible.
 - Uses a consistent dark interface, saturated blue accent, and Liquid Glass controls.
+- Never places content in decorative background boxes; uses spacing, typography, alignment, and dividers for hierarchy.
 - Uses native horizontal back navigation wherever a back button is hidden.
 - Stores notes and audio locally for offline use, includes them in device backups, and recovers interrupted recordings and processing on the next launch.
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.

@@ -208,6 +208,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = G10000000000000000000002 /* Build configuration list for PBXNativeTarget "VoiceMemo" */;
 			buildPhases = (
+				O10000000000000000000001 /* Check Design Rules */,
 				H10000000000000000000001 /* Sources */,
 				D10000000000000000000001 /* Frameworks */,
 				I10000000000000000000001 /* Resources */,
@@ -292,6 +293,33 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		O10000000000000000000001 /* Check Design Rules */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/FEATURES.md",
+				"$(SRCROOT)/Scripts/check-design-rules.sh",
+				"$(SRCROOT)/Shared",
+				"$(SRCROOT)/Sources/App",
+				"$(SRCROOT)/VoiceMemoWidgets",
+			);
+			name = "Check Design Rules";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$SRCROOT/Scripts/check-design-rules.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		H10000000000000000000001 /* Sources */ = {

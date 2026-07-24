@@ -160,36 +160,38 @@ private struct EntryCard: View {
 	}
 
 	var body: some View {
-		AppCard {
-			VStack(alignment: .leading, spacing: 12) {
-				HStack {
-					Text(timestamp)
-					Spacer()
-					Text(entry.duration.compactDurationText)
-				}
-				.font(.system(size: 12, weight: .medium))
-				.foregroundStyle(AppStyle.tertiary)
-
-				Text(entry.headline)
-					.font(.system(size: 18, weight: .medium))
-					.foregroundStyle(.white)
-					.multilineTextAlignment(.leading)
-					.lineLimit(3)
-
-				if let processingPhase {
-					HStack(spacing: 6) {
-						if processingPhase == .complete {
-							Image(systemName: "checkmark.circle.fill")
-						} else {
-							ProgressView().controlSize(.mini)
-						}
-						Text(processingPhase.title)
-					}
-					.font(.system(size: 12, weight: .semibold))
-					.foregroundStyle(AppStyle.accent)
-					.tint(AppStyle.accent)
-				}
+		VStack(alignment: .leading, spacing: 12) {
+			HStack {
+				Text(timestamp)
+				Spacer()
+				Text(entry.duration.compactDurationText)
 			}
+			.font(.system(size: 12, weight: .medium))
+			.foregroundStyle(AppStyle.tertiary)
+
+			Text(entry.headline)
+				.font(.system(size: 18, weight: .medium))
+				.foregroundStyle(.white)
+				.multilineTextAlignment(.leading)
+				.lineLimit(3)
+
+			if let processingPhase {
+				HStack(spacing: 6) {
+					if processingPhase == .complete {
+						Image(systemName: "checkmark.circle.fill")
+					} else {
+						ProgressView().controlSize(.mini)
+					}
+					Text(processingPhase.title)
+				}
+				.font(.system(size: 12, weight: .semibold))
+				.foregroundStyle(AppStyle.accent)
+				.tint(AppStyle.accent)
+			}
+		}
+		.padding(.vertical, 16)
+		.overlay(alignment: .bottom) {
+			Divider().overlay(Color.white.opacity(0.14))
 		}
 	}
 }

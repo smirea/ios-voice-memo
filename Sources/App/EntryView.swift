@@ -216,10 +216,15 @@ private struct EntryReminderSection: View {
 					.font(.system(size: 15, weight: .medium))
 					.foregroundStyle(AppStyle.secondary)
 			} else {
-				VStack(spacing: 10) {
+				VStack(spacing: 0) {
 					ForEach(entry.reminders) { reminder in
 						ReminderRuleRow(reminder: reminder) {
 							onRemove(reminder.id)
+						}
+						if reminder.id != entry.reminders.last?.id {
+							Divider()
+								.overlay(Color.white.opacity(0.14))
+								.padding(.leading, 28)
 						}
 					}
 				}
@@ -237,12 +242,6 @@ private struct EntryReminderSection: View {
 			if let model = entry.reminderModel, !entry.reminders.isEmpty {
 				ModelAttribution(model: model)
 			}
-		}
-		.padding(16)
-		.background(AppStyle.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-		.overlay {
-			RoundedRectangle(cornerRadius: 18, style: .continuous)
-				.stroke(AppStyle.cardBorder, lineWidth: 0.8)
 		}
 	}
 }
@@ -286,7 +285,6 @@ private struct ReminderRuleRow: View {
 						.font(.system(size: 11, weight: .bold))
 						.foregroundStyle(AppStyle.secondary)
 						.frame(width: 28, height: 28)
-						.background(Color.white.opacity(0.06), in: Circle())
 				}
 				.buttonStyle(.plain)
 				.accessibilityLabel("Remove \(reminder.text)")
@@ -327,8 +325,7 @@ private struct ReminderRuleRow: View {
 				.padding(.leading, 28)
 			}
 		}
-		.padding(13)
-		.background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+		.padding(.vertical, 10)
 	}
 }
 
@@ -520,19 +517,14 @@ private struct EntryLocationMap: View {
 				}
 				.mapStyle(.standard(elevation: .flat))
 				.frame(height: 220)
-				.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-				.overlay {
-					RoundedRectangle(cornerRadius: 18, style: .continuous)
-						.stroke(AppStyle.cardBorder, lineWidth: 0.8)
-				}
 				.allowsHitTesting(false)
 
 				Button {
 					ExternalLinks.openGoogleMaps(location: location)
 				} label: {
-					RoundedRectangle(cornerRadius: 18, style: .continuous)
+					Rectangle()
 						.fill(.clear)
-						.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+						.contentShape(Rectangle())
 				}
 				.buttonStyle(.plain)
 				.accessibilityLabel("Open \(location.displayName) in Google Maps")
@@ -581,8 +573,7 @@ private struct EntryProcessingStatusView: View {
 			}
 			.foregroundStyle(AppStyle.accent)
 			.tint(AppStyle.accent)
-			.frame(width: 30, height: 30)
-			.background(AppStyle.accent.opacity(0.18), in: Circle())
+			.frame(width: 24, height: 30)
 
 			Text(phase.title)
 				.font(.system(size: 14, weight: .semibold))
@@ -590,12 +581,6 @@ private struct EntryProcessingStatusView: View {
 
 			Spacer()
 		}
-		.padding(.horizontal, 15)
-		.padding(.vertical, 12)
-		.background(AppStyle.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-		.overlay {
-			RoundedRectangle(cornerRadius: 14, style: .continuous)
-				.stroke(AppStyle.accent.opacity(0.55), lineWidth: 0.8)
-		}
+		.padding(.vertical, 4)
 	}
 }

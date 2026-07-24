@@ -10,6 +10,13 @@ This is a simple iOS app that's only meant to support the latest iOS and should 
 
 - After completing any visual app change, capture the finished UI in the iOS Simulator and include screenshots of the changed screens or states in the final chat response.
 
+# Non-negotiable visual rules
+
+- NO CARDS: never place sections, rows, text, statuses, empty states, or other content inside decorative filled, tinted, material, bordered, or rounded containers.
+- Use spacing, typography, alignment, and dividers for hierarchy. Background shapes are only for actual controls such as buttons or for clipping media.
+- Do not delete, weaken, condense away, or reinterpret negative design constraints in `FEATURES.md`.
+- Before finishing visual work, run `Scripts/check-design-rules.sh`; the Xcode build runs it too.
+
 # Stack
 
 - Language: Swift

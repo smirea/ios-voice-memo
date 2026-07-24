@@ -4,27 +4,8 @@ import UIKit
 enum AppStyle {
 	static let background = Color.black
 	static let accent = Color(red: 0.02, green: 0.40, blue: 1.00)
-	static let accentSoft = accent.opacity(0.18)
-	static let card = Color(red: 0.065, green: 0.075, blue: 0.095)
-	static let cardBorder = Color.white.opacity(0.15)
 	static let secondary = Color.white.opacity(0.72)
 	static let tertiary = Color.white.opacity(0.62)
-}
-
-struct AppCard<Content: View>: View {
-	@ViewBuilder var content: Content
-
-	var body: some View {
-		content
-			.padding(.horizontal, 17)
-			.padding(.vertical, 20)
-			.frame(maxWidth: .infinity, alignment: .leading)
-			.background(AppStyle.card, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-			.overlay {
-				RoundedRectangle(cornerRadius: 13, style: .continuous)
-					.stroke(AppStyle.cardBorder, lineWidth: 0.8)
-			}
-	}
 }
 
 struct SummaryToPopup: View {

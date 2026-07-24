@@ -193,7 +193,7 @@ struct RecordView: View {
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.padding(.vertical, 20)
 		} else {
-			LazyVStack(spacing: 10) {
+			LazyVStack(spacing: 0) {
 				ForEach(events) { event in
 					Button {
 						selectedEventID = event.id
@@ -204,6 +204,9 @@ struct RecordView: View {
 						)
 					}
 					.buttonStyle(.plain)
+					if event.id != events.last?.id {
+						Divider().overlay(Color.white.opacity(0.14))
+					}
 				}
 			}
 		}
@@ -483,17 +486,7 @@ private struct EventSelectionRow: View {
 				.font(.system(size: 21, weight: .semibold))
 				.foregroundStyle(isSelected ? AppStyle.accent : AppStyle.tertiary)
 		}
-		.padding(16)
-		.background(
-			isSelected ? AppStyle.accentSoft : AppStyle.card,
-			in: RoundedRectangle(cornerRadius: 15, style: .continuous)
-		)
-		.overlay {
-			RoundedRectangle(cornerRadius: 15, style: .continuous)
-				.stroke(
-					isSelected ? AppStyle.accent.opacity(0.72) : AppStyle.cardBorder,
-					lineWidth: 0.8
-				)
-		}
+		.padding(.vertical, 15)
+		.contentShape(Rectangle())
 	}
 }
