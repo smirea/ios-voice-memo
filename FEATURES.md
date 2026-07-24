@@ -46,7 +46,7 @@
 - Tapping an attached event opens that exact event using its provider link when available, otherwise in a native event detail view.
 - Shows the generated title, processing status, and audio controls with waveform progress and remaining time; playback stops on exit.
 - Shows a short generated summary for recordings longer than 20 seconds and attributes the analysis model below the summary or title.
-- Shows event reminders directly below the summary with their target and duration; tapping uses native disclosure to expand its rationale, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
+- Shows event reminders directly below the summary with compact frequency, quoted target, and duration; tapping uses native disclosure to expand its rationale without additional indentation, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
 - **Add Feedback** records and transcribes a short correction, deletes the temporary audio, and reprocesses only the reminders.
 - A bottom-left note actions menu persists **Show Models** app-wide with the whole toggle row tappable, reprocesses all generated analysis from the transcript even after leaving the note while safely queuing other reprocesses, and shares complete metadata as a JSON file while **Copy** places the JSON text on the clipboard.
 - When enabled in Settings, shows a four-line transcript preview and its transcription model.

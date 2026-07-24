@@ -6,8 +6,8 @@ enum EventReminderOccurrencePolicy: String, Codable, Hashable, Sendable {
 
 	var title: String {
 		switch self {
-		case .nextMatch: "Next match"
-		case .everyMatch: "Every match"
+		case .nextMatch: "Next"
+		case .everyMatch: "Every"
 		}
 	}
 }

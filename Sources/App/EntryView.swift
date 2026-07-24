@@ -429,11 +429,11 @@ private struct ReminderRuleRow: View {
 	@State private var isExpanded = false
 
 	private var scheduleText: String {
-		var parts = [reminder.occurrencePolicy.title, reminder.selector.title]
+		var text = "\(reminder.occurrencePolicy.title) “\(reminder.selector.title)”"
 		if let expiresAt = reminder.expiresAt {
-			parts.append("until \(expiresAt.formatted(date: .abbreviated, time: .omitted))")
+			text += " until \(expiresAt.formatted(date: .abbreviated, time: .omitted))"
 		}
-		return parts.joined(separator: " · ")
+		return text
 	}
 
 	private var hasDetails: Bool {
@@ -448,7 +448,6 @@ private struct ReminderRuleRow: View {
 				DisclosureGroup(isExpanded: $isExpanded) {
 					reminderDetails
 						.padding(.top, 10)
-						.padding(.leading, 28)
 				} label: {
 					reminderLabel
 				}
