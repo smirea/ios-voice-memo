@@ -3,7 +3,6 @@ import EventKitUI
 import MapKit
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 struct EntryView: View {
 	@Environment(\.dismiss) private var dismiss
@@ -359,10 +358,12 @@ private struct JournalEntryShareSheet: UIViewControllerRepresentable {
 	let entry: JournalEntry
 
 	func makeUIViewController(context: Context) -> UIActivityViewController {
-		let item = try? JournalEntryActivityItem(entry: entry)
+		let export = try? JournalEntryExport(entry: entry)
 		return UIActivityViewController(
-			activityItems: item.map { [$0] } ?? [entry.headline],
-			applicationActivities: nil
+			activityItems: export.map { [$0.fileURL] } ?? [],
+			applicationActivities: export.map {
+				[CopyJSONTextActivity(jsonText: $0.jsonText)]
+			}
 		)
 	}
 
@@ -372,47 +373,41 @@ private struct JournalEntryShareSheet: UIViewControllerRepresentable {
 	) {}
 }
 
-private final class JournalEntryActivityItem: NSObject, UIActivityItemSource {
-	private let fileURL: URL
-	private let jsonText: String
-	private let subject: String
+private struct JournalEntryExport {
+	let fileURL: URL
+	let jsonText: String
 
 	init(entry: JournalEntry) throws {
 		let data = try entry.jsonData()
 		fileURL = FileManager.default.temporaryDirectory
 			.appendingPathComponent("MyVoiceMemo_\(entry.id.uuidString).json")
 		jsonText = String(decoding: data, as: UTF8.self)
-		subject = entry.headline
 		try data.write(to: fileURL, options: .atomic)
 	}
+}
 
-	func activityViewControllerPlaceholderItem(
-		_ activityViewController: UIActivityViewController
-	) -> Any {
-		fileURL
+private final class CopyJSONTextActivity: UIActivity {
+	private let jsonText: String
+
+	init(jsonText: String) {
+		self.jsonText = jsonText
+		super.init()
 	}
 
-	func activityViewController(
-		_ activityViewController: UIActivityViewController,
-		itemForActivityType activityType: UIActivity.ActivityType?
-	) -> Any? {
-		activityType == .copyToPasteboard ? jsonText : fileURL
+	override class var activityCategory: UIActivity.Category { .action }
+	override var activityType: UIActivity.ActivityType? {
+		UIActivity.ActivityType("com.stefan.myvoicememo.copy-json-text")
+	}
+	override var activityTitle: String? { "Copy JSON Text" }
+	override var activityImage: UIImage? { UIImage(systemName: "doc.on.doc") }
+
+	override func canPerform(withActivityItems activityItems: [Any]) -> Bool {
+		true
 	}
 
-	func activityViewController(
-		_ activityViewController: UIActivityViewController,
-		subjectForActivityType activityType: UIActivity.ActivityType?
-	) -> String {
-		subject
-	}
-
-	func activityViewController(
-		_ activityViewController: UIActivityViewController,
-		dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
-	) -> String {
-		activityType == .copyToPasteboard
-			? UTType.utf8PlainText.identifier
-			: UTType.json.identifier
+	override func perform() {
+		UIPasteboard.general.string = jsonText
+		activityDidFinish(true)
 	}
 }
 
