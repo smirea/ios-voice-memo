@@ -70,12 +70,14 @@ final class CalendarSync {
 		refreshID = requestID
 
 		if isDemoMode {
-			loadDemoData(on: date)
-			if let includedCalendarIdentifiers {
-				events.removeAll {
-					!includedCalendarIdentifiers.contains($0.calendarIdentifier)
-				}
-			}
+			loadDemoCalendars()
+			let start = Calendar.current.startOfDay(for: date)
+			let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
+			events = await loadEvents(
+				from: start,
+				to: end,
+				includedCalendarIdentifiers: includedCalendarIdentifiers
+			)
 			return
 		}
 
@@ -87,11 +89,31 @@ final class CalendarSync {
 		}
 
 		loadCalendars()
-		let selectedIdentifiers = includedCalendarIdentifiers
 		let start = Calendar.current.startOfDay(for: date)
 		let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start
+		let loadedEvents = await loadEvents(
+			from: start,
+			to: end,
+			includedCalendarIdentifiers: includedCalendarIdentifiers
+		)
+		guard refreshID == requestID else { return }
+		events = loadedEvents
+	}
 
-		let loadedEvents: [JournalCalendarEvent] = await Task.detached(priority: .utility) {
+	func loadEvents(
+		from start: Date,
+		to end: Date,
+		includedCalendarIdentifiers: Set<String>?
+	) async -> [JournalCalendarEvent] {
+		if isDemoMode {
+			return demoEvents(from: start, to: end).filter {
+				includedCalendarIdentifiers?.contains($0.calendarIdentifier) ?? true
+			}
+		}
+
+		guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
+		let selectedIdentifiers = includedCalendarIdentifiers
+		return await Task.detached(priority: .utility) {
 			let store = EKEventStore()
 			let selectedCalendars = store.calendars(for: .event).filter { calendar in
 				selectedIdentifiers?.contains(calendar.calendarIdentifier) ?? true
@@ -101,23 +123,8 @@ final class CalendarSync {
 			return store.events(matching: predicate)
 				.filter { $0.status != .canceled }
 				.sorted { $0.startDate < $1.startDate }
-				.map {
-					JournalCalendarEvent(
-						id: $0.eventIdentifier ?? $0.calendarItemIdentifier,
-						localIdentifier: $0.calendarItemIdentifier,
-						externalIdentifier: $0.calendarItemExternalIdentifier,
-						providerURL: Self.calendarProviderURL(from: $0.url),
-						calendarIdentifier: $0.calendar.calendarIdentifier,
-						calendarTitle: $0.calendar.title,
-						title: $0.title?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty ?? "Untitled event",
-						startDate: $0.startDate,
-						endDate: $0.endDate,
-						isAllDay: $0.isAllDay
-					)
-				}
+				.map(Self.journalEvent)
 		}.value
-		guard refreshID == requestID else { return }
-		events = loadedEvents
 	}
 
 	func resolve(_ storedEvent: JournalCalendarEvent) -> EKEvent? {
@@ -191,20 +198,33 @@ final class CalendarSync {
 			}
 	}
 
-	private func loadDemoData(on date: Date) {
-		let calendar = Calendar.current
-		let start = calendar.startOfDay(for: date)
-		func time(_ hour: Int, _ minute: Int = 0) -> Date {
-			calendar.date(byAdding: .minute, value: hour * 60 + minute, to: start) ?? start
-		}
-
+	private func loadDemoCalendars() {
 		calendars = [
 			CalendarSource(id: "demo-work", title: "Work", sourceTitle: "Google"),
 			CalendarSource(id: "demo-personal", title: "Personal", sourceTitle: "iCloud")
 		]
-		events = [
+	}
+
+	private func loadDemoData(on date: Date) {
+		loadDemoCalendars()
+		let calendar = Calendar.current
+		let start = calendar.startOfDay(for: date)
+		let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start
+		events = demoEvents(from: start, to: end)
+	}
+
+	private func demoEvents(from start: Date, to end: Date) -> [JournalCalendarEvent] {
+		let calendar = Calendar.current
+		var day = calendar.startOfDay(for: start)
+		var events: [JournalCalendarEvent] = []
+		while day < end {
+			func time(_ hour: Int, _ minute: Int = 0) -> Date {
+				calendar.date(byAdding: .minute, value: hour * 60 + minute, to: day) ?? day
+			}
+			let dayKey = day.formatted(.iso8601.year().month().day())
+			events.append(contentsOf: [
 			JournalCalendarEvent(
-				id: "demo-standup",
+				id: "demo-standup-\(dayKey)",
 				calendarIdentifier: "demo-work",
 				calendarTitle: "Work",
 				title: "Team standup",
@@ -213,7 +233,7 @@ final class CalendarSync {
 				isAllDay: false
 			),
 			JournalCalendarEvent(
-				id: "demo-design-review",
+				id: "demo-design-review-\(dayKey)",
 				calendarIdentifier: "demo-work",
 				calendarTitle: "Work",
 				title: "Design review",
@@ -222,7 +242,7 @@ final class CalendarSync {
 				isAllDay: false
 			),
 			JournalCalendarEvent(
-				id: "demo-dinner",
+				id: "demo-dinner-\(dayKey)",
 				calendarIdentifier: "demo-personal",
 				calendarTitle: "Personal",
 				title: "Dinner",
@@ -230,7 +250,54 @@ final class CalendarSync {
 				endDate: time(20, 30),
 				isAllDay: false
 			)
-		]
+			])
+
+			let weekday = calendar.component(.weekday, from: day)
+			if weekday == 1 {
+				events.append(contentsOf: [
+					JournalCalendarEvent(
+						id: "demo-morning-run-\(dayKey)",
+						externalIdentifier: "demo-morning-run-series",
+						calendarIdentifier: "demo-personal",
+						calendarTitle: "Personal",
+						title: "Morning run",
+						startDate: time(8),
+						endDate: time(9),
+						isAllDay: false,
+						location: "Lakefront Trail",
+						notes: "Weekly group run",
+						isRecurring: true
+					),
+					JournalCalendarEvent(
+						id: "demo-board-games-\(dayKey)",
+						calendarIdentifier: "demo-personal",
+						calendarTitle: "Personal",
+						title: "Sunday board games",
+						startDate: time(10),
+						endDate: time(13),
+						isAllDay: false,
+						location: "Dice Dojo",
+						notes: "Meetup event"
+					)
+				])
+			}
+			if weekday == 5 {
+				events.append(JournalCalendarEvent(
+					id: "demo-improv-\(dayKey)",
+					externalIdentifier: "demo-improv-series",
+					calendarIdentifier: "demo-personal",
+					calendarTitle: "Personal",
+					title: "Improv class",
+					startDate: time(19),
+					endDate: time(21),
+					isAllDay: false,
+					location: "Theater",
+					isRecurring: true
+				))
+			}
+			day = calendar.date(byAdding: .day, value: 1, to: day) ?? end
+		}
+		return events.sorted { $0.startDate < $1.startDate }
 	}
 
 	private func bestMatch(
@@ -262,6 +329,24 @@ final class CalendarSync {
 			return url
 		}
 		return nil
+	}
+
+	nonisolated private static func journalEvent(_ event: EKEvent) -> JournalCalendarEvent {
+		JournalCalendarEvent(
+			id: event.eventIdentifier ?? event.calendarItemIdentifier,
+			localIdentifier: event.calendarItemIdentifier,
+			externalIdentifier: event.calendarItemExternalIdentifier,
+			providerURL: calendarProviderURL(from: event.url),
+			calendarIdentifier: event.calendar.calendarIdentifier,
+			calendarTitle: event.calendar.title,
+			title: event.title?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty ?? "Untitled event",
+			startDate: event.startDate,
+			endDate: event.endDate,
+			isAllDay: event.isAllDay,
+			location: event.location?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty,
+			notes: event.notes?.trimmingCharacters(in: .whitespacesAndNewlines).nonempty,
+			isRecurring: event.hasRecurrenceRules || event.occurrenceDate != nil
+		)
 	}
 }
 

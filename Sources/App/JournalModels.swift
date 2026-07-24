@@ -22,6 +22,9 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		case startDate
 		case endDate
 		case isAllDay
+		case location
+		case notes
+		case isRecurring
 	}
 
 	var id: String
@@ -34,6 +37,9 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 	var startDate: Date
 	var endDate: Date
 	var isAllDay: Bool
+	var location: String?
+	var notes: String?
+	var isRecurring: Bool
 
 	init(
 		id: String,
@@ -45,7 +51,10 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		title: String,
 		startDate: Date,
 		endDate: Date,
-		isAllDay: Bool
+		isAllDay: Bool,
+		location: String? = nil,
+		notes: String? = nil,
+		isRecurring: Bool = false
 	) {
 		self.id = id
 		self.localIdentifier = localIdentifier
@@ -57,6 +66,9 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		self.startDate = startDate
 		self.endDate = endDate
 		self.isAllDay = isAllDay
+		self.location = location
+		self.notes = notes
+		self.isRecurring = isRecurring
 	}
 
 	init(from decoder: Decoder) throws {
@@ -71,10 +83,31 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		startDate = try container.decode(Date.self, forKey: .startDate)
 		endDate = try container.decode(Date.self, forKey: .endDate)
 		isAllDay = try container.decode(Bool.self, forKey: .isAllDay)
+		location = try container.decodeIfPresent(String.self, forKey: .location)
+		notes = try container.decodeIfPresent(String.self, forKey: .notes)
+		isRecurring = try container.decodeIfPresent(Bool.self, forKey: .isRecurring) ?? false
 	}
 }
 
 struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
+	private enum CodingKeys: String, CodingKey {
+		case id
+		case createdAt
+		case duration
+		case transcript
+		case summary
+		case headline
+		case observations
+		case audioFilename
+		case location
+		case calendarEvent
+		case summaryModel
+		case transcriptModel
+		case reminders
+		case reminderFeedback
+		case reminderModel
+	}
+
 	let id: UUID
 	var createdAt: Date
 	var duration: TimeInterval
@@ -87,6 +120,9 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var calendarEvent: JournalCalendarEvent?
 	var summaryModel: String?
 	var transcriptModel: String?
+	var reminders: [EventReminderRule]
+	var reminderFeedback: [ReminderFeedback]
+	var reminderModel: String?
 
 	init(
 		id: UUID = UUID(),
@@ -100,7 +136,10 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		location: JournalLocation? = nil,
 		calendarEvent: JournalCalendarEvent? = nil,
 		summaryModel: String? = nil,
-		transcriptModel: String? = nil
+		transcriptModel: String? = nil,
+		reminders: [EventReminderRule] = [],
+		reminderFeedback: [ReminderFeedback] = [],
+		reminderModel: String? = nil
 	) {
 		self.id = id
 		self.createdAt = createdAt
@@ -114,6 +153,28 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.calendarEvent = calendarEvent
 		self.summaryModel = summaryModel
 		self.transcriptModel = transcriptModel
+		self.reminders = reminders
+		self.reminderFeedback = reminderFeedback
+		self.reminderModel = reminderModel
+	}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		id = try container.decode(UUID.self, forKey: .id)
+		createdAt = try container.decode(Date.self, forKey: .createdAt)
+		duration = try container.decode(TimeInterval.self, forKey: .duration)
+		transcript = try container.decode(String.self, forKey: .transcript)
+		summary = try container.decodeIfPresent(String.self, forKey: .summary)
+		headline = try container.decode(String.self, forKey: .headline)
+		observations = try container.decodeIfPresent([String].self, forKey: .observations) ?? []
+		audioFilename = try container.decodeIfPresent(String.self, forKey: .audioFilename)
+		location = try container.decodeIfPresent(JournalLocation.self, forKey: .location)
+		calendarEvent = try container.decodeIfPresent(JournalCalendarEvent.self, forKey: .calendarEvent)
+		summaryModel = try container.decodeIfPresent(String.self, forKey: .summaryModel)
+		transcriptModel = try container.decodeIfPresent(String.self, forKey: .transcriptModel)
+		reminders = try container.decodeIfPresent([EventReminderRule].self, forKey: .reminders) ?? []
+		reminderFeedback = try container.decodeIfPresent([ReminderFeedback].self, forKey: .reminderFeedback) ?? []
+		reminderModel = try container.decodeIfPresent(String.self, forKey: .reminderModel)
 	}
 }
 
@@ -168,31 +229,105 @@ extension JournalEntry {
 			components.minute = minute
 			return components.date!
 		}
+		let morningRun = JournalCalendarEvent(
+			id: "demo-morning-run",
+			externalIdentifier: "demo-morning-run-series",
+			calendarIdentifier: "demo-personal",
+			calendarTitle: "Personal",
+			title: "Morning run",
+			startDate: date(2026, 7, 12, 8, 0),
+			endDate: date(2026, 7, 12, 9, 0),
+			isAllDay: false,
+			location: "Lakefront Trail",
+			isRecurring: true
+		)
+		let nextMorningRun = JournalCalendarEvent(
+			id: "demo-morning-run-next",
+			externalIdentifier: "demo-morning-run-series",
+			calendarIdentifier: "demo-personal",
+			calendarTitle: "Personal",
+			title: "Morning run",
+			startDate: date(2026, 7, 26, 8, 0),
+			endDate: date(2026, 7, 26, 9, 0),
+			isAllDay: false,
+			location: "Lakefront Trail",
+			isRecurring: true
+		)
+		let eveningRun = JournalCalendarEvent(
+			id: "demo-evening-run",
+			calendarIdentifier: "demo-personal",
+			calendarTitle: "Personal",
+			title: "Evening run",
+			startDate: date(2026, 7, 25, 18, 30),
+			endDate: date(2026, 7, 25, 19, 30),
+			isAllDay: false,
+			location: "Lakefront Trail"
+		)
+		let runSeries = EventSeriesReference(event: morningRun)
 
 		return [
 			JournalEntry(
 				createdAt: date(2026, 7, 12, 8, 47),
 				duration: 94,
-				transcript: "The morning run felt good. I keep wondering if coming back to it means I am finally feeling like myself again.",
-				summary: "A good morning run felt like evidence that a familiar part of you may be returning.",
-				headline: "You’re letting one good run stand in for feeling like yourself again.",
+				transcript: "The morning run felt good, but I faded early. Next time I should bring electrolytes. I should also ask Maya which dentist she recommended. For morning group runs this month I want to wear the red shorts so they are easy to spot.",
+				summary: "The run felt encouraging, with a few concrete preparations you want to carry into the next one.",
+				headline: "The run felt good enough to plan for the next one.",
 				observations: [
-					"The morning run felt good, and you gave it more meaning than the run itself.",
-					"You sounded relieved to recognize a familiar part of yourself again.",
-					"One good morning became evidence that something larger may be shifting."
+					"You felt the run fade earlier than you wanted.",
+					"You connected hydration with being better prepared next time.",
+					"You left yourself two specific things to remember."
 				],
 				location: JournalLocation(latitude: 41.8781, longitude: -87.6298, city: "Chicago"),
-				calendarEvent: JournalCalendarEvent(
-					id: "demo-morning-run",
-					calendarIdentifier: "demo-personal",
-					calendarTitle: "Personal",
-					title: "Morning run",
-					startDate: date(2026, 7, 12, 8, 0),
-					endDate: date(2026, 7, 12, 9, 0),
-					isAllDay: false
-				),
+				calendarEvent: morningRun,
 				summaryModel: "SystemLanguageModel.default",
-				transcriptModel: "Apple Speech · en-US"
+				transcriptModel: "Apple Speech · en-US",
+				reminders: [
+					EventReminderRule(
+						text: "Bring electrolytes",
+						motivation: "You faded early during the last run.",
+						evidence: "Next time I should bring electrolytes.",
+						selector: .series(runSeries),
+						occurrencePolicy: .everyMatch,
+						createdAt: date(2026, 7, 12, 8, 47),
+						modelName: "SystemLanguageModel.default · guided"
+					),
+					EventReminderRule(
+						text: "Ask Maya which dentist she recommended",
+						motivation: "You wanted to follow up with Maya at the next run.",
+						evidence: "I should also ask Maya which dentist she recommended.",
+						selector: .series(runSeries),
+						occurrencePolicy: .nextMatch,
+						createdAt: date(2026, 7, 12, 8, 47),
+						modelName: "SystemLanguageModel.default · guided"
+					),
+					EventReminderRule(
+						text: "Wear the red shorts",
+						motivation: "You want them to be easy to spot at morning group runs.",
+						evidence: "For morning group runs this month I want to wear the red shorts.",
+						selector: .fuzzy(FuzzyEventSelector(
+							semanticDescription: "group run",
+							timeBucket: .morning,
+							locationDescription: nil,
+							examples: [
+								ReminderMatchExample(
+									event: nextMorningRun,
+									matches: true,
+									reason: "A morning group run."
+								),
+								ReminderMatchExample(
+									event: eveningRun,
+									matches: false,
+									reason: "The event is in the evening."
+								)
+							]
+						)),
+						occurrencePolicy: .everyMatch,
+						createdAt: date(2026, 7, 12, 8, 47),
+						expiresAt: date(2026, 8, 12, 8, 47),
+						modelName: "SystemLanguageModel.default · guided"
+					)
+				],
+				reminderModel: "SystemLanguageModel.default · guided"
 			),
 			JournalEntry(
 				createdAt: date(2026, 7, 12, 7, 21),

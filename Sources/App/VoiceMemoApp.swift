@@ -9,6 +9,9 @@ struct VoiceMemoApp: App {
 			RootView(store: store)
 				.preferredColorScheme(.dark)
 				.tint(AppStyle.accent)
+				.task {
+					await ReminderBenchmark.runFromLaunchArguments()
+				}
 		}
 	}
 }

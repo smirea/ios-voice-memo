@@ -8,7 +8,7 @@
 - Never places content in decorative background boxes; uses spacing and typography for hierarchy.
 - Stores notes and recordings locally for offline access and includes them in device backups.
 - Mirrors each completed recording to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files.
-- Stores the note's transcript, summary, title, generated observations, location, attached event, and model details in its matching iCloud Drive JSON file.
+- Stores the note's transcript, summary, title, generated observations, location, attached event, event reminders, correction transcripts, and model details in its matching iCloud Drive JSON file.
 - Backfills existing recordings to iCloud Drive and replaces temporary `Unknown` city filenames after a city resolves.
 - Treats local app data as the source of truth; edits made directly to iCloud Drive exports are not imported.
 - Deleting notes also removes their local audio and matching iCloud Drive exports.
@@ -17,6 +17,7 @@
 - Transcribes recordings on-device, shows partial results live, and records the transcription model.
 - Generates note titles and weekly reviews on-device with guided output, ignoring filler and transcription artifacts, with a fallback when the system model is unavailable.
 - Generates a short on-device summary for recordings longer than 20 seconds.
+- Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md).
 - Captures the recording location when permitted and asks system location services for the city name.
 - Refreshes the included calendars' events silently when the app opens or returns to the foreground after Calendar sync is enabled.
 - Reads calendar data without creating, changing, or deleting events.
@@ -70,6 +71,9 @@
 - Provides play/pause, waveform progress, and remaining-time controls for the recording.
 - Stops playback when leaving the note.
 - Shows a short generated summary above the transcript for recordings longer than 20 seconds.
+- Shows generated event reminders directly below the summary, including their target and duration.
+- Allows each generated reminder to be removed.
+- Add Feedback temporarily records a short correction, transcribes it on-device, deletes the audio, and reprocesses the note's reminders without changing the note itself.
 - Shows the analysis model below the summary, or below the title when no summary is generated, aligned right.
 - Shows the transcript when enabled in Settings as a plain preview truncated after four lines.
 - Tapping the transcript preview pushes a full-screen reader that can be closed or swiped back.
@@ -96,6 +100,8 @@
 - Calendar sync requests iOS Full Access so it can read events, while the app itself remains read-only.
 - Calendar settings allow each available calendar to be included or excluded.
 - Calendar settings prefer direct Google Calendar event links when available, with an exact native event view as the fallback.
+- Event reminder settings can disable delivery, disable Live Activities, or change how long before an event reminders appear.
+- Reminder Benchmark runs the production parser against grouped on-device accuracy, grounding, feedback, and fuzzy-matching cases.
 - Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export.
 
 # Lock Screen and Dynamic Island
@@ -105,3 +111,4 @@
 - The Dynamic Island shows the app icon, recording or paused state, location, and elapsed time.
 - Pausing freezes the displayed elapsed time and resuming restarts it.
 - Finishing or discarding a recording immediately clears the Live Activity.
+- Enabled event reminders schedule a Live Activity before matching events and mark it stale when the event ends.

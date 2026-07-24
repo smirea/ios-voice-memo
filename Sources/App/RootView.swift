@@ -2,6 +2,7 @@ import SwiftUI
 
 private enum AppRoute: Hashable {
 	case entry(UUID)
+	case reminderBenchmark
 	case review
 }
 
@@ -23,11 +24,20 @@ struct RootView: View {
 		if arguments.contains("-demo-entry"), let entry = store.entries.first(where: { Calendar.current.component(.day, from: $0.createdAt) == 11 }) {
 			_path = State(initialValue: [.entry(entry.id)])
 		}
+		if arguments.contains("-demo-reminders"), let entry = store.entries.first(where: { !$0.reminders.isEmpty }) {
+			_path = State(initialValue: [.entry(entry.id)])
+		}
 		if arguments.contains("-demo-recording") {
 			_recordingContext = State(initialValue: RecordingContext(startsImmediately: true))
 		}
 		if arguments.contains("-demo-review") {
 			_path = State(initialValue: [.review])
+		}
+		if arguments.contains("-demo-reminder-benchmark") {
+			_path = State(initialValue: [.reminderBenchmark])
+		}
+		if arguments.contains("-demo-settings") {
+			_showsSettings = State(initialValue: true)
 		}
 	}
 
@@ -51,6 +61,8 @@ struct RootView: View {
 							onBack: { path.removeAll() }
 						)
 					}
+				case .reminderBenchmark:
+					ReminderBenchmarkView()
 				case .review:
 					ReviewView(store: store, date: .now)
 				}
@@ -72,10 +84,25 @@ struct RootView: View {
 			SettingsView(store: store)
 		}
 		.onOpenURL { url in
-			guard url.scheme == "myvoicememo", url.host == "record" else { return }
-			guard recordingContext == nil else { return }
-			path.removeAll()
-			recordingContext = RecordingContext(startsImmediately: true)
+			guard url.scheme == "myvoicememo" else { return }
+			switch url.host {
+			case "record":
+				guard recordingContext == nil else { return }
+				path.removeAll()
+				recordingContext = RecordingContext(startsImmediately: true)
+			case "entry":
+				guard let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+					.queryItems?
+					.first(where: { $0.name == "id" })?
+					.value,
+					let id = UUID(uuidString: value),
+					store.entry(id: id) != nil
+				else { return }
+				recordingContext = nil
+				path = [.entry(id)]
+			default:
+				return
+			}
 		}
 		.task {
 			await store.refreshCalendar()

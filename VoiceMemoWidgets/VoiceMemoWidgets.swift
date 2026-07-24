@@ -7,6 +7,7 @@ struct VoiceMemoWidgets: WidgetBundle {
 	var body: some Widget {
 		StartRecordingWidget()
 		RecordingLiveActivity()
+		ReminderLiveActivity()
 	}
 }
 
@@ -99,6 +100,78 @@ struct RecordingLiveActivity: Widget {
 			}
 			.widgetURL(URL(string: "myvoicememo://record"))
 		}
+	}
+}
+
+struct ReminderLiveActivity: Widget {
+	var body: some WidgetConfiguration {
+		ActivityConfiguration(for: ReminderActivityAttributes.self) { context in
+			Link(destination: entryURL(context.attributes.sourceEntryID)) {
+				HStack(alignment: .top, spacing: 13) {
+					VoiceMemoAppIcon(size: 38)
+
+					VStack(alignment: .leading, spacing: 5) {
+						Text(context.attributes.eventTitle)
+							.font(.headline)
+							.lineLimit(1)
+						ForEach(context.state.reminderTexts.prefix(2), id: \.self) { reminder in
+							Label(reminder, systemImage: "circle")
+								.font(.subheadline)
+								.lineLimit(1)
+						}
+						if context.state.additionalReminderCount > 0 {
+							Text("+\(context.state.additionalReminderCount) more")
+								.font(.caption)
+								.foregroundStyle(.secondary)
+						}
+					}
+
+					Spacer(minLength: 0)
+
+					Text(context.attributes.startDate, style: .time)
+						.font(.subheadline.weight(.semibold))
+						.foregroundStyle(.secondary)
+				}
+				.padding(.horizontal, 5)
+			}
+			.activityBackgroundTint(.black)
+			.activitySystemActionForegroundColor(.white)
+		} dynamicIsland: { context in
+			DynamicIsland {
+				DynamicIslandExpandedRegion(.leading) {
+					VoiceMemoAppIcon(size: 32)
+				}
+				DynamicIslandExpandedRegion(.center) {
+					VStack(alignment: .leading, spacing: 2) {
+						Text(context.attributes.eventTitle)
+							.font(.headline)
+							.lineLimit(1)
+						Text(context.state.reminderTexts.first ?? "Reminders ready")
+							.font(.caption)
+							.foregroundStyle(.secondary)
+							.lineLimit(2)
+					}
+				}
+				DynamicIslandExpandedRegion(.trailing) {
+					Text(context.attributes.startDate, style: .time)
+						.font(.caption.weight(.semibold))
+				}
+			} compactLeading: {
+				Image(systemName: "checklist")
+					.foregroundStyle(.orange)
+			} compactTrailing: {
+				Text(context.attributes.startDate, style: .time)
+					.font(.caption2)
+			} minimal: {
+				Image(systemName: "checklist")
+					.foregroundStyle(.orange)
+			}
+			.widgetURL(entryURL(context.attributes.sourceEntryID))
+		}
+	}
+
+	private func entryURL(_ id: UUID) -> URL {
+		URL(string: "myvoicememo://entry?id=\(id.uuidString)")!
 	}
 }
 

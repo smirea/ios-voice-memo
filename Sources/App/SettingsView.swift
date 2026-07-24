@@ -31,6 +31,18 @@ struct SettingsView: View {
 
 				calendarSection
 
+				if draft.calendarSyncEnabled {
+					reminderSection
+				}
+
+				Section("Model") {
+					NavigationLink {
+						ReminderBenchmarkView()
+					} label: {
+						Label("Reminder benchmark", systemImage: "gauge.with.dots.needle.67percent")
+					}
+				}
+
 				Section("Data") {
 					Button("Delete all entries", role: .destructive) {
 						showsClearConfirmation = true
@@ -91,6 +103,27 @@ struct SettingsView: View {
 			Text("Calendar")
 		} footer: {
 			Text("MyVoiceMemo only reads events. iOS requires full Calendar access to make events available.")
+		}
+	}
+
+	private var reminderSection: some View {
+		Section {
+			Toggle("Event reminders", isOn: $draft.eventRemindersEnabled)
+
+			if draft.eventRemindersEnabled {
+				Toggle("Live Activities", isOn: $draft.eventReminderLiveActivitiesEnabled)
+				Picker("Start before event", selection: $draft.eventReminderLeadMinutes) {
+					Text("15 minutes").tag(15)
+					Text("30 minutes").tag(30)
+					Text("1 hour").tag(60)
+					Text("90 minutes").tag(90)
+					Text("2 hours").tag(120)
+				}
+			}
+		} header: {
+			Text("Event reminders")
+		} footer: {
+			Text("Useful cues from an event memo can return before matching calendar events. Live Activities end when the event ends.")
 		}
 	}
 

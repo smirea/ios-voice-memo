@@ -7,6 +7,7 @@ import Observation
 final class JournalStore {
 	private(set) var entries: [JournalEntry]
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
+	private(set) var reminderOccurrences: [EventReminderOccurrence] = []
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
 
@@ -17,6 +18,7 @@ final class JournalStore {
 	private let entriesURL: URL
 	private let pendingRecordingURL: URL
 	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
+	@ObservationIgnored private let reminderActivityManager = ReminderActivityManager()
 	@ObservationIgnored private var iCloudRevision = 0
 	@ObservationIgnored private var pendingICloudDeletionReferences = Set<String>()
 	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
@@ -201,7 +203,24 @@ final class JournalStore {
 		entries[index].summary = reflection.summary
 		entries[index].observations = reflection.observations
 		entries[index].summaryModel = reflection.modelName
+		if settings.eventRemindersEnabled {
+			let reminderResult = await ReminderEngine.parse(
+				transcript: transcript,
+				sourceEvent: entries[index].calendarEvent,
+				createdAt: entries[index].createdAt
+			)
+			guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
+			guard let reminderIndex = entries.firstIndex(where: { $0.id == entryID }) else {
+				finishProcessing(entryID, token: token)
+				return
+			}
+			entries[reminderIndex].reminders = reminderResult.reminders
+			entries[reminderIndex].reminderModel = reminderResult.modelName
+		}
 		persist()
+		Task { @MainActor [weak self] in
+			await self?.refreshReminderSchedule()
+		}
 		entryProcessingPhases[entryID] = .complete
 		try? await Task.sleep(for: .seconds(1.4))
 		guard !Task.isCancelled else { return }
@@ -235,6 +254,9 @@ final class JournalStore {
 		}
 		entries.removeAll { $0.id == entryID }
 		persist(deleting: [entry])
+		Task { @MainActor [weak self] in
+			await self?.refreshReminderSchedule()
+		}
 	}
 
 	func clearJournal() {
@@ -254,6 +276,60 @@ final class JournalStore {
 		}
 		entries.removeAll()
 		persist(deleting: deletedEntries)
+		Task { await reminderActivityManager.endAll() }
+	}
+
+	func temporaryReminderFeedbackURL() -> URL {
+		fileManager.temporaryDirectory
+			.appendingPathComponent("reminder-feedback-\(UUID().uuidString)")
+			.appendingPathExtension("m4a")
+	}
+
+	func applyReminderFeedback(entryID: UUID, audioURL: URL) async throws {
+		defer { try? fileManager.removeItem(at: audioURL) }
+		guard entries.contains(where: { $0.id == entryID }) else {
+			throw ReminderFeedbackError.entryUnavailable
+		}
+		let transcription = try await LocalTranscriber.transcribe(url: audioURL)
+		let feedbackText = transcription.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !feedbackText.isEmpty else { throw ReminderFeedbackError.emptyTranscript }
+
+		guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
+			throw ReminderFeedbackError.entryUnavailable
+		}
+		let feedback = ReminderFeedback(kind: .voice, text: feedbackText)
+		entries[index].reminderFeedback.append(feedback)
+		let source = entries[index]
+		let result = await ReminderEngine.parse(
+			transcript: source.transcript,
+			sourceEvent: source.calendarEvent,
+			createdAt: source.createdAt,
+			currentReminders: source.reminders,
+			feedback: source.reminderFeedback
+		)
+		guard let updatedIndex = entries.firstIndex(where: { $0.id == entryID }) else {
+			throw ReminderFeedbackError.entryUnavailable
+		}
+		entries[updatedIndex].reminders = result.reminders
+		entries[updatedIndex].reminderModel = result.modelName
+		persist()
+		await refreshReminderSchedule()
+	}
+
+	func removeReminder(entryID: UUID, reminderID: UUID) {
+		guard let entryIndex = entries.firstIndex(where: { $0.id == entryID }),
+			let reminder = entries[entryIndex].reminders.first(where: { $0.id == reminderID })
+		else { return }
+		entries[entryIndex].reminders.removeAll { $0.id == reminderID }
+		entries[entryIndex].reminderFeedback.append(ReminderFeedback(
+			kind: .manualRemoval,
+			text: "Keep removed: \(reminder.text)",
+			focusedReminderID: reminderID
+		))
+		persist()
+		Task { @MainActor [weak self] in
+			await self?.refreshReminderSchedule()
+		}
 	}
 
 	func weeklyReview(for date: Date) async -> WeeklyReview {
@@ -280,11 +356,56 @@ final class JournalStore {
 	func refreshCalendar(on date: Date = .now) async {
 		guard settings.calendarSyncEnabled else {
 			calendarSync.clear()
+			reminderOccurrences = []
+			await reminderActivityManager.endAll()
 			return
 		}
 		await calendarSync.refresh(
 			includedCalendarIdentifiers: settings.includedCalendarIdentifiers,
 			on: date
+		)
+		await refreshReminderSchedule(now: date)
+	}
+
+	func refreshReminderSchedule(now: Date = .now) async {
+		guard settings.calendarSyncEnabled, settings.eventRemindersEnabled else {
+			reminderOccurrences = []
+			await reminderActivityManager.endAll()
+			return
+		}
+		let start = Calendar.current.date(byAdding: .day, value: -30, to: now) ?? now
+		let end = Calendar.current.date(byAdding: .day, value: 45, to: now) ?? now
+		let events = await calendarSync.loadEvents(
+			from: start,
+			to: end,
+			includedCalendarIdentifiers: settings.includedCalendarIdentifiers
+		)
+		let result = await ReminderEngine.resolve(entries: entries, events: events, now: now)
+		reminderOccurrences = result.occurrences
+
+		var rulesChanged = false
+		for entryIndex in entries.indices {
+			for reminderIndex in entries[entryIndex].reminders.indices {
+				let reminderID = entries[entryIndex].reminders[reminderIndex].id
+				if let resolved = result.resolvedOccurrencesByReminderID[reminderID],
+					entries[entryIndex].reminders[reminderIndex].resolvedOccurrence != resolved {
+					entries[entryIndex].reminders[reminderIndex].resolvedOccurrence = resolved
+					rulesChanged = true
+				}
+				if let examples = result.examplesByReminderID[reminderID],
+					case var .fuzzy(selector) = entries[entryIndex].reminders[reminderIndex].selector,
+					selector.examples != examples {
+					selector.examples = examples
+					entries[entryIndex].reminders[reminderIndex].selector = .fuzzy(selector)
+					rulesChanged = true
+				}
+			}
+		}
+		if rulesChanged { persist() }
+		await reminderActivityManager.synchronize(
+			occurrences: reminderOccurrences,
+			settings: settings,
+			now: now
 		)
 	}
 
@@ -436,6 +557,20 @@ final class JournalStore {
 	private static let iCloudDeletionKey = "pending-icloud-drive-deletions"
 }
 
+enum ReminderFeedbackError: LocalizedError {
+	case entryUnavailable
+	case emptyTranscript
+
+	var errorDescription: String? {
+		switch self {
+		case .entryUnavailable:
+			"This note is no longer available."
+		case .emptyTranscript:
+			"No feedback could be heard. Try recording it again."
+		}
+	}
+}
+
 private struct PendingRecording: Codable {
 	var filename: String
 	var startedAt: Date
@@ -450,6 +585,9 @@ struct JournalSettings: Codable, Equatable {
 	var calendarSyncEnabled = false
 	var includedCalendarIdentifiers: Set<String>?
 	var preferredCalendarApp = PreferredCalendarApp.google
+	var eventRemindersEnabled = true
+	var eventReminderLiveActivitiesEnabled = true
+	var eventReminderLeadMinutes = 60
 
 	private static let key = "journal-settings"
 
@@ -472,6 +610,18 @@ struct JournalSettings: Codable, Equatable {
 			PreferredCalendarApp.self,
 			forKey: .preferredCalendarApp
 		) ?? .google
+		eventRemindersEnabled = try container.decodeIfPresent(
+			Bool.self,
+			forKey: .eventRemindersEnabled
+		) ?? true
+		eventReminderLiveActivitiesEnabled = try container.decodeIfPresent(
+			Bool.self,
+			forKey: .eventReminderLiveActivitiesEnabled
+		) ?? true
+		eventReminderLeadMinutes = try container.decodeIfPresent(
+			Int.self,
+			forKey: .eventReminderLeadMinutes
+		) ?? 60
 	}
 
 	static func load() -> JournalSettings {

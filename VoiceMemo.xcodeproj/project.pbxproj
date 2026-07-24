@@ -30,6 +30,15 @@
 		A10000000000000000000015 /* ICloudDriveMirror.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* ICloudDriveMirror.swift */; };
 		A10000000000000000000016 /* AudioPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* AudioPlayback.swift */; };
 		A10000000000000000000017 /* CalendarSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* CalendarSync.swift */; };
+		A10000000000000000000018 /* ReminderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* ReminderModels.swift */; };
+		A10000000000000000000019 /* ReminderEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* ReminderEngine.swift */; };
+		A1000000000000000000001A /* ReminderFeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001B /* ReminderFeedbackView.swift */; };
+		A1000000000000000000001B /* ReminderActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001C /* ReminderActivityManager.swift */; };
+		A1000000000000000000001C /* ReminderActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001D /* ReminderActivityAttributes.swift */; };
+		A1000000000000000000001D /* ReminderActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001D /* ReminderActivityAttributes.swift */; };
+		A1000000000000000000001E /* ReminderBenchmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001E /* ReminderBenchmark.swift */; };
+		A1000000000000000000001F /* ReminderBenchmarkCases.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001F /* ReminderBenchmarkCases.swift */; };
+		A10000000000000000000020 /* ReminderBenchmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* ReminderBenchmarkView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +90,14 @@
 		B10000000000000000000016 /* MyVoiceMemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MyVoiceMemo.entitlements; sourceTree = "<group>"; };
 		B10000000000000000000017 /* AudioPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayback.swift; sourceTree = "<group>"; };
 		B10000000000000000000018 /* CalendarSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSync.swift; sourceTree = "<group>"; };
+		B10000000000000000000019 /* ReminderModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderModels.swift; sourceTree = "<group>"; };
+		B1000000000000000000001A /* ReminderEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderEngine.swift; sourceTree = "<group>"; };
+		B1000000000000000000001B /* ReminderFeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderFeedbackView.swift; sourceTree = "<group>"; };
+		B1000000000000000000001C /* ReminderActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderActivityManager.swift; sourceTree = "<group>"; };
+		B1000000000000000000001D /* ReminderActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderActivityAttributes.swift; sourceTree = "<group>"; };
+		B1000000000000000000001E /* ReminderBenchmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBenchmark.swift; sourceTree = "<group>"; };
+		B1000000000000000000001F /* ReminderBenchmarkCases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBenchmarkCases.swift; sourceTree = "<group>"; };
+		B10000000000000000000020 /* ReminderBenchmarkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBenchmarkView.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* MyVoiceMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyVoiceMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C10000000000000000000002 /* VoiceMemoWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VoiceMemoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -121,6 +138,11 @@
 				B10000000000000000000002 /* JournalModels.swift */,
 				B10000000000000000000003 /* JournalStore.swift */,
 				B10000000000000000000018 /* CalendarSync.swift */,
+				B10000000000000000000019 /* ReminderModels.swift */,
+				B1000000000000000000001A /* ReminderEngine.swift */,
+				B1000000000000000000001E /* ReminderBenchmark.swift */,
+				B1000000000000000000001F /* ReminderBenchmarkCases.swift */,
+				B10000000000000000000020 /* ReminderBenchmarkView.swift */,
 				B10000000000000000000015 /* ICloudDriveMirror.swift */,
 				B10000000000000000000004 /* ReflectionEngine.swift */,
 				B10000000000000000000005 /* AudioRecorder.swift */,
@@ -130,9 +152,11 @@
 				B10000000000000000000008 /* JournalView.swift */,
 				B10000000000000000000009 /* RecordView.swift */,
 				B1000000000000000000000A /* EntryView.swift */,
+				B1000000000000000000001B /* ReminderFeedbackView.swift */,
 				B1000000000000000000000B /* ReviewView.swift */,
 				B1000000000000000000000C /* SettingsView.swift */,
 				B1000000000000000000000F /* RecordingActivityManager.swift */,
+				B1000000000000000000001C /* ReminderActivityManager.swift */,
 				B10000000000000000000014 /* EntryLocationCapture.swift */,
 			);
 			name = Sources;
@@ -163,6 +187,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000010 /* RecordingActivityAttributes.swift */,
+				B1000000000000000000001D /* ReminderActivityAttributes.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -277,6 +302,11 @@
 				A10000000000000000000002 /* JournalModels.swift in Sources */,
 				A10000000000000000000003 /* JournalStore.swift in Sources */,
 				A10000000000000000000017 /* CalendarSync.swift in Sources */,
+				A10000000000000000000018 /* ReminderModels.swift in Sources */,
+				A10000000000000000000019 /* ReminderEngine.swift in Sources */,
+				A1000000000000000000001E /* ReminderBenchmark.swift in Sources */,
+				A1000000000000000000001F /* ReminderBenchmarkCases.swift in Sources */,
+				A10000000000000000000020 /* ReminderBenchmarkView.swift in Sources */,
 				A10000000000000000000015 /* ICloudDriveMirror.swift in Sources */,
 				A10000000000000000000016 /* AudioPlayback.swift in Sources */,
 				A10000000000000000000004 /* ReflectionEngine.swift in Sources */,
@@ -286,11 +316,14 @@
 				A10000000000000000000008 /* JournalView.swift in Sources */,
 				A10000000000000000000009 /* RecordView.swift in Sources */,
 				A1000000000000000000000A /* EntryView.swift in Sources */,
+				A1000000000000000000001A /* ReminderFeedbackView.swift in Sources */,
 				A1000000000000000000000B /* ReviewView.swift in Sources */,
 				A1000000000000000000000C /* SettingsView.swift in Sources */,
 				A1000000000000000000000E /* RecordingActivityManager.swift in Sources */,
+				A1000000000000000000001B /* ReminderActivityManager.swift in Sources */,
 				A10000000000000000000014 /* EntryLocationCapture.swift in Sources */,
 				A1000000000000000000000F /* RecordingActivityAttributes.swift in Sources */,
+				A1000000000000000000001C /* ReminderActivityAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -300,6 +333,7 @@
 			files = (
 				A10000000000000000000010 /* VoiceMemoWidgets.swift in Sources */,
 				A10000000000000000000011 /* RecordingActivityAttributes.swift in Sources */,
+				A1000000000000000000001D /* ReminderActivityAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

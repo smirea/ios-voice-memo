@@ -23,7 +23,8 @@ final class RecordingActivityManager {
 		let attributes = RecordingActivityAttributes(startedAt: startedAt)
 		let content = ActivityContent(
 			state: state,
-			staleDate: nil
+			staleDate: nil,
+			relevanceScore: 100
 		)
 		activity = try? Activity.request(attributes: attributes, content: content)
 	}
@@ -46,7 +47,8 @@ final class RecordingActivityManager {
 		Task {
 			await activity.update(ActivityContent(
 				state: state,
-				staleDate: nil
+				staleDate: nil,
+				relevanceScore: 100
 			))
 		}
 	}

@@ -11,6 +11,7 @@ struct EntryView: View {
 	@State private var playback = AudioPlayback()
 	@State private var presentedCalendarEvent: PresentedCalendarEvent?
 	@State private var isMissingCalendarEventAlertPresented = false
+	@State private var showsReminderFeedback = false
 
 	private var currentEntry: JournalEntry {
 		store.entry(id: entry.id) ?? entry
@@ -109,6 +110,20 @@ struct EntryView: View {
 						}
 					}
 
+					if currentEntry.calendarEvent != nil {
+						EntryReminderSection(
+							entry: currentEntry,
+							isProcessing: store.processingPhase(for: entry.id) != nil,
+							isEnabled: store.settings.eventRemindersEnabled,
+							onRemove: { reminderID in
+								withAnimation(.easeOut(duration: 0.2)) {
+									store.removeReminder(entryID: entry.id, reminderID: reminderID)
+								}
+							},
+							onAddFeedback: { showsReminderFeedback = true }
+						)
+					}
+
 					if store.settings.showTranscripts, !currentEntry.transcript.isEmpty {
 						VStack(alignment: .leading, spacing: 12) {
 							SummaryToPopup(
@@ -147,9 +162,17 @@ struct EntryView: View {
 		)
 		.animation(.easeOut(duration: 0.22), value: store.processingPhase(for: entry.id))
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
+		.task {
+			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-feedback") {
+				showsReminderFeedback = true
+			}
+		}
 		.onDisappear { playback.stop() }
 		.sheet(item: $presentedCalendarEvent) { presentedEvent in
 			CalendarEventDetail(event: presentedEvent.event)
+		}
+		.sheet(isPresented: $showsReminderFeedback) {
+			ReminderFeedbackView(store: store, entryID: entry.id)
 		}
 		.alert("Event unavailable", isPresented: $isMissingCalendarEventAlertPresented) {
 			Button("OK", role: .cancel) {}
@@ -171,6 +194,176 @@ struct EntryView: View {
 			presentedCalendarEvent = PresentedCalendarEvent(event: resolvedEvent)
 		} else {
 			isMissingCalendarEventAlertPresented = true
+		}
+	}
+}
+
+private struct EntryReminderSection: View {
+	let entry: JournalEntry
+	let isProcessing: Bool
+	let isEnabled: Bool
+	let onRemove: (UUID) -> Void
+	let onAddFeedback: () -> Void
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 14) {
+			HStack {
+				Label("Event reminders", systemImage: "checklist")
+					.font(.system(size: 18, weight: .semibold))
+					.foregroundStyle(.white)
+				Spacer()
+				if !entry.reminders.isEmpty {
+					Text(entry.reminders.count, format: .number)
+						.font(.caption.weight(.semibold))
+						.foregroundStyle(AppStyle.secondary)
+				}
+			}
+
+			if isProcessing && entry.reminders.isEmpty {
+				HStack(spacing: 9) {
+					ProgressView()
+						.controlSize(.small)
+						.tint(AppStyle.accent)
+					Text("Finding useful event cues")
+						.foregroundStyle(AppStyle.secondary)
+				}
+			} else if entry.reminders.isEmpty {
+				Text(isEnabled
+					? "No event-specific reminders found."
+					: "Event reminders are off in Settings.")
+					.font(.system(size: 15, weight: .medium))
+					.foregroundStyle(AppStyle.secondary)
+			} else {
+				VStack(spacing: 10) {
+					ForEach(entry.reminders) { reminder in
+						ReminderRuleRow(reminder: reminder) {
+							onRemove(reminder.id)
+						}
+					}
+				}
+			}
+
+			Button(action: onAddFeedback) {
+				Label("Add feedback", systemImage: "waveform")
+					.font(.system(size: 15, weight: .semibold))
+					.foregroundStyle(AppStyle.accent)
+			}
+			.buttonStyle(.plain)
+			.disabled(!isEnabled || isProcessing)
+			.accessibilityHint("Records a temporary correction and reprocesses these reminders")
+
+			if let model = entry.reminderModel, !entry.reminders.isEmpty {
+				ModelAttribution(model: model)
+			}
+		}
+		.padding(16)
+		.background(AppStyle.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+		.overlay {
+			RoundedRectangle(cornerRadius: 18, style: .continuous)
+				.stroke(AppStyle.cardBorder, lineWidth: 0.8)
+		}
+	}
+}
+
+private struct ReminderRuleRow: View {
+	let reminder: EventReminderRule
+	let onRemove: () -> Void
+	@State private var isExpanded = false
+
+	private var scheduleText: String {
+		var parts = [reminder.occurrencePolicy.title, reminder.selector.title]
+		if let expiresAt = reminder.expiresAt {
+			parts.append("until \(expiresAt.formatted(date: .abbreviated, time: .omitted))")
+		}
+		return parts.joined(separator: " · ")
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			HStack(alignment: .top, spacing: 11) {
+				Image(systemName: "circle")
+					.font(.system(size: 17, weight: .medium))
+					.foregroundStyle(AppStyle.accent)
+					.padding(.top, 2)
+
+				VStack(alignment: .leading, spacing: 4) {
+					Text(reminder.text)
+						.font(.system(size: 16, weight: .semibold))
+						.foregroundStyle(.white)
+						.fixedSize(horizontal: false, vertical: true)
+					Text(scheduleText)
+						.font(.system(size: 12, weight: .medium))
+						.foregroundStyle(AppStyle.secondary)
+						.fixedSize(horizontal: false, vertical: true)
+				}
+
+				Spacer(minLength: 4)
+
+				Button(role: .destructive, action: onRemove) {
+					Image(systemName: "xmark")
+						.font(.system(size: 11, weight: .bold))
+						.foregroundStyle(AppStyle.secondary)
+						.frame(width: 28, height: 28)
+						.background(Color.white.opacity(0.06), in: Circle())
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Remove \(reminder.text)")
+			}
+
+			if !reminder.evidence.isEmpty || !reminder.motivation.isEmpty
+				|| !reminder.selector.examples.isEmpty {
+				DisclosureGroup(isExpanded: $isExpanded) {
+					VStack(alignment: .leading, spacing: 10) {
+						if !reminder.motivation.isEmpty {
+							ReminderDetail(label: "Why", text: reminder.motivation)
+						}
+						if !reminder.evidence.isEmpty {
+							ReminderDetail(label: "From your recordings", text: "“\(reminder.evidence)”")
+						}
+						ForEach(reminder.selector.examples) { example in
+							HStack(alignment: .top, spacing: 8) {
+								Image(systemName: example.matches ? "checkmark.circle.fill" : "xmark.circle")
+									.foregroundStyle(example.matches ? AppStyle.accent : AppStyle.tertiary)
+								VStack(alignment: .leading, spacing: 2) {
+									Text(example.event.title)
+										.font(.system(size: 13, weight: .semibold))
+										.foregroundStyle(.white)
+									Text(example.reason)
+										.font(.caption)
+										.foregroundStyle(AppStyle.secondary)
+								}
+							}
+						}
+					}
+					.padding(.top, 8)
+				} label: {
+					Text("Why this will appear")
+						.font(.system(size: 13, weight: .semibold))
+						.foregroundStyle(AppStyle.secondary)
+				}
+				.tint(AppStyle.secondary)
+				.padding(.leading, 28)
+			}
+		}
+		.padding(13)
+		.background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+	}
+}
+
+private struct ReminderDetail: View {
+	let label: String
+	let text: String
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 2) {
+			Text(label.uppercased())
+				.font(.system(size: 10, weight: .bold))
+				.foregroundStyle(AppStyle.tertiary)
+				.tracking(0.5)
+			Text(text)
+				.font(.system(size: 13))
+				.foregroundStyle(AppStyle.secondary)
+				.fixedSize(horizontal: false, vertical: true)
 		}
 	}
 }
