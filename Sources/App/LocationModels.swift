@@ -147,22 +147,26 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 		case schemaVersion
 		case settings
 		case locations
+		case elevenLabsAPIKey
 	}
 
-	static let currentSchemaVersion = 1
+	static let currentSchemaVersion = 2
 
 	var schemaVersion: Int
 	var settings: JournalSettings
 	var locations: [NamedJournalLocation]
+	var elevenLabsAPIKey: String
 
 	init(
 		schemaVersion: Int = currentSchemaVersion,
 		settings: JournalSettings,
-		locations: [NamedJournalLocation] = []
+		locations: [NamedJournalLocation] = [],
+		elevenLabsAPIKey: String = ""
 	) {
 		self.schemaVersion = schemaVersion
 		self.settings = settings
 		self.locations = locations
+		self.elevenLabsAPIKey = elevenLabsAPIKey
 	}
 
 	init(from decoder: Decoder) throws {
@@ -170,6 +174,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 		schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
 		settings = try container.decodeIfPresent(JournalSettings.self, forKey: .settings) ?? JournalSettings()
 		locations = try container.decodeIfPresent([NamedJournalLocation].self, forKey: .locations) ?? []
+		elevenLabsAPIKey = try container.decodeIfPresent(String.self, forKey: .elevenLabsAPIKey) ?? ""
 	}
 
 	func jsonData() throws -> Data {

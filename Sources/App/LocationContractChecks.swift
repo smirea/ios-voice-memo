@@ -6,7 +6,7 @@ enum LocationContractChecks {
 		guard ProcessInfo.processInfo.arguments.contains("-location-contract-tests") else { return }
 		do {
 			try await run()
-			print("LOCATION CONTRACT: 13 checks passed")
+			print("LOCATION CONTRACT: 14 checks passed")
 		} catch {
 			fatalError("LOCATION CONTRACT: \(error)")
 		}
@@ -114,15 +114,20 @@ enum LocationContractChecks {
 
 		var settings = JournalSettings()
 		settings.showModelNames = false
-		let configuration = AppConfiguration(settings: settings, locations: [remotePinWithAlias])
+		let configuration = AppConfiguration(
+			settings: settings,
+			locations: [remotePinWithAlias],
+			elevenLabsAPIKey: "test-elevenlabs-key"
+		)
 		let decoded = try JSONDecoder().decode(AppConfiguration.self, from: configuration.jsonData())
-		try expect(decoded == configuration, "Config JSON must round-trip settings, addresses, pins, and aliases")
+		try expect(decoded == configuration, "Config JSON must round-trip settings, locations, and API keys")
 
 		let legacy = try JSONDecoder().decode(
 			AppConfiguration.self,
 			from: Data(#"{"settings":{}}"#.utf8)
 		)
 		try expect(legacy.locations.isEmpty, "Older config JSON must default missing location data")
+		try expect(legacy.elevenLabsAPIKey.isEmpty, "Older config JSON must default a missing API key")
 
 		let temporaryRoot = FileManager.default.temporaryDirectory
 			.appendingPathComponent("location-contract-\(UUID().uuidString)", isDirectory: true)

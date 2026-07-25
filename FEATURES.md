@@ -8,7 +8,7 @@
 - Uses native horizontal back navigation wherever a back button is hidden.
 - Stores notes and audio locally for offline use, includes them in device backups, and recovers interrupted recordings and processing on the next launch.
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.
-- Stores app settings and named locations in a versioned, backed-up `config.json`, mirrors it beside iCloud Drive exports, and restores it when no local config exists.
+- Stores app settings, named locations, and API keys in a versioned, backed-up `config.json`, mirrors it beside iCloud Drive exports, and restores it when no local config exists.
 - Treats local data as authoritative: iCloud note exports are not imported, and deleting a note removes its local audio and exports.
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
 - Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback, and alerts when ElevenLabs could not be used; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
@@ -66,7 +66,7 @@
 
 - Opens as a sheet, saves changes immediately, and dismisses with Done.
 - Controls screen wake while recording, recording haptics, transcript visibility, and the default-on ElevenLabs transcription preference.
-- Stores an optional ElevenLabs API key securely on-device and prefers it over the bundled fallback.
+- Stores an optional ElevenLabs API key in `config.json` and prefers it over the bundled fallback.
 - Calendar sync requests Full Access for read-only event access and lets each calendar be included or excluded.
 - Calendar settings can prefer direct Google Calendar links, with an exact native event view as fallback.
 - Reminder settings control delivery, Live Activities, and the global pre-event lead time.

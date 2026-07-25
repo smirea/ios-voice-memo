@@ -20,7 +20,6 @@ final class JournalStore {
 	private let entriesURL: URL
 	private let configurationURL: URL
 	private let pendingRecordingURL: URL
-	@ObservationIgnored private let apiKeyStore = APIKeyStore()
 	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
 	@ObservationIgnored private let reminderActivityManager = ReminderActivityManager()
 	@ObservationIgnored private var iCloudRevision = 0
@@ -45,7 +44,6 @@ final class JournalStore {
 			isDemoMode: isDemoMode,
 			cacheURL: rootURL.appendingPathComponent("calendar-events.json")
 		)
-		elevenLabsAPIKey = apiKeyStore.value(for: .elevenLabs)
 		pendingICloudDeletionReferences = Set(
 			UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []
 		)
@@ -60,6 +58,7 @@ final class JournalStore {
 			if let configuration = loadConfiguration() {
 				settings = configuration.settings
 				namedLocations = configuration.locations
+				elevenLabsAPIKey = configuration.elevenLabsAPIKey
 				settings.save()
 			} else {
 				isConfigurationRestorePending = true
@@ -542,7 +541,7 @@ final class JournalStore {
 
 	func setElevenLabsAPIKey(_ apiKey: String) {
 		elevenLabsAPIKey = apiKey
-		apiKeyStore.set(apiKey, for: .elevenLabs)
+		commitConfiguration()
 	}
 
 	func clearTranscriptionAlert() {
@@ -627,6 +626,7 @@ final class JournalStore {
 		if let configuration {
 			settings = configuration.settings
 			namedLocations = configuration.locations
+			elevenLabsAPIKey = configuration.elevenLabsAPIKey
 		}
 		isConfigurationRestorePending = false
 		commitConfiguration()
@@ -637,7 +637,11 @@ final class JournalStore {
 		isConfigurationRestorePending = false
 		settings.save()
 		guard !isDemoMode else { return }
-		let configuration = AppConfiguration(settings: settings, locations: namedLocations)
+		let configuration = AppConfiguration(
+			settings: settings,
+			locations: namedLocations,
+			elevenLabsAPIKey: elevenLabsAPIKey
+		)
 		guard let data = try? configuration.jsonData() else { return }
 		do {
 			try data.write(to: configurationURL, options: [.atomic])
@@ -695,7 +699,11 @@ final class JournalStore {
 		let revision = iCloudRevision
 		let entries = entries
 		let recordingsURL = recordingsURL
-		let configuration = AppConfiguration(settings: settings, locations: namedLocations)
+		let configuration = AppConfiguration(
+			settings: settings,
+			locations: namedLocations,
+			elevenLabsAPIKey: elevenLabsAPIKey
+		)
 		let mirror = iCloudDriveMirror
 		let deletedRecordingReferences = pendingICloudDeletionReferences
 		Task {
