@@ -113,6 +113,7 @@ struct RootView: View {
 		}
 		.onChange(of: scenePhase) { _, phase in
 			guard phase == .active else { return }
+			store.resumeStaleProcessing()
 			Task { await store.refreshCalendar() }
 		}
 	}

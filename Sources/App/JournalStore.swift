@@ -1,6 +1,7 @@
 @preconcurrency import AVFAudio
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -25,6 +26,9 @@ final class JournalStore {
 	@ObservationIgnored private var iCloudRevision = 0
 	@ObservationIgnored private var pendingICloudDeletionReferences = Set<String>()
 	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
+	@ObservationIgnored private var entryProcessingTimeoutTasks: [UUID: Task<Void, Never>] = [:]
+	@ObservationIgnored private var entryProcessingStartedAt: [UUID: Date] = [:]
+	@ObservationIgnored private var entryBackgroundTasks: [UUID: UIBackgroundTaskIdentifier] = [:]
 	@ObservationIgnored private var entryProcessingTokens: [UUID: UUID] = [:]
 	@ObservationIgnored private var pendingEntryEvaluations: [PendingEntryEvaluation] = []
 	@ObservationIgnored private var entryEvaluationWorker: Task<Void, Never>?
@@ -227,10 +231,23 @@ final class JournalStore {
 		url: URL,
 		preserveExistingTranscriptOnFailure: Bool = false
 	) {
-		entryProcessingTasks[entryID]?.cancel()
+		cancelProcessingAttempt(entryID)
+		pendingEntryEvaluations.removeAll { $0.entryID == entryID }
 		let processingToken = UUID()
 		entryProcessingTokens[entryID] = processingToken
 		entryProcessingPhases[entryID] = .transcribing
+		entryProcessingStartedAt[entryID] = .now
+		beginBackgroundProcessing(entryID: entryID, token: processingToken)
+		entryProcessingTimeoutTasks[entryID] = Task { @MainActor [weak self] in
+			try? await Task.sleep(for: Self.processingTimeout)
+			guard !Task.isCancelled else { return }
+			self?.retryProcessingIfCurrent(
+				entryID: entryID,
+				url: url,
+				token: processingToken,
+				preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
+			)
+		}
 		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
 			await self?.processRecording(
 				entryID: entryID,
@@ -239,6 +256,69 @@ final class JournalStore {
 				preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
 			)
 		}
+	}
+
+	func resumeStaleProcessing(now: Date = .now) {
+		let staleEntryIDs = entryProcessingStartedAt.compactMap { entryID, startedAt in
+			now.timeIntervalSince(startedAt) >= Self.processingTimeoutSeconds ? entryID : nil
+		}
+		for entryID in staleEntryIDs {
+			guard let token = entryProcessingTokens[entryID],
+				let entry = entry(id: entryID),
+				let url = audioURL(for: entry),
+				fileManager.fileExists(atPath: url.path)
+			else {
+				finishProcessing(entryID)
+				continue
+			}
+			retryProcessingIfCurrent(
+				entryID: entryID,
+				url: url,
+				token: token,
+				preserveExistingTranscriptOnFailure: entry.headline != "Processing recording"
+			)
+		}
+	}
+
+	private func retryProcessingIfCurrent(
+		entryID: UUID,
+		url: URL,
+		token: UUID,
+		preserveExistingTranscriptOnFailure: Bool
+	) {
+		guard entryProcessingTokens[entryID] == token,
+			entries.contains(where: { $0.id == entryID }),
+			fileManager.fileExists(atPath: url.path)
+		else { return }
+		startProcessing(
+			entryID: entryID,
+			url: url,
+			preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
+		)
+	}
+
+	private func beginBackgroundProcessing(entryID: UUID, token: UUID) {
+		let identifier = UIApplication.shared.beginBackgroundTask(withName: "Process voice memo") { [weak self] in
+			Task { @MainActor [weak self] in
+				guard self?.entryProcessingTokens[entryID] == token else { return }
+				self?.endBackgroundProcessing(entryID)
+			}
+		}
+		if identifier != .invalid {
+			entryBackgroundTasks[entryID] = identifier
+		}
+	}
+
+	private func endBackgroundProcessing(_ entryID: UUID) {
+		guard let identifier = entryBackgroundTasks.removeValue(forKey: entryID) else { return }
+		UIApplication.shared.endBackgroundTask(identifier)
+	}
+
+	private func cancelProcessingAttempt(_ entryID: UUID) {
+		entryProcessingTasks.removeValue(forKey: entryID)?.cancel()
+		entryProcessingTimeoutTasks.removeValue(forKey: entryID)?.cancel()
+		entryProcessingStartedAt.removeValue(forKey: entryID)
+		endBackgroundProcessing(entryID)
 	}
 
 	private func resumeInterruptedProcessing() {
@@ -419,13 +499,13 @@ final class JournalStore {
 	private func finishProcessing(_ entryID: UUID, token: UUID? = nil) {
 		if let token, entryProcessingTokens[entryID] != token { return }
 		entryProcessingPhases.removeValue(forKey: entryID)
-		entryProcessingTasks.removeValue(forKey: entryID)
+		cancelProcessingAttempt(entryID)
 		entryProcessingTokens.removeValue(forKey: entryID)
 	}
 
 	func deleteEntry(id entryID: UUID) {
 		guard let entry = entries.first(where: { $0.id == entryID }) else { return }
-		entryProcessingTasks.removeValue(forKey: entryID)?.cancel()
+		cancelProcessingAttempt(entryID)
 		pendingEntryEvaluations.removeAll { $0.entryID == entryID }
 		entryProcessingTokens.removeValue(forKey: entryID)
 		entryProcessingPhases.removeValue(forKey: entryID)
@@ -443,11 +523,14 @@ final class JournalStore {
 	func clearJournal() {
 		recordingLocationTask?.cancel()
 		recordingLocationTask = nil
-		for task in entryProcessingTasks.values { task.cancel() }
+		for entryID in Array(entryProcessingTasks.keys) { cancelProcessingAttempt(entryID) }
 		for task in entryLocationTasks.values { task.cancel() }
 		entryEvaluationWorker?.cancel()
 		entryEvaluationWorker = nil
 		entryProcessingTasks.removeAll()
+		entryProcessingTimeoutTasks.removeAll()
+		entryProcessingStartedAt.removeAll()
+		entryBackgroundTasks.removeAll()
 		entryProcessingTokens.removeAll()
 		pendingEntryEvaluations.removeAll()
 		entryProcessingPhases.removeAll()
@@ -799,6 +882,8 @@ final class JournalStore {
 		try url.setResourceValues(values)
 	}
 
+	private static let processingTimeoutSeconds: TimeInterval = 15 * 60
+	private static let processingTimeout = Duration.seconds(processingTimeoutSeconds)
 	private static let iCloudDeletionKey = "pending-icloud-drive-deletions"
 }
 
