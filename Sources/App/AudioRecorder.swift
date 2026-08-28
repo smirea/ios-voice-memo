@@ -56,9 +56,9 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
 		let session = AVAudioSession.sharedInstance()
 		try session.setCategory(
-			.playAndRecord,
+			.record,
 			mode: .default,
-			options: [.defaultToSpeaker, .allowBluetoothHFP, .bluetoothHighQualityRecording]
+			options: [.allowBluetoothHFP, .bluetoothHighQualityRecording]
 		)
 		try session.setActive(true)
 
@@ -191,6 +191,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		switch type {
 		case .began:
 			wasRecordingBeforeInterruption = !isPaused
+			recorder?.pause()
 			isPaused = true
 			statusMessage = "Recording paused."
 			stopMetering()
