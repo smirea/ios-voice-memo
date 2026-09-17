@@ -26,7 +26,7 @@ enum RecordingContractChecks {
 		let permission = PermissionGate()
 		let recorder = AudioRecorder(permissionRequest: { await permission.request() })
 		let session = RecordingSession(store: store, recorder: recorder)
-		let pendingURL = root.appendingPathComponent("pending-recording.json")
+		let recordsURL = root.appendingPathComponent("Records")
 
 		session.present(startsImmediately: true)
 		try await permission.waitForRequest(1)
@@ -38,8 +38,9 @@ enum RecordingContractChecks {
 		session.discard()
 		permission.resolve(0, granted: true)
 		await cancelledStart.value
+		await store.waitForPendingWrites()
 		try expect(!recorder.isRecording && session.context == nil, "Granting permission after discard must not start invisible capture")
-		try expect(!FileManager.default.fileExists(atPath: pendingURL.path), "Discard must remove the cancelled session's recovery metadata")
+
 		try expect(try recordingFiles(in: root).isEmpty, "Cancelled startup must not create orphan audio")
 
 		session.present(startsImmediately: true)
@@ -47,8 +48,9 @@ enum RecordingContractChecks {
 		let failedStart = session.startupTask!
 		permission.resolve(1, granted: false)
 		await failedStart.value
+		await store.waitForPendingWrites()
 		try expect(session.errorMessage != nil && session.context != nil, "A denied microphone must keep the error visible until acknowledged")
-		try expect(!FileManager.default.fileExists(atPath: pendingURL.path), "Failed startup must remove its recovery metadata")
+
 		session.discard()
 
 		session.present(startsImmediately: true)
@@ -59,6 +61,11 @@ enum RecordingContractChecks {
 		try await permission.waitForRequest(4)
 		let newStart = session.startupTask!
 		let newContext = session.context?.id
+		await store.waitForPendingWrites()
+		let manifests = try FileManager.default.contentsOfDirectory(at: recordsURL, includingPropertiesForKeys: nil)
+		let pendingURL = try manifests.first { url in
+			try JSONDecoder().decode(JournalRecord.self, from: Data(contentsOf: url)).state == .recording
+		}!
 		let newPending = try Data(contentsOf: pendingURL)
 		permission.resolve(2, granted: true)
 		await oldStart.value
@@ -68,6 +75,7 @@ enum RecordingContractChecks {
 		session.discard()
 		permission.resolve(3, granted: true)
 		await newStart.value
+		await store.waitForPendingWrites()
 		try expect(!recorder.isRecording && session.context == nil, "The replacement startup must also be cancellable")
 		try expect(try recordingFiles(in: root).isEmpty, "Neither cancelled generation may leave audio behind")
 	}

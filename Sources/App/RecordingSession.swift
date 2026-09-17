@@ -14,6 +14,10 @@ final class RecordingSession {
 	private(set) var hasStartedRecording = false
 	private(set) var isFinishing = false
 	var errorMessage: String?
+	var saveErrorMessage: String?
+	@ObservationIgnored private var finishedRecording: FinishedRecording?
+
+	var canFinish: Bool { recorder.hasRecording || finishedRecording != nil }
 
 	@ObservationIgnored private let store: JournalStore
 	@ObservationIgnored private let liveActivity = RecordingActivityManager()
@@ -40,6 +44,8 @@ final class RecordingSession {
 		hasStartedRecording = false
 		isFinishing = false
 		errorMessage = nil
+		saveErrorMessage = nil
+		finishedRecording = nil
 		if startsImmediately { start(calendarEvent: nil) }
 	}
 
@@ -66,23 +72,30 @@ final class RecordingSession {
 		}
 	}
 
-	func finish() -> UUID? {
-		guard !isVisualDemo, !isFinishing, let recording = recorder.finish() else { return nil }
+	func finish() async -> UUID? {
+		guard !isVisualDemo, !isFinishing else { return nil }
+		if finishedRecording == nil { finishedRecording = recorder.finish() }
+		guard let recording = finishedRecording else { return nil }
 		isFinishing = true
-		activeURL = nil
+		defer { isFinishing = false }
 		generation = nil
 		liveActivity.end()
 		UIApplication.shared.isIdleTimerDisabled = false
-		let entryID = store.finishRecording(
-			at: recording.url,
-			duration: recording.duration,
-			calendarEvent: calendarEvent
-		)
-		context = nil
-		return entryID
+		do {
+			let entryID = try await store.finishRecording(
+				at: recording.url, duration: recording.duration, calendarEvent: calendarEvent)
+			activeURL = nil
+			finishedRecording = nil
+			context = nil
+			return entryID
+		} catch {
+			saveErrorMessage = "Your audio is still on this device. Try Finish again. " + error.localizedDescription
+			return nil
+		}
 	}
 
 	func discard() {
+		guard !isFinishing else { return }
 		generation = nil
 		startupTask?.cancel()
 		startupTask = nil
@@ -96,7 +109,11 @@ final class RecordingSession {
 	private func beginRecording(generation: UUID) async {
 		guard self.generation == generation, !Task.isCancelled else { return }
 		do {
-			let url = try store.destinationForNewRecording(calendarEvent: calendarEvent)
+			let url = try await store.destinationForNewRecording(calendarEvent: calendarEvent)
+			guard self.generation == generation, !Task.isCancelled else {
+				store.cancelRecording(at: url)
+				return
+			}
 			activeURL = url
 			try await recorder.start(at: url)
 			guard self.generation == generation, !Task.isCancelled else { return }
@@ -124,10 +141,10 @@ final class RecordingSession {
 	}
 
 	private func discardAudio() {
-		let url = recorder.cancel() ?? activeURL
+		let url = finishedRecording?.url ?? recorder.finish()?.url ?? recorder.cancel() ?? activeURL
+		finishedRecording = nil
 		activeURL = nil
 		guard let url else { return }
-		try? FileManager.default.removeItem(at: url)
 		store.cancelRecording(at: url)
 	}
 

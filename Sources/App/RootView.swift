@@ -83,6 +83,14 @@ struct RootView: View {
 		} message: {
 			Text(store.transcriptionAlertMessage ?? "")
 		}
+		.alert("Journal storage", isPresented: Binding(
+			get: { store.storageErrorMessage != nil },
+			set: { if !$0 { store.storageErrorMessage = nil } }
+		)) {
+			Button("OK", role: .cancel) { store.storageErrorMessage = nil }
+		} message: {
+			Text(store.storageErrorMessage ?? "")
+		}
 		.onOpenURL { url in
 			guard url.scheme == "myvoicememo" else { return }
 			switch url.host {
@@ -96,10 +104,13 @@ struct RootView: View {
 					.queryItems?
 					.first(where: { $0.name == "id" })?
 					.value,
-					let id = UUID(uuidString: value),
-					store.entry(id: id) != nil
+					let id = UUID(uuidString: value)
 				else { return }
-				path = [.entry(id)]
+				Task {
+					if !store.isDemoMode { try? await store.waitUntilLoaded() }
+					guard recordingSession.context == nil, store.entry(id: id) != nil else { return }
+					path = [.entry(id)]
+				}
 			default:
 				return
 			}

@@ -10,6 +10,9 @@ final class JournalStore {
 	private(set) var entryProcessingPhases: [UUID: EntryProcessingPhase] = [:]
 	private(set) var namedLocations: [NamedJournalLocation] = []
 	private(set) var elevenLabsAPIKey = ""
+	private(set) var isLoading = true
+	private(set) var storageLoadMessage: String?
+	var storageErrorMessage: String?
 	var transcriptionAlertMessage: String?
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
@@ -18,9 +21,7 @@ final class JournalStore {
 	private let fileManager = FileManager.default
 	private let rootURL: URL
 	private let recordingsURL: URL
-	private let entriesURL: URL
 	private let configurationURL: URL
-	private let pendingRecordingURL: URL
 	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
 	@ObservationIgnored private let reminderActivityManager = ReminderActivityManager()
 	@ObservationIgnored private var iCloudRevision = 0
@@ -35,48 +36,66 @@ final class JournalStore {
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var isConfigurationRestorePending = false
+	@ObservationIgnored private let repository: JournalRepository
+	@ObservationIgnored private var bootstrapTask: Task<Void, Never>?
+	@ObservationIgnored private var persistenceTask: Task<Void, Never>?
+	private let usesExternalServices: Bool
 
 	init(storageRootURL: URL? = nil) {
-		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
+		isDemoMode = storageRootURL == nil && ProcessInfo.processInfo.arguments.contains("-demo")
+		usesExternalServices = storageRootURL == nil
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 		rootURL = storageRootURL ?? applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
-		entriesURL = rootURL.appendingPathComponent("entries.json")
+		repository = JournalRepository(rootURL: rootURL)
 		configurationURL = rootURL.appendingPathComponent("config.json")
-		pendingRecordingURL = rootURL.appendingPathComponent("pending-recording.json")
 		calendarSync = CalendarSync(
 			isDemoMode: isDemoMode,
 			cacheURL: rootURL.appendingPathComponent("calendar-events.json")
 		)
 		pendingICloudDeletionReferences = Set(
-			UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []
+			usesExternalServices ? (UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []) : []
 		)
 
+		entries = []
 		if isDemoMode {
 			entries = JournalEntry.demo
 			namedLocations = NamedJournalLocation.demo
 			settings.calendarSyncEnabled = true
+			isLoading = false
 		} else {
-			entries = []
-			prepareStorage()
+			bootstrapTask = Task { [weak self] in await self?.loadJournal() }
+		}
+	}
+
+	func waitUntilLoaded() async throws {
+		await bootstrapTask?.value
+		guard await repository.isLoaded else { throw RepositoryError.notLoaded }
+	}
+
+	private func loadJournal() async {
+		defer { isLoading = false }
+		do {
+			let loaded = try await repository.load()
+			entries = loaded.entries
+			storageLoadMessage = loaded.issues.isEmpty ? nil : loaded.issues.joined(separator: "\n")
+			pendingICloudDeletionReferences.formUnion(loaded.deletionReferences)
 			if let configuration = loadConfiguration() {
 				settings = configuration.settings
 				namedLocations = configuration.locations
 				elevenLabsAPIKey = configuration.elevenLabsAPIKey
 				settings.save()
-			} else {
+			} else if usesExternalServices {
 				isConfigurationRestorePending = true
 			}
-			entries = loadEntries()
-			recoverUnreferencedRecordings()
-			resumeInterruptedProcessing()
-			if isConfigurationRestorePending {
-				Task { @MainActor [weak self] in
-					await self?.restoreConfigurationFromICloud()
-				}
-			} else {
-				scheduleICloudDriveMirror()
+			isLoading = false
+			if usesExternalServices {
+				resumeInterruptedProcessing()
+				if isConfigurationRestorePending { Task { await restoreConfigurationFromICloud() } }
+				else { scheduleICloudDriveMirror() }
 			}
+		} catch {
+			storageLoadMessage = "The journal could not be opened. Original files were preserved. " + error.localizedDescription
 		}
 	}
 
@@ -166,6 +185,7 @@ final class JournalStore {
 
 	@discardableResult
 	func beginRecordingLocationCapture() -> Task<JournalLocation?, Never> {
+		guard usesExternalServices else { return Task { nil } }
 		recordingLocationTask?.cancel()
 		let task = Task {
 			await EntryLocationCapture.capture()
@@ -174,55 +194,51 @@ final class JournalStore {
 		return task
 	}
 
-	func destinationForNewRecording(calendarEvent: JournalCalendarEvent?) throws -> URL {
-		prepareStorage()
-		let url = recordingsURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
-		try writePendingRecording(PendingRecording(
-			filename: url.lastPathComponent,
-			startedAt: .now,
-			duration: 0,
-			calendarEvent: calendarEvent
-		))
-		return url
+	func destinationForNewRecording(calendarEvent: JournalCalendarEvent?) async throws -> URL {
+		try await waitUntilLoaded()
+		try Task.checkCancellation()
+		let entry = try await repository.beginRecording(calendarEvent: calendarEvent)
+		return recordingsURL.appendingPathComponent(entry.audioFilename!)
 	}
 
 	func checkpointRecording(at url: URL, duration: TimeInterval) {
-		guard var pending = loadPendingRecording(), pending.filename == url.lastPathComponent else { return }
-		pending.duration = max(pending.duration, duration)
-		try? writePendingRecording(pending)
+		guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { return }
+		Task {
+			do { try await repository.checkpoint(id: id, duration: duration) }
+			catch { storageErrorMessage = error.localizedDescription }
+		}
 	}
 
 	func cancelRecording(at url: URL) {
 		recordingLocationTask?.cancel()
 		recordingLocationTask = nil
-		clearPendingRecording(matching: url)
+		guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { return }
+		let previous = persistenceTask
+		persistenceTask = Task {
+			await previous?.value
+			do {
+				_ = try await repository.delete(id: id)
+				try await repository.cleanupDeletedAudio(id: id)
+			} catch { storageErrorMessage = error.localizedDescription }
+		}
 	}
 
-	@discardableResult
-	func finishRecording(
-		at url: URL,
-		duration: TimeInterval,
-		calendarEvent: JournalCalendarEvent?
-	) -> UUID {
-		let entryID = UUID()
-		let savedEntry = JournalEntry(
-			id: entryID,
-			createdAt: .now,
-			duration: duration,
-			transcript: "",
-			headline: "Processing recording",
-			audioFilename: url.lastPathComponent,
-			calendarEvent: calendarEvent
-		)
+	func waitForPendingWrites() async { await persistenceTask?.value }
 
+	@discardableResult
+	func finishRecording(at url: URL, duration: TimeInterval, calendarEvent: JournalCalendarEvent?) async throws -> UUID {
+		try await waitUntilLoaded()
+		await persistenceTask?.value
+		guard let entryID = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else {
+			throw RepositoryError.unavailableRecord
+		}
+		let savedEntry = try await repository.finishRecording(id: entryID, duration: duration)
+		entries.removeAll { $0.id == entryID }
 		entries.append(savedEntry)
 		entries.sort { $0.createdAt > $1.createdAt }
-		if persist() {
-			clearPendingRecording(matching: url)
-		}
-
-		startProcessing(entryID: entryID, url: url)
-		attachRecordedLocation(to: entryID)
+		scheduleICloudDriveMirror()
+		if usesExternalServices { startProcessing(entryID: entryID, url: url) }
+		if usesExternalServices { attachRecordedLocation(to: entryID) }
 		return entryID
 	}
 
@@ -504,46 +520,33 @@ final class JournalStore {
 	}
 
 	func deleteEntry(id entryID: UUID) {
-		guard let entry = entries.first(where: { $0.id == entryID }) else { return }
-		cancelProcessingAttempt(entryID)
-		pendingEntryEvaluations.removeAll { $0.entryID == entryID }
-		entryProcessingTokens.removeValue(forKey: entryID)
-		entryProcessingPhases.removeValue(forKey: entryID)
-		entryLocationTasks.removeValue(forKey: entryID)?.cancel()
-		if let url = audioURL(for: entry) {
-			try? fileManager.removeItem(at: url)
-		}
-		entries.removeAll { $0.id == entryID }
-		persist(deleting: [entry])
-		Task { @MainActor [weak self] in
-			await self?.refreshReminderSchedule()
-		}
+		Task { await deleteEntries(ids: [entryID]) }
 	}
 
 	func clearJournal() {
-		recordingLocationTask?.cancel()
-		recordingLocationTask = nil
-		for entryID in Array(entryProcessingTasks.keys) { cancelProcessingAttempt(entryID) }
-		for task in entryLocationTasks.values { task.cancel() }
-		entryEvaluationWorker?.cancel()
-		entryEvaluationWorker = nil
-		entryProcessingTasks.removeAll()
-		entryProcessingTimeoutTasks.removeAll()
-		entryProcessingStartedAt.removeAll()
-		entryBackgroundTasks.removeAll()
-		entryProcessingTokens.removeAll()
-		pendingEntryEvaluations.removeAll()
-		entryProcessingPhases.removeAll()
-		entryLocationTasks.removeAll()
-		let deletedEntries = entries
-		for entry in deletedEntries where entry.audioFilename != nil {
-			if let url = audioURL(for: entry) {
-				try? fileManager.removeItem(at: url)
-			}
+		let ids = entries.map(\.id)
+		Task { await deleteEntries(ids: ids) }
+	}
+
+	private func deleteEntries(ids: [UUID]) async {
+		await persistenceTask?.value
+		for entryID in ids {
+			guard entries.contains(where: { $0.id == entryID }) else { continue }
+			do {
+				let references = try await repository.delete(id: entryID)
+				cancelProcessingAttempt(entryID)
+				pendingEntryEvaluations.removeAll { $0.entryID == entryID }
+				entryProcessingTokens.removeValue(forKey: entryID)
+				entryProcessingPhases.removeValue(forKey: entryID)
+				entryLocationTasks.removeValue(forKey: entryID)?.cancel()
+				entries.removeAll { $0.id == entryID }
+				pendingICloudDeletionReferences.formUnion(references)
+				savePendingICloudDeletions()
+				scheduleICloudDriveMirror()
+				try await repository.cleanupDeletedAudio(id: entryID)
+			} catch { storageErrorMessage = "Could not complete deletion. " + error.localizedDescription }
 		}
-		entries.removeAll()
-		persist(deleting: deletedEntries)
-		Task { await reminderActivityManager.endAll() }
+		await refreshReminderSchedule()
 	}
 
 	func temporaryReminderFeedbackURL() -> URL {
@@ -636,6 +639,7 @@ final class JournalStore {
 	}
 
 	func refreshCalendar(force: Bool = false) async {
+		await bootstrapTask?.value
 		guard settings.calendarSyncEnabled else {
 			calendarSync.clear()
 			await reminderActivityManager.endAll()
@@ -681,21 +685,6 @@ final class JournalStore {
 		)
 	}
 
-	private func prepareStorage() {
-		do {
-			try fileManager.createDirectory(at: recordingsURL, withIntermediateDirectories: true)
-			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: rootURL.path)
-			try includeInBackup(rootURL)
-			try includeInBackup(recordingsURL)
-		} catch {
-			assertionFailure("Could not prepare local journal storage: \(error)")
-		}
-	}
-
-	private func loadEntries() -> [JournalEntry] {
-		guard let data = try? Data(contentsOf: entriesURL) else { return [] }
-		return (try? JSONDecoder().decode([JournalEntry].self, from: data))?.sorted { $0.createdAt > $1.createdAt } ?? []
-	}
 
 	private func loadConfiguration() -> AppConfiguration? {
 		guard let data = try? Data(contentsOf: configurationURL) else { return nil }
@@ -754,30 +743,21 @@ final class JournalStore {
 		namedLocations[index].aliases.append(coordinate)
 	}
 
-	@discardableResult
-	private func persist(deleting deletedEntries: [JournalEntry] = []) -> Bool {
-		guard !isDemoMode, let data = try? JSONEncoder().encode(entries) else { return false }
-		do {
-			try data.write(to: entriesURL, options: [.atomic])
-			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: entriesURL.path)
-			try includeInBackup(entriesURL)
-			for entry in deletedEntries {
-				pendingICloudDeletionReferences.insert(entry.id.uuidString)
-				if let audioFilename = entry.audioFilename {
-					pendingICloudDeletionReferences.insert(audioFilename)
-				}
-			}
-			savePendingICloudDeletions()
-			scheduleICloudDriveMirror()
-			return true
-		} catch {
-			assertionFailure("Could not save the local journal: \(error)")
-			return false
+	private func persist() {
+		guard !isDemoMode else { return }
+		let snapshot = entries
+		let previous = persistenceTask
+		persistenceTask = Task {
+			await previous?.value
+			do {
+				try await repository.save(snapshot)
+				scheduleICloudDriveMirror()
+			} catch { storageErrorMessage = "Could not save note changes. " + error.localizedDescription }
 		}
 	}
 
 	private func scheduleICloudDriveMirror() {
-		guard !isDemoMode, !isConfigurationRestorePending else { return }
+		guard !isDemoMode, usesExternalServices, !isLoading, !isConfigurationRestorePending else { return }
 		iCloudRevision += 1
 		let revision = iCloudRevision
 		let entries = entries
@@ -803,6 +783,7 @@ final class JournalStore {
 	}
 
 	private func savePendingICloudDeletions() {
+		guard usesExternalServices else { return }
 		if pendingICloudDeletionReferences.isEmpty {
 			UserDefaults.standard.removeObject(forKey: Self.iCloudDeletionKey)
 		} else {
@@ -813,67 +794,6 @@ final class JournalStore {
 		}
 	}
 
-	private func recoverUnreferencedRecordings() {
-		let referenced = Set(entries.compactMap(\.audioFilename))
-		let pending = loadPendingRecording()
-		let urls = (try? fileManager.contentsOfDirectory(
-			at: recordingsURL,
-			includingPropertiesForKeys: [.creationDateKey, .fileSizeKey],
-			options: [.skipsHiddenFiles]
-		)) ?? []
-		var recoveredPendingURL: URL?
-		var didRecover = false
-
-		for url in urls where !referenced.contains(url.lastPathComponent) {
-			let values = try? url.resourceValues(forKeys: [.creationDateKey, .fileSizeKey])
-			guard (values?.fileSize ?? 0) > 0 else { continue }
-			let matchingPending = pending?.filename == url.lastPathComponent ? pending : nil
-			let duration = max(matchingPending?.duration ?? 0, audioDuration(at: url))
-			let createdAt = matchingPending?.startedAt ?? values?.creationDate ?? .now
-			entries.append(JournalEntry(
-				createdAt: createdAt,
-				duration: duration,
-				transcript: "",
-				headline: "Processing recording",
-				audioFilename: url.lastPathComponent,
-				calendarEvent: matchingPending?.calendarEvent
-			))
-			didRecover = true
-			try? includeInBackup(url)
-			if matchingPending != nil { recoveredPendingURL = url }
-		}
-
-		guard didRecover else { return }
-		entries.sort { $0.createdAt > $1.createdAt }
-		if persist(), let recoveredPendingURL {
-			clearPendingRecording(matching: recoveredPendingURL)
-		}
-	}
-
-	private func audioDuration(at url: URL) -> TimeInterval {
-		guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { return 0 }
-		return Double(file.length) / file.processingFormat.sampleRate
-	}
-
-	private func loadPendingRecording() -> PendingRecording? {
-		guard let data = try? Data(contentsOf: pendingRecordingURL) else { return nil }
-		return try? JSONDecoder().decode(PendingRecording.self, from: data)
-	}
-
-	private func writePendingRecording(_ pending: PendingRecording) throws {
-		let data = try JSONEncoder().encode(pending)
-		try data.write(to: pendingRecordingURL, options: [.atomic])
-		try fileManager.setAttributes(
-			[.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-			ofItemAtPath: pendingRecordingURL.path
-		)
-		try includeInBackup(pendingRecordingURL)
-	}
-
-	private func clearPendingRecording(matching url: URL) {
-		guard loadPendingRecording()?.filename == url.lastPathComponent else { return }
-		try? fileManager.removeItem(at: pendingRecordingURL)
-	}
 
 	private func includeInBackup(_ url: URL) throws {
 		var url = url
@@ -899,13 +819,6 @@ enum ReminderFeedbackError: LocalizedError {
 			"No feedback could be heard. Try recording it again."
 		}
 	}
-}
-
-private struct PendingRecording: Codable {
-	var filename: String
-	var startedAt: Date
-	var duration: TimeInterval
-	var calendarEvent: JournalCalendarEvent?
 }
 
 private struct PendingEntryEvaluation {

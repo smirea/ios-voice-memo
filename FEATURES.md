@@ -6,6 +6,7 @@
 - Uses a consistent dark interface, saturated blue accent, and Liquid Glass controls.
 - Never places content in decorative background boxes; uses spacing, typography, alignment, and dividers for hierarchy.
 - Uses native horizontal back navigation wherever a back button is hidden.
+- Loads local note metadata without blocking the interface, preserves damaged originals, and keeps readable notes available while reporting storage problems.
 - Stores notes and audio locally for offline use, includes them in device backups, continues processing briefly in the background, and retries interrupted or stalled processing after 15 minutes or on the next launch.
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.
 - Stores app settings, named locations, and API keys in a versioned, backed-up `config.json`, mirrors it beside iCloud Drive exports, and restores it when no local config exists.
@@ -34,7 +35,7 @@
 - Start Recording begins with the selected event attached; a widget launch starts immediately without setup.
 - Shows an error and returns home when recording cannot start.
 - Records without a fixed time limit and shows a live waveform, elapsed time, pause/resume, finish, and discard controls.
-- Finishing saves the note and opens its **Note Screen**; discarding deletes the recording and returns Home.
+- Finishing opens the **Note Screen** only after the note is saved; a failed save preserves the audio and allows Finish to be retried. Discarding deletes the recording and returns Home.
 - Opening a note link while recording keeps the recording on screen; only an explicit discard deletes active audio, and discarding during microphone permission prevents recording from starting later.
 - Recording controls provide haptic feedback when enabled in Settings.
 - Continues with the screen locked or app backgrounded, pauses for audio interruptions, and recovers from route changes when the microphone becomes available.

@@ -21,7 +21,19 @@ struct JournalView: View {
 				.listRowBackground(AppStyle.background)
 				.listRowSeparator(.hidden)
 
-				if store.entries.isEmpty {
+				if store.isLoading {
+					ProgressView("Opening journal")
+						.listRowBackground(AppStyle.background)
+						.listRowSeparator(.hidden)
+				}
+				if let message = store.storageLoadMessage {
+					Text(message)
+						.font(.footnote)
+						.foregroundStyle(.secondary)
+						.listRowBackground(AppStyle.background)
+						.listRowSeparator(.hidden)
+				}
+				if !store.isLoading && store.storageLoadMessage == nil && store.entries.isEmpty {
 					emptyState
 						.listRowInsets(EdgeInsets())
 						.listRowBackground(AppStyle.background)

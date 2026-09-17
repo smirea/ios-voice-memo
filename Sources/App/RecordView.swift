@@ -89,6 +89,14 @@ struct RecordView: View {
 		} message: {
 			Text(session.errorMessage ?? "")
 		}
+		.alert("Couldn’t save recording", isPresented: Binding(
+			get: { session.saveErrorMessage != nil },
+			set: { if !$0 { session.saveErrorMessage = nil } }
+		)) {
+			Button("OK", role: .cancel) { session.saveErrorMessage = nil }
+		} message: {
+			Text(session.saveErrorMessage ?? "")
+		}
 		.sheet(isPresented: $showsDatePicker) {
 			NavigationStack {
 				DatePicker(
@@ -253,7 +261,7 @@ struct RecordView: View {
 						.shadow(color: AppStyle.accent.opacity(0.38), radius: 18, y: 7)
 				}
 				.buttonStyle(.plain)
-				.disabled(!isVisualDemo && (!recorder.hasRecording || session.isFinishing))
+				.disabled(!isVisualDemo && (!session.canFinish || session.isFinishing))
 				.accessibilityLabel("Finish recording")
 			}
 			.padding(.bottom, 63)
@@ -272,6 +280,7 @@ struct RecordView: View {
 					.glassEffect(.regular.tint(.red.opacity(0.12)).interactive(), in: Circle())
 			}
 			.buttonStyle(.plain)
+			.disabled(session.isFinishing)
 			.accessibilityLabel("Discard recording")
 			.padding(.top, 18)
 		}
@@ -352,9 +361,11 @@ struct RecordView: View {
 	}
 
 	private func finish() {
-		guard let entryID = session.finish() else { return }
-		impact(.medium)
-		onFinished(entryID)
+		Task {
+			guard let entryID = await session.finish() else { return }
+			impact(.medium)
+			onFinished(entryID)
+		}
 	}
 
 	private func cancel() {

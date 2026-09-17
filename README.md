@@ -37,6 +37,8 @@ An iPhone voice memo app that records, transcribes, organizes, and carries usefu
 
 The app keeps its working data in the private `Application Support/MyVoiceMemo` container for reliable offline recording and playback. It also mirrors every completed recording to `iCloud Drive/MyVoiceMemo` as a matching `.m4a` and `.json` pair named `YYYY-MM-DD_<city>__<UUID>`. The JSON contains the transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance. Existing recordings are backfilled when the app launches. Deleting a note removes both mirrored files; edits made directly to the exports are not imported back into the app.
 
+The local library uses one protected, atomic manifest per recording in `Records/`, with a stable ID assigned before capture begins. Migration preserves the original `entries.json` byte for byte and imports healthy notes individually; damaged records are reported and left untouched. Saves update only changed manifests off the main actor. Deletion intent is persisted before audio cleanup, and failed recording saves retain the audio for retry.
+
 ## Requirements
 
 - Xcode 26 or newer
@@ -49,7 +51,7 @@ Open `VoiceMemo.xcodeproj`, select the `VoiceMemo` scheme, and run on an iOS 26 
 
 Add `-demo` to load sample content. Use `-demo-entry`, `-demo-reminders`, `-demo-reminder-feedback`, `-demo-review`, `-demo-recording`, `-demo-settings`, or `-demo-reminder-benchmark` to open a state directly.
 
-In a Debug build, launch with `-demo -recording-contract-tests -playback-contract-tests` to check startup cancellation, audio recovery races, media resets, and playback session ownership with isolated temporary storage and no microphone access. Add `-demo-audio-reset` to `-demo-recording` or `-demo-reminder-feedback` to inspect the stopped recording UI.
+In a Debug build, launch with `-demo -recording-contract-tests -playback-contract-tests -storage-contract-tests` to check startup cancellation, audio recovery races, media resets, playback session ownership, damaged metadata migration, incremental saves, and recovery identity with isolated temporary storage and no microphone access. Add `-demo-audio-reset` to `-demo-recording` or `-demo-reminder-feedback` to inspect the stopped recording UI.
 
 Query the Apple Intelligence model in the booted iPhone Simulator:
 
