@@ -23,6 +23,7 @@
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md). Saves resolved occurrences before scheduling them, and discards obsolete results after note, calendar, or delivery-setting changes.
 - Preserves reminder identity and manual removals through reprocessing. One-time reminders stay pinned through calendar gaps and retire after their selected occurrence ends; reprocessing or temporary omission cannot re-arm them, but a distinct new voice instruction can create a fresh cue.
 - Schedules reminders only for occurrences starting within their validity period, including an occurrence exactly at expiration; an out-of-window pin stays saved without moving to another event.
+- Matches named event targets by complete names, ignoring case, accents, and punctuation; approximate titles require on-device semantic confirmation.
 - Captures each recording's original coordinates and city when available, then resolves shared place names using the behavior in [`docs/location-model.md`](docs/location-model.md).
 - Silently refreshes and caches included events from one month ago through three months ahead when the app opens or returns to the foreground, at most once per day, without changing calendar data.
 

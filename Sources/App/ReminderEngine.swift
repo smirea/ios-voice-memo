@@ -1175,28 +1175,24 @@ enum ReminderEngine {
 		selector: FuzzyEventSelector,
 		event: JournalCalendarEvent
 	) -> Bool {
-		let ignored = Set([
+		let genericWords = Set([
 			"a", "an", "and", "at", "call", "class", "event", "events", "for",
-			"game", "games", "gaming", "in", "meeting", "meetup", "meetups",
+			"game", "games", "gaming", "in", "meeting", "meetings", "meetup", "meetups",
 			"of", "on", "or", "practice", "session", "sessions", "standup",
-			"the", "workshop"
+			"the", "workshop", "workshops"
 		])
-		let titleWords = Set(event.title.reminderNormalized.split(separator: " ").map(String.init))
-		return selector.semanticDescription.reminderNormalized
+		let title = " " + ReminderIdentity.canonical(event.title) + " "
+		return ReminderIdentity.canonical(selector.semanticDescription)
 			.components(separatedBy: " or ")
 			.contains { alternative in
-				let targetWords = Set(alternative.split(separator: " ").map(String.init))
-					.subtracting(ignored)
-				guard targetWords.count >= 2 else { return false }
-				return targetWords.allSatisfy { targetWord in
-					titleWords.contains { titleWord in
-						let length = min(4, min(targetWord.count, titleWord.count))
-						return length >= 3
-							? targetWord.prefix(length) == titleWord.prefix(length)
-								|| (targetWord.count >= 4 && titleWord.contains(targetWord))
-							: targetWord == titleWord
-					}
-				}
+				var words = alternative.split(separator: " ").map(String.init)[...]
+				while words.first.map(genericWords.contains) == true { words.removeFirst() }
+				while words.last.map(genericWords.contains) == true { words.removeLast() }
+				guard Set(words).subtracting(genericWords).count >= 2 else { return false }
+				let phrase = words.joined(separator: " ")
+				let names = ["blood on the clocktower", "blood on the clock tower"]
+				let accepted = names.contains(phrase) ? names : [phrase]
+				return accepted.contains { title.contains(" " + $0 + " ") }
 			}
 	}
 

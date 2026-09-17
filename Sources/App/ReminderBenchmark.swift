@@ -581,7 +581,8 @@ enum ReminderBenchmark {
 		let namedResolution = await ReminderEngine.resolve(
 			entries: [contractEntry(werewolf, namedGames)],
 			events: [werewolf, clocktower],
-			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60)
+			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60),
+			modelIsAvailable: { false }
 		)
 		checks.append(ReminderBenchmarkCheckResult(
 			name: "named fuzzy targets resolve without a model call",
