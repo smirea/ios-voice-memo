@@ -220,11 +220,34 @@ struct MemoAnalysis: Codable, Hashable, Sendable {
 	}
 }
 
+struct DailyRecordingMinutes: Identifiable, Equatable, Sendable {
+	var date: Date
+	var minutes: Double
+	var id: Date { date }
+
+	static func week(entries: [JournalEntry], weekStart: Date, calendar: Calendar = .current) -> [Self] {
+		guard weekStart.timeIntervalSinceReferenceDate.isFinite else { return [] }
+		let start = calendar.startOfDay(for: weekStart)
+		let boundaries = (0...7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+		guard boundaries.count == 8 else { return [] }
+		var days = boundaries.dropLast().map { Self(date: $0, minutes: 0) }
+		for entry in entries where entry.duration.isFinite && entry.duration > 0
+			&& entry.createdAt.timeIntervalSinceReferenceDate.isFinite {
+			guard let index = days.indices.first(where: {
+				entry.createdAt >= boundaries[$0] && entry.createdAt < boundaries[$0 + 1]
+			}) else { continue }
+			let minutes = entry.duration / 60
+			days[index].minutes += min(minutes, Double.greatestFiniteMagnitude - days[index].minutes)
+		}
+		return days
+	}
+}
+
 struct WeeklyReview: Sendable {
 	var weekStart: Date
 	var title: String
 	var body: String
-	var trend: [Double]
+	var recordingMinutes: [DailyRecordingMinutes] = []
 	var outcome: ModelProcessingOutcome = .complete
 }
 
@@ -407,12 +430,13 @@ extension JournalEntry {
 }
 
 extension WeeklyReview {
-	static let demo = WeeklyReview(
-		weekStart: Calendar.current.date(from: DateComponents(year: 2026, month: 6, day: 29))!,
-		title: "The week kept disappearing into other people’s asks",
-		body: "You started the week behind and mostly talked about time. Who took it, where it went. The Figma review on Tuesday and the deck revisions on Wednesday were the same story told twice: you said yes, the afternoon vanished, and the work you cared about moved to tomorrow. But Thursday morning sounded different. The run came back, and with it a sentence you haven’t said in a while. Feeling like a person again. The contrast is worth noticing: the days you resented were the ones structured around other people’s requests, and the day you liked started with twenty minutes that were only yours.",
-		trend: [0.55, 0.38, 0.31, 0.43, 0.68]
-	)
+	static var demo: WeeklyReview {
+		let entries = JournalEntry.demo
+		let start = entries[0].createdAt.startOfWeek()
+		return WeeklyReview(weekStart: start, title: "You’re making room to prepare",
+			body: "You mapped out the day before it could get away from you, and your run left you with concrete ideas for next time. Planning your draft, bringing electrolytes, and following up with Maya are small preparations you want to remember.",
+			recordingMinutes: DailyRecordingMinutes.week(entries: entries, weekStart: start))
+	}
 }
 
 extension Date {

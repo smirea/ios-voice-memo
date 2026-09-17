@@ -41,6 +41,7 @@ struct VoiceMemoApp: App {
 					await AudioFinalizationContractChecks.runFromLaunchArguments()
 					await TranscriptionContractChecks.runFromLaunchArguments()
 					await ModelOutcomeContractChecks.runFromLaunchArguments()
+					await WeeklyRecordingMetricContractChecks.runFromLaunchArguments()
 					await ModelContextContractChecks.runFromLaunchArguments()
 					await ReflectionContextContractChecks.runFromLaunchArguments()
 					await ReminderContextContractChecks.runFromLaunchArguments()

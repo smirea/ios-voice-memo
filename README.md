@@ -89,6 +89,8 @@ Use `-demo -calendar-occurrence-contract-tests -reminder-occurrence-contract-tes
 
 Use `-demo -reminder-feedback-contract-tests -reminder-matching-contract-tests -reminder-benchmark-contract-tests` for owned correction cancellation, retained-audio/text retry, exact durable feedback acknowledgments, completed-only semantic caching, relevant candidate uncertainty, and honest partial benchmark results. Fake benchmark responses test execution ownership and metrics without claiming native model quality. For feedback screens, use `-demo -demo-reminders -demo-reminder-feedback` plus `-demo-feedback-transcribing`, `-demo-feedback-transcription-error`, or `-demo-feedback-save-error`. For synthetic benchmark states, use `-demo -demo-reminder-benchmark` plus `-demo-benchmark-cancelled`, `-demo-benchmark-unavailable`, or `-demo-benchmark-failed`.
 
+Use `-demo -weekly-recording-metric-contract-tests -model-outcome-contract-tests -reflection-context-contract-tests` for seven local-day recording totals, daylight-saving changes, exact week boundaries, finite duration aggregation, and consistent metrics across generated, unavailable, canceled, and empty reviews. The metric groups each complete saved duration by its recording date; it is independent of transcript length and model output. Use `-demo -demo-review` for the sample week, add `-demo-review-empty` for a zero week, or `-demo-review-unavailable` to inspect the metric alongside the analysis retry state. `-demo-review-data-unavailable` shows a local-loading failure without inventing a zero chart.
+
 ## TestFlight
 
 The Xcode Cloud `Default` workflow archives every push to `master` and distributes successful builds to the internal `me` testing group. Xcode Cloud manages sequential build numbers.

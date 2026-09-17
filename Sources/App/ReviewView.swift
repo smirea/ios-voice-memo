@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 struct ReviewView: View {
@@ -10,37 +11,38 @@ struct ReviewView: View {
 		ZStack {
 			AppStyle.background.ignoresSafeArea()
 
-			if let review, !review.outcome.isComplete {
-				VStack(spacing: 18) {
-					Text(review.outcome == .cancelled ? "Review paused" : "Review unavailable")
-						.font(.headline)
-					Text(review.outcome == .cancelled ? "Try again when recording has finished." : "The on-device model could not finish this review. Your notes are unchanged.")
-						.foregroundStyle(AppStyle.secondary)
-						.multilineTextAlignment(.center)
-					Button("Retry") { self.review = nil; requestID = UUID() }
-				}
-				.padding(24)
-			} else if let review {
+			if let review {
 				ScrollView {
 					VStack(alignment: .leading, spacing: 25) {
 						Text(review.weekStart.formatted(.dateTime.month(.abbreviated).day().year()))
 							.font(.system(size: 14, weight: .medium))
 							.foregroundStyle(AppStyle.secondary)
 
-						Text(review.title)
+						Text(review.outcome.isComplete ? review.title : (review.outcome == .cancelled ? "Review paused" : "Review unavailable"))
 							.font(.system(size: 27, weight: .semibold))
 							.foregroundStyle(.white)
 							.fixedSize(horizontal: false, vertical: true)
 
-						TrendGraph(values: review.trend)
-							.frame(height: 54)
-							.padding(.vertical, 4)
+						if review.recordingMinutes.isEmpty {
+							Text("Recording totals unavailable")
+								.font(.subheadline)
+								.foregroundStyle(AppStyle.secondary)
+						} else {
+							RecordingMinutesChart(days: review.recordingMinutes)
+						}
 
-						Text(review.body)
-							.font(.system(size: 17))
-							.foregroundStyle(Color.white.opacity(0.92))
-							.lineSpacing(7)
-							.fixedSize(horizontal: false, vertical: true)
+						if review.outcome.isComplete {
+							Text(review.body)
+								.font(.system(size: 17))
+								.foregroundStyle(Color.white.opacity(0.92))
+								.lineSpacing(7)
+								.fixedSize(horizontal: false, vertical: true)
+						} else {
+							Text(failureMessage(review.outcome))
+								.foregroundStyle(AppStyle.secondary)
+							Button("Retry") { self.review = nil; requestID = UUID() }
+								.tint(AppStyle.accent)
+						}
 					}
 					.padding(.horizontal, 24)
 					.padding(.top, 12)
@@ -65,40 +67,40 @@ struct ReviewView: View {
 			if !Task.isCancelled { review = result }
 		}
 	}
-}
 
-private struct TrendGraph: View {
-	let values: [Double]
-
-	var body: some View {
-		GeometryReader { geometry in
-			let points = points(in: geometry.size)
-			ZStack {
-				Path { path in
-					guard let first = points.first else { return }
-					path.move(to: first)
-					for point in points.dropFirst() { path.addLine(to: point) }
-				}
-				.stroke(AppStyle.accent, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
-
-				ForEach(Array(points.enumerated()), id: \.offset) { _, point in
-					Circle()
-						.fill(AppStyle.accent)
-						.frame(width: 6, height: 6)
-						.position(point)
-				}
-			}
+	private func failureMessage(_ outcome: ModelProcessingOutcome) -> String {
+		switch outcome {
+		case .failed(let message): message
+		case .cancelled: "Try again when recording has finished."
+		default: "The on-device model could not finish this review. Your notes are unchanged."
 		}
 	}
+}
 
-	private func points(in size: CGSize) -> [CGPoint] {
-		guard !values.isEmpty else { return [] }
-		if values.count == 1 { return [CGPoint(x: size.width / 2, y: size.height / 2)] }
-		return values.enumerated().map { index, value in
-			CGPoint(
-				x: CGFloat(index) / CGFloat(values.count - 1) * size.width,
-				y: size.height - CGFloat(max(0, min(1, value))) * size.height
-			)
+private struct RecordingMinutesChart: View {
+	let days: [DailyRecordingMinutes]
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 12) {
+			Text("Minutes recorded")
+				.font(.subheadline.weight(.semibold))
+			Text("From available recordings, grouped by recording date.")
+				.font(.caption)
+				.foregroundStyle(AppStyle.secondary)
+			Chart(days) { day in
+				BarMark(x: .value("Day", day.date, unit: .day), y: .value("Minutes recorded", day.minutes))
+					.foregroundStyle(AppStyle.accent)
+					.accessibilityLabel(day.date.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+					.accessibilityValue("\(day.minutes.formatted(.number.precision(.fractionLength(0...1)))) minutes recorded")
+			}
+			.chartYScale(domain: 0...max(1, days.map(\.minutes).max() ?? 0))
+			.chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) }
+			.chartXAxis {
+				AxisMarks(values: days.map(\.date)) {
+					AxisValueLabel(format: .dateTime.weekday(.abbreviated))
+				}
+			}
+			.frame(height: 160)
 		}
 	}
 }

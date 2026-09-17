@@ -77,7 +77,8 @@
 
 # Review Screen
 
-- Generates the current week's review on open, showing a loading state followed by the week, title, trend, and reflection; interrupted or unavailable analysis shows a retry action instead of a generated review.
+- Generates the current week's review on open, showing a loading state followed by the week, title, and reflection; interrupted or unavailable analysis shows a retry action while keeping the recording metric visible.
+- Charts actual minutes from available saved recordings for each of the week’s seven local calendar days, including zero days, with day labels and a numerical scale. Each recording’s full duration is grouped by its recording date; unavailable local data is reported instead of shown as a zero week.
 - Builds reviews from dated analysis notes covering each memo, reusing saved notes only when their source transcript still matches, and combines large weeks in bounded stages.
 - Uses the standard back button and native back swipe to return home.
 

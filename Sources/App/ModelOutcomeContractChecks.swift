@@ -101,9 +101,9 @@ enum ModelOutcomeContractChecks {
 	}
 
 	private static func weeklyChecks() async throws {
-		let entry = JournalEntry(duration: 10, transcript: "You planned a focused week.", headline: "Your plans")
 		let start = Date(timeIntervalSince1970: 1_800_000_000)
-		let complete = WeeklyReview(weekStart: start, title: "Your week", body: "You planned ahead.", trend: [])
+		let entry = JournalEntry(createdAt: start, duration: 10, transcript: "You planned a focused week.", headline: "Your plans")
+		let complete = WeeklyReview(weekStart: start, title: "Your week", body: "You planned ahead.", recordingMinutes: [])
 		let success = await ReflectionEngine.weeklyReview(entries: [entry], weekStart: start) { complete }
 		try expect(success.outcome == .complete && success.title == complete.title, "A completed weekly review must remain complete")
 		let empty = await ReflectionEngine.weeklyReview(entries: [], weekStart: start) {

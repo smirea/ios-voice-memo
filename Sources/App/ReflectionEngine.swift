@@ -95,12 +95,13 @@ enum ReflectionEngine {
 		}
 	}
 
-	static func weeklyReview(entries: [JournalEntry], weekStart: Date) async -> WeeklyReview {
-		let sorted = entries.sorted { $0.createdAt < $1.createdAt }
-		return await weeklyReview(entries: sorted, weekStart: weekStart) {
+	static func weeklyReview(entries: [JournalEntry], weekStart: Date, calendar: Calendar = .current) async -> WeeklyReview {
+		let start = calendar.startOfDay(for: weekStart)
+		let sorted = weeklyEntries(entries, weekStart: start, calendar: calendar)
+		return await weeklyReview(entries: sorted, weekStart: start, calendar: calendar) {
 			try await modelWeeklyReview(
 				entries: sorted,
-				weekStart: weekStart
+				weekStart: start
 			)
 		}
 	}
@@ -108,29 +109,37 @@ enum ReflectionEngine {
 	static func weeklyReview(
 		entries: [JournalEntry],
 		weekStart: Date,
+		calendar: Calendar = .current,
 		generation: @Sendable () async throws -> WeeklyReview
 	) async -> WeeklyReview {
+		let start = calendar.startOfDay(for: weekStart)
+		let entries = weeklyEntries(entries, weekStart: start, calendar: calendar)
+		let minutes = DailyRecordingMinutes.week(entries: entries, weekStart: start, calendar: calendar)
 		do {
 			try Task.checkCancellation()
 			guard !entries.isEmpty else {
-				return WeeklyReview(weekStart: weekStart, title: "No entries this week",
-					body: "There are no entries for this week yet.", trend: [], outcome: .skipped)
+				return WeeklyReview(weekStart: start, title: "No entries this week",
+					body: "There are no entries for this week yet.", recordingMinutes: minutes, outcome: .skipped)
 			}
-			let result = try await generation()
+			var result = try await generation()
 			try Task.checkCancellation()
+			result.weekStart = start
+			result.recordingMinutes = minutes
 			return result
 		} catch {
 			let outcome = ModelProcessingOutcome.failure(error,
 				message: "The on-device model could not finish the weekly review. Try again.")
 			guard outcome != .cancelled else {
-				return WeeklyReview(weekStart: weekStart, title: "", body: "", trend: [], outcome: .cancelled)
+				return WeeklyReview(weekStart: start, title: "", body: "", recordingMinutes: minutes, outcome: .cancelled)
 			}
-			let trend = entries.enumerated().map { index, entry in
-				min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
-			}
-			return WeeklyReview(weekStart: weekStart, title: entries.last?.headline ?? "No entries this week",
-				body: entries.map(\.transcript).joined(separator: " "), trend: trend, outcome: outcome)
+			return WeeklyReview(weekStart: start, title: entries.last?.headline ?? "No entries this week",
+				body: entries.map(\.transcript).joined(separator: " "), recordingMinutes: minutes, outcome: outcome)
 		}
+	}
+
+	private static func weeklyEntries(_ entries: [JournalEntry], weekStart: Date, calendar: Calendar) -> [JournalEntry] {
+		guard let end = calendar.date(byAdding: .day, value: 7, to: weekStart) else { return [] }
+		return entries.filter { $0.createdAt >= weekStart && $0.createdAt < end }.sorted { $0.createdAt < $1.createdAt }
 	}
 
 	private static func fallbackReflection(
@@ -303,11 +312,8 @@ enum ReflectionEngine {
 		for attempt in 0..<4 {
 			do {
 				let generated = try await respond(to: context, instructions: weeklyInstructions, generating: GeneratedWeeklyReview.self, budget: budget)
-				let trend = entries.enumerated().map { index, entry in
-					min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
-				}
 				return WeeklyReview(weekStart: weekStart, title: cleanTitle(generated.title),
-					body: generated.body.trimmingCharacters(in: .whitespacesAndNewlines), trend: trend)
+					body: generated.body.trimmingCharacters(in: .whitespacesAndNewlines))
 			} catch {
 				guard attempt < 3, canShrink(error) else { throw error }
 				context = try await reductionRound(context, notesBudget: notesBudget,

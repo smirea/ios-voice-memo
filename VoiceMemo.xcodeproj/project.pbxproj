@@ -99,6 +99,7 @@
 		A1000000000000000000005B /* ReminderFeedbackSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000005B /* ReminderFeedbackSession.swift */; };
 		A1000000000000000000005C /* ReminderFeedbackContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000005C /* ReminderFeedbackContractChecks.swift */; };
 		A1000000000000000000005D /* ReminderBenchmarkContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000005D /* ReminderBenchmarkContractChecks.swift */; };
+		A1000000000000000000005E /* WeeklyRecordingMetricContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000005E /* WeeklyRecordingMetricContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -220,6 +221,7 @@
 		B1000000000000000000005B /* ReminderFeedbackSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderFeedbackSession.swift; sourceTree = "<group>"; };
 		B1000000000000000000005C /* ReminderFeedbackContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderFeedbackContractChecks.swift; sourceTree = "<group>"; };
 		B1000000000000000000005D /* ReminderBenchmarkContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBenchmarkContractChecks.swift; sourceTree = "<group>"; };
+		B1000000000000000000005E /* WeeklyRecordingMetricContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyRecordingMetricContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -317,6 +319,7 @@
 				B1000000000000000000005B /* ReminderFeedbackSession.swift */,
 				B1000000000000000000005C /* ReminderFeedbackContractChecks.swift */,
 				B1000000000000000000005D /* ReminderBenchmarkContractChecks.swift */,
+				B1000000000000000000005E /* WeeklyRecordingMetricContractChecks.swift */,
 				B10000000000000000000058 /* CalendarNavigationContractChecks.swift */,
 				B10000000000000000000053 /* RecordingPresentationContractChecks.swift */,
 				B10000000000000000000052 /* RecordingActivityContractChecks.swift */,
@@ -591,6 +594,7 @@
 				A1000000000000000000005B /* ReminderFeedbackSession.swift in Sources */,
 				A1000000000000000000005C /* ReminderFeedbackContractChecks.swift in Sources */,
 				A1000000000000000000005D /* ReminderBenchmarkContractChecks.swift in Sources */,
+				A1000000000000000000005E /* WeeklyRecordingMetricContractChecks.swift in Sources */,
 				A10000000000000000000058 /* CalendarNavigationContractChecks.swift in Sources */,
 				A10000000000000000000053 /* RecordingPresentationContractChecks.swift in Sources */,
 				A10000000000000000000052 /* RecordingActivityContractChecks.swift in Sources */,

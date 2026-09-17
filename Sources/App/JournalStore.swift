@@ -94,6 +94,8 @@ final class JournalStore {
 	private let processingEnabled: Bool
 	#if DEBUG
 	var processingIdleCheckpoint: (() async -> Void)?
+	var journalLoadCheckpoint: (() async -> Void)?
+	var weeklyReviewGeneration: (@Sendable () async throws -> WeeklyReview)?
 	var processingDeadlineOverride: TimeInterval?
 	var deletionIntentCheckpoint: (() async -> Void)?
 	var feedbackAppendCheckpoint: (() async -> Void)?
@@ -213,6 +215,9 @@ final class JournalStore {
 
 	private func loadJournal() async {
 		defer { isLoading = false }
+		#if DEBUG
+		await journalLoadCheckpoint?()
+		#endif
 		do {
 			let loaded = try await repository.load()
 			var records: [UUID: JournalRecord] = [:]
@@ -896,11 +901,37 @@ final class JournalStore {
 		if isDemoMode {
 			var review = WeeklyReview.demo
 			#if DEBUG
+			if ProcessInfo.processInfo.arguments.contains("-demo-review-empty") {
+				review = await ReflectionEngine.weeklyReview(entries: [], weekStart: date.startOfWeek())
+			}
 			if ProcessInfo.processInfo.arguments.contains("-demo-review-unavailable") { review.outcome = .unavailable }
+			if ProcessInfo.processInfo.arguments.contains("-demo-review-data-unavailable") {
+				review = WeeklyReview(weekStart: date.startOfWeek(), title: "", body: "",
+					outcome: .failed("Your saved recordings could not be loaded. Try again."))
+			}
 			#endif
 			return review
 		}
-		return await ReflectionEngine.weeklyReview(entries: entries(inWeekContaining: date), weekStart: date.startOfWeek())
+		let start = date.startOfWeek()
+		do {
+			try Task.checkCancellation()
+			if !isLoading, !hasLoadedJournal {
+				isLoading = true
+				bootstrapTask = Task { await loadJournal() }
+			}
+			try await waitUntilLoaded()
+			try Task.checkCancellation()
+		} catch {
+			return WeeklyReview(weekStart: start, title: "", body: "", outcome: Task.isCancelled || error is CancellationError
+				? .cancelled : .failed("Your saved recordings could not be loaded. Try again."))
+		}
+		let weekEntries = entries(inWeekContaining: date)
+		#if DEBUG
+		if let generation = weeklyReviewGeneration {
+			return await ReflectionEngine.weeklyReview(entries: weekEntries, weekStart: start, generation: generation)
+		}
+		#endif
+		return await ReflectionEngine.weeklyReview(entries: weekEntries, weekStart: start)
 	}
 
 	func updateSetting<Value>(_ keyPath: WritableKeyPath<JournalSettings, Value>, _ value: Value) {
