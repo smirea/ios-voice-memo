@@ -84,7 +84,7 @@
 
 # Settings Screen
 
-- Opens as a sheet, applies and saves changes immediately, reads current settings after restoration, reports save failures with a retry action, and dismisses with Done.
+- Opens as a sheet, applies and saves changes immediately, reads current settings after restoration, reports save failures with a retry action, and dismisses with Done. Section headings scroll with their controls without covering them.
 - Controls screen wake while recording, recording haptics, transcript visibility, and the default-on ElevenLabs transcription preference.
 - Stores an optional ElevenLabs API key in `config.json` and prefers it over the bundled fallback.
 - Calendar sync requests Full Access for read-only event access and lets each calendar be included or excluded.

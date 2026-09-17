@@ -1,0 +1,218 @@
+{
+  "contracts": [
+    {
+      "name": "LocationContractChecks",
+      "flag": "-location-contract-tests",
+      "marker": "LOCATION CONTRACT: 14 checks passed"
+    },
+    {
+      "name": "RecordingContractChecks",
+      "flag": "-recording-contract-tests",
+      "marker": "RECORDING CONTRACT: startup cancellation, route/pause races, interruption recovery, reset preservation, stale callbacks, durable finish/discard retries, cancelled permission after failed discard, and capture-priority ownership passed"
+    },
+    {
+      "name": "RecordingActivityContractChecks",
+      "flag": "-recording-activity-contract-tests",
+      "marker": "RECORDING ACTIVITY CONTRACT: serialized replacement, orphan cleanup, microphone independence, freshness, accurate state, and frozen failed-save endings passed"
+    },
+    {
+      "name": "RecordingPresentationContractChecks",
+      "flag": "-recording-presentation-contract-tests",
+      "marker": "RECORDING PRESENTATION CONTRACT: bounded elapsed projection, stale and legacy freezing, state labels, numeric safety, Codable compatibility, and capture-specific links passed"
+    },
+    {
+      "name": "CalendarOccurrenceContractChecks",
+      "flag": "-calendar-occurrence-contract-tests",
+      "marker": "CALENDAR OCCURRENCE CONTRACT: exact recurrence, calendar boundaries, ambiguity, legacy adoption, stable keys, Codable compatibility, and bounded DST queries passed"
+    },
+    {
+      "name": "ReminderOccurrenceContractChecks",
+      "flag": "-reminder-occurrence-contract-tests",
+      "marker": "REMINDER OCCURRENCE CONTRACT: moved pin refresh, legacy restart, calendar and ambiguity fences, expiry, monotonic consumption, and activity identity passed"
+    },
+    {
+      "name": "CalendarNavigationContractChecks",
+      "flag": "-calendar-navigation-contract-tests",
+      "marker": "CALENDAR NAVIGATION CONTRACT: exact current provider routing, recurring native detail, failed and obsolete opens, and same-ID occurrence selection passed"
+    },
+    {
+      "name": "ReminderBenchmarkContractChecks",
+      "flag": "-reminder-benchmark-contract-tests",
+      "marker": "REMINDER BENCHMARK CONTRACT: owned cancellation, obsolete progress rejection, typed execution outcomes, assessed-only metrics, deterministic-only runs, and production reconciliation passed"
+    },
+    {
+      "name": "ReminderMatchingContractChecks",
+      "flag": "-reminder-matching-contract-tests",
+      "marker": "REMINDER MATCHING CONTRACT: completed yes/no cache, exact input invalidation, bounded pruning, canceled/error exclusion, and ordered delivery uncertainty passed"
+    },
+    {
+      "name": "ReminderFeedbackContractChecks",
+      "flag": "-reminder-feedback-contract-tests",
+      "marker": "REMINDER FEEDBACK CONTRACT: permission ownership, retained audio and completed-text retry, real write faults, exact receipts, cancellation boundaries, deletion, partial speech, and native quarantine passed"
+    },
+    {
+      "name": "PlaybackContractChecks",
+      "flag": "-playback-contract-tests",
+      "marker": "PLAYBACK CONTRACT: interruptions, route loss, reset reconstruction, stale callbacks, session release, and AAC/CAF-to-M4A position/play-intent continuity passed"
+    },
+    {
+      "name": "WaveformDecoderContractChecks",
+      "flag": "-waveform-contract-tests",
+      "marker": "WAVEFORM DECODER CONTRACT: native PCM/AAC EOF, bounded reads, cache hits, replacement identity, cancellation, deletion, failure repair, and LRU eviction passed"
+    },
+    {
+      "name": "PlaybackWaveformContractChecks",
+      "flag": "-waveform-contract-tests",
+      "marker": "WAVEFORM PLAYBACK CONTRACT: immediate readiness, stale identity and A-B-A results, owned cancellation, paused retry, failure recovery, cached repeat visits, and capture observation passed"
+    },
+    {
+      "name": "StorageContractChecks",
+      "flag": "-storage-contract-tests",
+      "marker": "STORAGE CONTRACT: isolated corruption, preserved originals, idempotent migration, reserved IDs, stable recovery, incremental saves, committed exports, retryable writes/deletions, and tombstones passed"
+    },
+    {
+      "name": "AudioFinalizationContractChecks",
+      "flag": "-audio-finalization-contract-tests",
+      "marker": "AUDIO FINALIZATION CONTRACT: native AAC passthrough, CAF conversion, commit failure/restart, stale metadata, running-export cancellation, deletion, invalid audio, and export gating passed"
+    },
+    {
+      "name": "TranscriptionContractChecks",
+      "flag": "-transcription-contract-tests",
+      "marker": "TRANSCRIPTION CONTRACT: native audio conversion/tail, partial failure/fallback, silence vs unavailable, owned analysis/results, remote fallback, cancellation draining, and actual-service admission passed"
+    },
+    {
+      "name": "ModelOutcomeContractChecks",
+      "flag": "-model-outcome-contract-tests",
+      "marker": "MODEL OUTCOME CONTRACT: completion, skip, unavailable, failure, cancellation, weekly review, and partial reminder resolution checks passed"
+    },
+    {
+      "name": "WeeklyRecordingMetricContractChecks",
+      "flag": "-weekly-recording-metric-contract-tests",
+      "marker": "WEEKLY RECORDING METRIC CONTRACT: seven local days, DST and half-open boundaries, duration-only finite aggregation, identical generated/fallback/empty/cancelled metrics, and bootstrap-safe Store loading passed"
+    },
+    {
+      "name": "ModelContextContractChecks",
+      "flag": "-model-context-contract-tests",
+      "marker": "MODEL CONTEXT CONTRACT: complete prompt reserves, lossless UTF16 coverage, preferred boundaries, typed oversized-input failures, cancellation, and strict bisection passed"
+    },
+    {
+      "name": "ReflectionContextContractChecks",
+      "flag": "-reflection-context-contract-tests",
+      "marker": "REFLECTION CONTEXT CONTRACT: unchanged fitting input, all-range recursive reduction, bounded overflow retry, failure/cancellation, dated weekly coverage, and source-checked notes passed"
+    },
+    {
+      "name": "ReminderContextContractChecks",
+      "flag": "-reminder-context-contract-tests",
+      "marker": "REMINDER CONTEXT CONTRACT: fitting path, original range coverage, all-candidate corrections, exact evidence, named targets, bounded native retry, and fuzzy budget failure passed"
+    },
+    {
+      "name": "ReminderIdentityContractChecks",
+      "flag": "-reminder-identity-contract-tests",
+      "marker": "REMINDER IDENTITY CONTRACT: durable identity, consumption, archive recovery, feedback generations, removal, pinned refresh, write faults, and legacy metadata passed"
+    },
+    {
+      "name": "ReminderValidityContractChecks",
+      "flag": "-reminder-validity-contract-tests",
+      "marker": "REMINDER VALIDITY CONTRACT: inclusive expiry, creation/end boundaries, ongoing and indefinite rules, pinned no-retarget, pre-inference filtering, and historical examples passed"
+    },
+    {
+      "name": "ReminderExactTargetContractChecks",
+      "flag": "-reminder-exact-target-contract-tests",
+      "marker": "REMINDER EXACT TARGET CONTRACT: complete ordered names, normalization, alternatives, explicit alias, deceptive prefixes, semantic admission, and validity/time guards passed"
+    },
+    {
+      "name": "ReminderBackfillContractChecks",
+      "flag": "-reminder-backfill-contract-tests",
+      "marker": "REMINDER BACKFILL CONTRACT: atomic reminder-only queueing, durable history, restart idempotence, source/status exclusions, and isolated write-failure retry passed"
+    },
+    {
+      "name": "ReminderDeliveryContractChecks",
+      "flag": "-reminder-delivery-contract-tests",
+      "marker": "REMINDER DELIVERY CONTRACT: secondary-source retirement before held inference, visible retry, capture drain ownership, and enabled/startup/foreground backfill passed"
+    },
+    {
+      "name": "ReminderPresentationContractChecks",
+      "flag": "-reminder-presentation-contract-tests",
+      "marker": "REMINDER PRESENTATION CONTRACT: descriptor replacement, lead normalization, bounded scheduling, contributor retirement, hidden counts, capture suspension, failures, and relaunch passed"
+    },
+    {
+      "name": "ProcessingRepositoryContractChecks",
+      "flag": "-processing-repository-contract-tests",
+      "marker": "PROCESSING REPOSITORY CONTRACT: durable stages, restart/cancellation, stale leases, write failure retry, narrow edits, skipped outcomes, and deletion passed"
+    },
+    {
+      "name": "ProcessingWorkerContractChecks",
+      "flag": "-processing-worker-contract-tests",
+      "marker": "PROCESSING WORKER CONTRACT: narrow edit retry, stale/deleted receipts, stage write failure, preserved results, one active pipeline, and drain-boundary enqueue passed"
+    },
+    {
+      "name": "ServiceAdmissionContractChecks",
+      "flag": "-service-admission-contract-tests",
+      "marker": "SERVICE ADMISSION CONTRACT: queue cancellation, owned cleanup, admission deadlines, suspension revisions, task context, and serial fanout passed"
+    },
+    {
+      "name": "ProcessingReliabilityContractChecks",
+      "flag": "-processing-reliability-contract-tests",
+      "marker": "PROCESSING RELIABILITY CONTRACT: persisted finite retries, admitted deadlines, capture/background ownership, native quarantine, and startup temporary cleanup passed"
+    },
+    {
+      "name": "ReminderSchedulingContractChecks",
+      "flag": "-reminder-scheduling-contract-tests",
+      "marker": "REMINDER SCHEDULING CONTRACT: stale source, removal, deletion, settings, calendar replacement, pin-write failure, and isolated note writes passed"
+    },
+    {
+      "name": "ReminderSourceRepositoryContractChecks",
+      "flag": "-reminder-source-repository-contract-tests",
+      "marker": "REMINDER SOURCE REPOSITORY CONTRACT: atomic resolution, source revisions, stale/deleted output rejection, write fault preservation, and pending-source exclusions passed"
+    },
+    {
+      "name": "ReminderActivityContractChecks",
+      "flag": "-reminder-activity-contract-tests",
+      "marker": "REMINDER ACTIVITY CONTRACT: serialized effects, stale generations, latest submissions, delayed updates, predicate invalidation, and cancellation passed"
+    },
+    {
+      "name": "ICloudMirrorContractChecks",
+      "flag": "-icloud-mirror-contract-tests",
+      "marker": "ICLOUD MIRROR CONTRACT: incremental exports, pair repair, source receipts, external replacement repair, same-revision retries, safe renames, and authoritative deletion passed"
+    },
+    {
+      "name": "ICloudStoreContractChecks",
+      "flag": "-icloud-store-contract-tests",
+      "marker": "ICLOUD STORE CONTRACT: latest-only coalescing, snapshot recapture, scoped deletion receipts, same-revision repair, capture wake, and coherent bootstrap passed"
+    },
+    {
+      "name": "CloudStateContractChecks",
+      "flag": "-cloud-state-contract-tests",
+      "marker": "CLOUD STATE CONTRACT: durable content acknowledgments, stale receipts, finite retries, provisional overlay and explicit key intent, strict schema, and storage fault recovery passed"
+    },
+    {
+      "name": "CloudFileAccessContractChecks",
+      "flag": "-cloud-file-access-contract-tests",
+      "marker": "CLOUD FILE ACCESS CONTRACT: native access, remapped URLs, error propagation, cancellation, deadlines, and owned cleanup passed"
+    },
+    {
+      "name": "ICloudProviderContractChecks",
+      "flag": "-icloud-provider-contract-tests",
+      "marker": "ICLOUD PROVIDER CONTRACT: configuration classification, conditional creation, durable receipts, staging cleanup, cancellation retry, and stale-pass fencing passed"
+    },
+    {
+      "name": "CloudStoreReliabilityContractChecks",
+      "flag": "-cloud-store-reliability-contract-tests",
+      "marker": "CLOUD STORE RELIABILITY CONTRACT: independent note export, provisional restart, held restore and startup edits, live settings intent, repaired storage retry, and capture cancellation passed"
+    }
+  ],
+  "benchmark_checks": [
+    "series external identifier",
+    "series rejects another title and identifier",
+    "time bucket boundaries",
+    "old entry JSON remains decodable",
+    "unpinned reminder JSON remains decodable",
+    "summary rejects ungrounded file artifacts",
+    "distant named events ground a shared cue",
+    "next match pins first occurrence",
+    "next match retires instead of drifting",
+    "every match materializes all occurrences",
+    "upcoming source occurrence remains eligible",
+    "named fuzzy targets resolve without a model call"
+  ]
+}

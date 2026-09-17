@@ -4,7 +4,7 @@ The app contains a permanent, on-device benchmark for the production reminder pa
 
 ```sh
 xcrun simctl launch --terminate-running-process --console <device-id> \
-  com.stefan.myvoicememo -reminder-benchmark
+  com.stefan.myvoicememo -demo -reminder-benchmark
 ```
 
 Use `-reminder-benchmark-group <id>` to run one of `direct`, `boundaries`, `schedule`, `speech`, `dense`, `feedback`, or `resolution`.

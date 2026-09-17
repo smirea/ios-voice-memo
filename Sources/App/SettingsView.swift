@@ -17,18 +17,21 @@ struct SettingsView: View {
 		NavigationStack {
 			ScrollViewReader { proxy in
 				List {
-					Section("Recording") {
+					Section {
+						sectionHeading("Recording")
 						Toggle("Keep screen awake", isOn: settingBinding(\.keepScreenAwakeWhileRecording))
 						Toggle("Haptics", isOn: settingBinding(\.hapticsEnabled))
 					}
 					.listRowBackground(AppStyle.background)
 
-					Section("Journal") {
+					Section {
+						sectionHeading("Journal")
 						Toggle("Show transcripts", isOn: settingBinding(\.showTranscripts))
 					}
 					.listRowBackground(AppStyle.background)
 
 					Section {
+						sectionHeading("Transcription")
 						Toggle(
 							"Prefer ElevenLabs transcription",
 							isOn: settingBinding(\.preferElevenLabsTranscription)
@@ -41,18 +44,17 @@ struct SettingsView: View {
 								.textContentType(.password)
 								.privacySensitive()
 						}
-					} header: {
-						Text("Transcription")
 					}
 					.listRowBackground(AppStyle.background)
 
-					calendarSection
+					calendarSection.id("calendar-settings")
 
 					if store.settings.calendarSyncEnabled {
 						reminderSection.id("reminder-settings")
 					}
 
-					Section("Model") {
+					Section {
+						sectionHeading("Model")
 						NavigationLink {
 							ReminderBenchmarkView()
 						} label: {
@@ -62,6 +64,7 @@ struct SettingsView: View {
 					.listRowBackground(AppStyle.background)
 
 					Section {
+						sectionHeading("Data")
 						if store.cloudStatusMessage != nil {
 							Button("Try Again") { store.retryCloudSync() }
 								.disabled(store.isCloudSyncing || store.isCapturePriorityActive)
@@ -70,8 +73,6 @@ struct SettingsView: View {
 							showsClearConfirmation = true
 						}
 						.disabled(store.entries.isEmpty || store.isDemoMode)
-					} header: {
-						Text("Data")
 					} footer: {
 						if let message = store.cloudStatusMessage { Text(message) }
 					}
@@ -89,7 +90,10 @@ struct SettingsView: View {
 				}
 				.task {
 					#if DEBUG
-					if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-demo-reminder-") }) {
+					if ProcessInfo.processInfo.arguments.contains("-demo-settings-calendar") {
+						await Task.yield()
+						proxy.scrollTo("calendar-settings", anchor: .top)
+					} else if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-demo-reminder-") }) {
 						await Task.yield()
 						proxy.scrollTo("reminder-settings", anchor: .center)
 					} else if ProcessInfo.processInfo.arguments.contains("-demo-cloud-pending")
@@ -137,6 +141,7 @@ struct SettingsView: View {
 
 	private var calendarSection: some View {
 		Section {
+			sectionHeading("Calendar")
 			Toggle("Calendar sync", isOn: calendarSyncBinding)
 				.disabled(isRequestingCalendarAccess)
 
@@ -154,14 +159,13 @@ struct SettingsView: View {
 					)
 				}
 			}
-		} header: {
-			Text("Calendar")
 		}
 		.listRowBackground(AppStyle.background)
 	}
 
 	private var reminderSection: some View {
 		Section {
+			sectionHeading("Event reminders")
 			Toggle("Event reminders", isOn: settingBinding(\.eventRemindersEnabled))
 
 			if store.settings.eventRemindersEnabled {
@@ -177,8 +181,6 @@ struct SettingsView: View {
 			if store.canRetryReminderDelivery {
 				Button("Try Reminders Again") { Task { await store.retryReminderDelivery() } }
 			}
-		} header: {
-			Text("Event reminders")
 		} footer: {
 			VStack(alignment: .leading, spacing: 6) {
 				if let message = store.reminderSchedulingMessage { Text(message) }
@@ -187,6 +189,16 @@ struct SettingsView: View {
 			}
 		}
 		.listRowBackground(AppStyle.background)
+	}
+
+	private func sectionHeading(_ title: String) -> some View {
+		Text(title)
+			.font(.subheadline.weight(.semibold))
+			.foregroundStyle(AppStyle.secondary)
+			.padding(.top, 12)
+			.padding(.bottom, 4)
+			.accessibilityAddTraits(.isHeader)
+			.listRowSeparator(.hidden)
 	}
 
 	private func settingBinding<Value>(_ keyPath: WritableKeyPath<JournalSettings, Value>) -> Binding<Value> {
