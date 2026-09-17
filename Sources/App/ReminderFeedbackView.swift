@@ -16,43 +16,54 @@ struct ReminderFeedbackView: View {
 
 	var body: some View {
 		NavigationStack {
-			VStack(spacing: 28) {
-				Text("Say what was missed, what should change, or what should be removed.")
-					.font(.system(size: 17, weight: .medium))
-					.foregroundStyle(.secondary)
-					.multilineTextAlignment(.center)
-					.padding(.horizontal, 24)
+			ScrollView {
+				VStack(spacing: 28) {
+					Text("Say what was missed, what should change, or what should be removed.")
+						.font(.system(size: 17, weight: .medium))
+						.foregroundStyle(.secondary)
+						.multilineTextAlignment(.center)
+						.padding(.horizontal, 24)
 
-				WaveformView(levels: isVisualDemo ? demoLevels : recorder.levels)
-					.frame(height: 52)
-					.padding(.horizontal, 28)
+					WaveformView(levels: isVisualDemo ? demoLevels : recorder.levels)
+						.frame(height: 52)
+						.padding(.horizontal, 28)
 
-				Text((isVisualDemo ? 12 : recorder.duration).clockText)
-					.font(.system(size: 22, weight: .medium, design: .monospaced))
-					.monospacedDigit()
+					Text((isVisualDemo ? 12 : recorder.duration).clockText)
+						.font(.system(size: 22, weight: .medium, design: .monospaced))
+						.monospacedDigit()
 
-				if isSubmitting {
-					ProgressView("Updating reminders")
-						.tint(AppStyle.accent)
-				} else {
-					Button(action: useFeedback) {
-						Label("Use feedback", systemImage: "checkmark")
-							.font(.system(size: 17, weight: .semibold))
-							.foregroundStyle(.white)
-							.frame(maxWidth: .infinity)
-							.frame(height: 56)
-							.background(AppStyle.accent, in: Capsule())
+					if let statusMessage = recorder.statusMessage {
+						Text(statusMessage)
+							.font(.footnote)
+							.foregroundStyle(.secondary)
+							.multilineTextAlignment(.center)
+							.padding(.horizontal, 24)
 					}
-					.buttonStyle(.plain)
-					.disabled(!isVisualDemo && (!recorder.isRecording || recorder.duration < 0.4))
-					.padding(.horizontal, 24)
-				}
 
-				Text("The recording is transcribed for this correction, then deleted.")
-					.font(.footnote)
-					.foregroundStyle(.tertiary)
-					.multilineTextAlignment(.center)
-					.padding(.horizontal, 32)
+					if isSubmitting {
+						ProgressView("Updating reminders")
+							.tint(AppStyle.accent)
+					} else {
+						Button(action: useFeedback) {
+							Label("Use feedback", systemImage: "checkmark")
+								.font(.system(size: 17, weight: .semibold))
+								.foregroundStyle(.white)
+								.frame(maxWidth: .infinity)
+								.frame(height: 56)
+								.background(AppStyle.accent, in: Capsule())
+						}
+						.buttonStyle(.plain)
+						.disabled(!isVisualDemo && (!recorder.hasRecording || recorder.duration < 0.4))
+						.padding(.horizontal, 24)
+					}
+
+					Text("The recording is transcribed for this correction, then deleted.")
+						.font(.footnote)
+						.foregroundStyle(.tertiary)
+						.multilineTextAlignment(.center)
+						.padding(.horizontal, 32)
+				}
+				.padding(.vertical, 20)
 			}
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
 			.background(AppStyle.background)
@@ -70,10 +81,17 @@ struct ReminderFeedbackView: View {
 		}
 		.preferredColorScheme(.dark)
 		.presentationBackground(AppStyle.background)
-		.presentationDetents([.medium])
+		.presentationDetents([.medium, .large])
 		.interactiveDismissDisabled(isSubmitting)
 		.task {
-			guard !isVisualDemo else { return }
+			guard !isVisualDemo else {
+				#if DEBUG
+				if ProcessInfo.processInfo.arguments.contains("-demo-audio-reset") {
+					recorder.showStoppedDemo(duration: 12)
+				}
+				#endif
+				return
+			}
 			await startRecording()
 		}
 		.onDisappear {

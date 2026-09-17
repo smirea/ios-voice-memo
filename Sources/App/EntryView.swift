@@ -209,6 +209,7 @@ struct EntryView: View {
 		.animation(.easeOut(duration: 0.28), value: currentEntry.location)
 		.task {
 			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-feedback") {
+				playback.pause()
 				showsReminderFeedback = true
 			}
 		}
@@ -321,6 +322,7 @@ struct EntryView: View {
 
 	private func reminderFeedbackButton(empty: Bool) -> some View {
 		Button {
+			playback.pause()
 			showsReminderFeedback = true
 		} label: {
 			Label(

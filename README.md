@@ -49,7 +49,7 @@ Open `VoiceMemo.xcodeproj`, select the `VoiceMemo` scheme, and run on an iOS 26 
 
 Add `-demo` to load sample content. Use `-demo-entry`, `-demo-reminders`, `-demo-reminder-feedback`, `-demo-review`, `-demo-recording`, `-demo-settings`, or `-demo-reminder-benchmark` to open a state directly.
 
-In a Debug build, launch with `-demo -recording-contract-tests` to check recording startup cancellation and reopening with isolated temporary storage and no microphone access.
+In a Debug build, launch with `-demo -recording-contract-tests -playback-contract-tests` to check startup cancellation, audio recovery races, media resets, and playback session ownership with isolated temporary storage and no microphone access. Add `-demo-audio-reset` to `-demo-recording` or `-demo-reminder-feedback` to inspect the stopped recording UI.
 
 Query the Apple Intelligence model in the booted iPhone Simulator:
 

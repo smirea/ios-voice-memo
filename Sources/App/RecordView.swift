@@ -18,6 +18,10 @@ struct RecordView: View {
 		session.isVisualDemo
 	}
 
+	private var demoIsRecording: Bool {
+		isVisualDemo && !ProcessInfo.processInfo.arguments.contains("-demo-audio-reset")
+	}
+
 	private var shownDuration: TimeInterval {
 		isVisualDemo ? 113 : recorder.duration
 	}
@@ -230,15 +234,15 @@ struct RecordView: View {
 
 			HStack(spacing: 34) {
 				Button(action: togglePause) {
-					Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+					Image(systemName: demoIsRecording || recorder.wantsToRecord ? "pause.fill" : "play.fill")
 						.font(.system(size: 13, weight: .semibold))
 						.foregroundStyle(AppStyle.accent)
 						.frame(width: 48, height: 48)
 						.glassEffect(.regular.interactive(), in: Circle())
 				}
 				.buttonStyle(.plain)
-				.disabled(!isVisualDemo && !recorder.isRecording)
-				.accessibilityLabel(recorder.isPaused ? "Resume" : "Pause")
+				.disabled(!demoIsRecording && !recorder.canTogglePause)
+				.accessibilityLabel(demoIsRecording || recorder.wantsToRecord ? "Pause" : "Resume")
 
 				Button(action: finish) {
 					Image(systemName: "checkmark")
@@ -249,7 +253,7 @@ struct RecordView: View {
 						.shadow(color: AppStyle.accent.opacity(0.38), radius: 18, y: 7)
 				}
 				.buttonStyle(.plain)
-				.disabled(!isVisualDemo && (!recorder.isRecording || session.isFinishing))
+				.disabled(!isVisualDemo && (!recorder.hasRecording || session.isFinishing))
 				.accessibilityLabel("Finish recording")
 			}
 			.padding(.bottom, 63)

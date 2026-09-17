@@ -23,125 +23,213 @@ enum RecordingError: LocalizedError {
 }
 
 @MainActor
+protocol AudioRecordingDevice: AnyObject {
+	var isRecording: Bool { get }
+	var currentTime: TimeInterval { get }
+	var delegate: (any AVAudioRecorderDelegate)? { get set }
+	var isMeteringEnabled: Bool { get set }
+	func prepareToRecord() -> Bool
+	func record() -> Bool
+	func pause()
+	func stop()
+	func updateMeters()
+	func averagePower(forChannel channelNumber: Int) -> Float
+}
+
+extension AVAudioRecorder: AudioRecordingDevice {}
+
+@MainActor
+struct RecordingHardware {
+	var makeRecorder: (URL) throws -> any AudioRecordingDevice = { url in
+		try AVAudioRecorder(url: url, settings: [
+			AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+			AVSampleRateKey: 44_100,
+			AVNumberOfChannelsKey: 1,
+			AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+		])
+	}
+	var activate: (AnyObject) throws -> Void = { owner in
+		try AudioSessionController.shared.activate(
+			owner,
+			category: .record,
+			mode: .default,
+			options: [.allowBluetoothHFP, .bluetoothHighQualityRecording]
+		)
+	}
+	var deactivate: (AnyObject) -> Void = { AudioSessionController.shared.deactivate($0) }
+}
+
+enum CaptureState: Equatable {
+	case idle
+	case starting
+	case recording
+	case pausedByUser
+	case interrupted
+	case waitingForInput
+	case stopped(CaptureStopReason)
+}
+
+enum CaptureStopReason: Equatable {
+	case mediaServicesReset
+	case encodingFailure
+	case unexpectedFinish
+}
+
+@MainActor
 @Observable
 final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
-	private(set) var isRecording = false
-	private(set) var isPaused = false {
+	private(set) var state = CaptureState.idle {
 		didSet { onStateChange?() }
 	}
 	private(set) var duration: TimeInterval = 0 {
 		didSet { onStateChange?() }
 	}
 	private(set) var levels = Array(repeating: 0.08, count: 46)
-	private(set) var statusMessage: String?
+	private(set) var wantsToRecord = false
 	@ObservationIgnored var onStateChange: (() -> Void)?
 	@ObservationIgnored private let permissionRequest: () async -> Bool
-
-	@ObservationIgnored private var recorder: AVAudioRecorder?
+	@ObservationIgnored private let hardware: RecordingHardware
+	@ObservationIgnored private let recoveryDelay: () async throws -> Void
+	@ObservationIgnored private var recorder: (any AudioRecordingDevice)?
 	@ObservationIgnored private var meterTimer: Timer?
 	@ObservationIgnored private var outputURL: URL?
-	@ObservationIgnored private var interruptionTask: Task<Void, Never>?
-	@ObservationIgnored private var routeChangeTask: Task<Void, Never>?
-	@ObservationIgnored private var wasRecordingBeforeInterruption = false
+	@ObservationIgnored private var observationTasks: [Task<Void, Never>] = []
+	@ObservationIgnored private(set) var routeRecoveryTask: Task<Void, Never>?
+	@ObservationIgnored private var generation: UUID?
+	@ObservationIgnored private var recoveryGeneration = UUID()
+	@ObservationIgnored private var interruptionIsActive = false
 
-	init(permissionRequest: @escaping () async -> Bool = { await AVAudioApplication.requestRecordPermission() }) {
+	var isRecording: Bool { state == .recording }
+	var hasRecording: Bool { state != .idle && state != .starting }
+	var isPaused: Bool { hasRecording && !isRecording }
+	var canTogglePause: Bool {
+		guard hasRecording else { return false }
+		if case .stopped = state { return false }
+		return true
+	}
+
+	var statusMessage: String? {
+		switch state {
+		case .idle, .starting, .recording: nil
+		case .pausedByUser: "Recording paused."
+		case .interrupted: "Recording paused for an audio interruption."
+		case .waitingForInput: "Recording paused until the microphone is available."
+		case .stopped(.mediaServicesReset):
+			"Recording stopped because the audio system restarted. You can keep what was captured."
+		case .stopped(.encodingFailure), .stopped(.unexpectedFinish):
+			"Recording stopped unexpectedly. You can keep what was captured."
+		}
+	}
+
+	init(
+		permissionRequest: @escaping () async -> Bool = { await AVAudioApplication.requestRecordPermission() },
+		hardware: RecordingHardware = RecordingHardware(),
+		recoveryDelay: @escaping () async throws -> Void = { try await Task.sleep(for: .milliseconds(250)) },
+		observeSession: Bool = true
+	) {
 		self.permissionRequest = permissionRequest
+		self.hardware = hardware
+		self.recoveryDelay = recoveryDelay
 		super.init()
-		observeAudioSession()
+		if observeSession { observeAudioSession() }
 	}
 
 	deinit {
-		interruptionTask?.cancel()
-		routeChangeTask?.cancel()
+		for task in observationTasks { task.cancel() }
+		routeRecoveryTask?.cancel()
 	}
 
 	func start(at url: URL) async throws {
-		guard await permissionRequest() else {
-			throw RecordingError.microphonePermissionDenied
+		guard state == .idle else { throw RecordingError.couldNotStart }
+		let generation = UUID()
+		self.generation = generation
+		state = .starting
+		do {
+			guard await permissionRequest() else { throw RecordingError.microphonePermissionDenied }
+			try Task.checkCancellation()
+			guard self.generation == generation else { throw CancellationError() }
+			try hardware.activate(self)
+			let recorder = try hardware.makeRecorder(url)
+			self.recorder = recorder
+			outputURL = url
+			recorder.delegate = self
+			recorder.isMeteringEnabled = true
+			guard recorder.prepareToRecord() else { throw RecordingError.couldNotStart }
+			try makeFileRecoverable(at: url)
+			guard recorder.record() else { throw RecordingError.couldNotStart }
+			duration = 0
+			levels = Array(repeating: 0.08, count: 46)
+			wantsToRecord = true
+			interruptionIsActive = false
+			state = .recording
+			startMetering()
+		} catch {
+			if self.generation == generation {
+				recorder?.delegate = nil
+				recorder?.stop()
+				recorder = nil
+				outputURL = nil
+				self.generation = nil
+				state = .idle
+				hardware.deactivate(self)
+			}
+			throw error
 		}
-		try Task.checkCancellation()
-
-		let session = AVAudioSession.sharedInstance()
-		try session.setCategory(
-			.record,
-			mode: .default,
-			options: [.allowBluetoothHFP, .bluetoothHighQualityRecording]
-		)
-		try session.setActive(true)
-
-		let settings: [String: Any] = [
-			AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-			AVSampleRateKey: 44_100,
-			AVNumberOfChannelsKey: 1,
-			AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-		]
-		let recorder = try AVAudioRecorder(url: url, settings: settings)
-		recorder.delegate = self
-		recorder.isMeteringEnabled = true
-		recorder.prepareToRecord()
-		try makeFileRecoverable(at: url)
-		guard recorder.record() else { throw RecordingError.couldNotStart }
-
-		self.recorder = recorder
-		outputURL = url
-		duration = 0
-		levels = Array(repeating: 0.08, count: 46)
-		isPaused = false
-		isRecording = true
-		statusMessage = nil
-		startMetering()
 	}
 
 	func togglePause() {
-		guard let recorder else { return }
-		if isPaused {
-			do {
-				try AVAudioSession.sharedInstance().setActive(true)
-				guard recorder.record() else { return }
-				isPaused = false
-				statusMessage = nil
-				startMetering()
-			} catch {
-				statusMessage = "Recording paused until the microphone is available."
-			}
+		guard canTogglePause else { return }
+		if wantsToRecord {
+			pause()
 		} else {
-			recorder.pause()
-			isPaused = true
-			stopMetering()
+			wantsToRecord = true
+			resumeIfPossible()
 		}
 	}
 
-	func finish() -> FinishedRecording? {
-		guard let recorder, let outputURL else { return nil }
-		let recorderDuration = recorder.currentTime
+	func pause() {
+		guard canTogglePause else { return }
+		wantsToRecord = false
+		cancelRouteRecovery()
+		duration = max(duration, recorder?.currentTime ?? 0)
+		recorder?.pause()
 		stopMetering()
-		isRecording = false
-		isPaused = false
-		recorder.stop()
+		state = .pausedByUser
+	}
+
+	func finish() -> FinishedRecording? {
+		guard hasRecording, let outputURL else { return nil }
+		duration = max(duration, recorder?.currentTime ?? 0)
+		stopCapture()
 		let fileDuration = try? AVAudioFile(forReading: outputURL).duration
-		self.recorder = nil
 		self.outputURL = nil
-		statusMessage = nil
-		deactivateSession()
-		return FinishedRecording(url: outputURL, duration: fileDuration ?? recorderDuration)
+		state = .idle
+		return FinishedRecording(url: outputURL, duration: fileDuration ?? duration)
 	}
 
 	func cancel() -> URL? {
 		let url = outputURL
-		stopMetering()
-		isRecording = false
-		isPaused = false
-		recorder?.stop()
-		recorder = nil
+		stopCapture()
 		outputURL = nil
+		state = .idle
 		if let url { try? FileManager.default.removeItem(at: url) }
-		statusMessage = nil
-		deactivateSession()
 		return url
 	}
 
+	private func stopCapture() {
+		generation = nil
+		wantsToRecord = false
+		interruptionIsActive = false
+		cancelRouteRecovery()
+		stopMetering()
+		recorder?.delegate = nil
+		recorder?.stop()
+		recorder = nil
+		hardware.deactivate(self)
+	}
+
 	private func startMetering() {
-		meterTimer?.invalidate()
+		stopMetering()
 		let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
 			Task { @MainActor in self?.updateMeters() }
 		}
@@ -155,9 +243,13 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	}
 
 	private func updateMeters() {
-		guard let recorder else { return }
-		duration = recorder.currentTime
-		guard !isPaused else { return }
+		guard let recorder, isRecording else { return }
+		duration = max(duration, recorder.currentTime)
+		guard recorder.isRecording else {
+			state = .waitingForInput
+			stopMetering()
+			return
+		}
 		recorder.updateMeters()
 		let power = recorder.averagePower(forChannel: 0)
 		let normalized = max(0.08, min(1, pow(10, power / 38)))
@@ -167,66 +259,119 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
 	private func observeAudioSession() {
 		let session = AVAudioSession.sharedInstance()
-		interruptionTask = Task { @MainActor [weak self] in
-			for await notification in NotificationCenter.default.notifications(
-				named: AVAudioSession.interruptionNotification,
-				object: session
-			) {
+		observationTasks.append(Task { @MainActor [weak self] in
+			for await notification in NotificationCenter.default.notifications(named: AVAudioSession.interruptionNotification, object: session) {
 				self?.handleInterruption(notification)
 			}
-		}
-		routeChangeTask = Task { @MainActor [weak self] in
-			for await _ in NotificationCenter.default.notifications(
-				named: AVAudioSession.routeChangeNotification,
-				object: session
-			) {
-				await self?.recoverAfterRouteChange()
+		})
+		observationTasks.append(Task { @MainActor [weak self] in
+			for await _ in NotificationCenter.default.notifications(named: AVAudioSession.routeChangeNotification, object: session) {
+				self?.handleRouteChange()
 			}
+		})
+		for name in [AVAudioSession.mediaServicesWereLostNotification, AVAudioSession.mediaServicesWereResetNotification] {
+			observationTasks.append(Task { @MainActor [weak self] in
+				for await _ in NotificationCenter.default.notifications(named: name, object: session) {
+					self?.handleMediaServicesReset()
+				}
+			})
 		}
 	}
 
-	private func handleInterruption(_ notification: Notification) {
-		guard isRecording,
+	func handleInterruption(_ notification: Notification) {
+		guard hasRecording, canTogglePause,
 			let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
 			let type = AVAudioSession.InterruptionType(rawValue: rawType)
 		else { return }
-
 		switch type {
 		case .began:
-			wasRecordingBeforeInterruption = !isPaused
+			interruptionIsActive = true
+			cancelRouteRecovery()
+			duration = max(duration, recorder?.currentTime ?? 0)
 			recorder?.pause()
-			isPaused = true
-			statusMessage = "Recording paused."
 			stopMetering()
+			state = wantsToRecord ? .interrupted : .pausedByUser
 		case .ended:
-			guard wasRecordingBeforeInterruption else { return }
-			wasRecordingBeforeInterruption = false
-			resumeAfterSystemChange()
+			interruptionIsActive = false
+			if wantsToRecord { resumeIfPossible() }
 		@unknown default:
 			break
 		}
 	}
 
-	private func recoverAfterRouteChange() async {
-		guard isRecording, !isPaused else { return }
-		try? await Task.sleep(for: .milliseconds(250))
-		guard recorder?.isRecording == false else { return }
-		resumeAfterSystemChange()
+	func handleRouteChange() {
+		guard hasRecording, canTogglePause, wantsToRecord, !interruptionIsActive else { return }
+		cancelRouteRecovery()
+		let generation = self.generation
+		let recoveryGeneration = self.recoveryGeneration
+		if recorder?.isRecording == false {
+			duration = max(duration, recorder?.currentTime ?? 0)
+			state = .waitingForInput
+			stopMetering()
+		}
+		routeRecoveryTask = Task { [weak self, recoveryDelay] in
+			do { try await recoveryDelay() } catch { return }
+			guard let self, !Task.isCancelled,
+				self.generation == generation,
+				self.recoveryGeneration == recoveryGeneration,
+				self.wantsToRecord, !self.interruptionIsActive, self.canTogglePause
+			else { return }
+			self.routeRecoveryTask = nil
+			if self.recorder?.isRecording == true {
+				self.state = .recording
+				self.startMetering()
+			} else {
+				self.resumeIfPossible()
+			}
+		}
 	}
 
-	private func resumeAfterSystemChange() {
+	private func cancelRouteRecovery() {
+		recoveryGeneration = UUID()
+		routeRecoveryTask?.cancel()
+		routeRecoveryTask = nil
+	}
+
+	private func resumeIfPossible() {
+		guard wantsToRecord, canTogglePause, let recorder else { return }
+		guard !interruptionIsActive else {
+			state = .interrupted
+			return
+		}
 		do {
-			try AVAudioSession.sharedInstance().setActive(true)
-			guard recorder?.record() == true else {
-				statusMessage = "Recording paused until the microphone is available."
-				return
-			}
-			isPaused = false
-			statusMessage = nil
+			try hardware.activate(self)
+			guard recorder.record() else { throw RecordingError.couldNotStart }
+			state = .recording
 			startMetering()
 		} catch {
-			statusMessage = "Recording paused until the microphone is available."
+			state = .waitingForInput
+			stopMetering()
 		}
+	}
+
+	func handleMediaServicesReset() {
+		guard hasRecording else { return }
+		AudioSessionController.shared.invalidate(self)
+		stopUnexpectedly(.mediaServicesReset)
+	}
+
+	#if DEBUG
+	func showStoppedDemo(duration: TimeInterval) {
+		self.duration = duration
+		wantsToRecord = false
+		state = .stopped(.mediaServicesReset)
+	}
+	#endif
+
+	func handleDeviceFinished(_ identifier: ObjectIdentifier, successfully: Bool) {
+		guard let recorder, ObjectIdentifier(recorder) == identifier, hasRecording else { return }
+		stopUnexpectedly(successfully ? .unexpectedFinish : .encodingFailure)
+	}
+
+	private func stopUnexpectedly(_ reason: CaptureStopReason) {
+		duration = max(duration, recorder?.currentTime ?? 0)
+		stopCapture()
+		state = .stopped(reason)
 	}
 
 	private func makeFileRecoverable(at url: URL) throws {
@@ -240,27 +385,14 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		try url.setResourceValues(values)
 	}
 
-	private func deactivateSession() {
-		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-	}
-
 	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-		guard !flag else { return }
-		Task { @MainActor [weak self] in
-			guard let self, self.isRecording else { return }
-			self.isPaused = true
-			self.stopMetering()
-			self.statusMessage = "Recording stopped unexpectedly, but everything captured so far is saved."
-		}
+		let identifier = ObjectIdentifier(recorder)
+		Task { @MainActor [weak self] in self?.handleDeviceFinished(identifier, successfully: flag) }
 	}
 
 	nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: (any Error)?) {
-		Task { @MainActor [weak self] in
-			guard let self, self.isRecording else { return }
-			self.isPaused = true
-			self.stopMetering()
-			self.statusMessage = "Recording stopped unexpectedly, but everything captured so far is saved."
-		}
+		let identifier = ObjectIdentifier(recorder)
+		Task { @MainActor [weak self] in self?.handleDeviceFinished(identifier, successfully: false) }
 	}
 }
 

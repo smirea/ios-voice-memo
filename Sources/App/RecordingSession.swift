@@ -53,6 +53,12 @@ final class RecordingSession {
 		self.generation = generation
 		if isVisualDemo {
 			liveActivity.start(elapsed: 113, locationName: "Chicago")
+			#if DEBUG
+			if ProcessInfo.processInfo.arguments.contains("-demo-audio-reset") {
+				recorder.showStoppedDemo(duration: 113)
+				liveActivity.setPaused(true, elapsed: 113)
+			}
+			#endif
 			return
 		}
 		startupTask = Task { [weak self] in
@@ -95,7 +101,10 @@ final class RecordingSession {
 			try await recorder.start(at: url)
 			guard self.generation == generation, !Task.isCancelled else { return }
 			startupTask = nil
-			liveActivity.start()
+			liveActivity.start(elapsed: recorder.duration)
+			if recorder.isPaused {
+				liveActivity.setPaused(true, elapsed: recorder.duration)
+			}
 			if store.settings.hapticsEnabled {
 				UIImpactFeedbackGenerator(style: .light).impactOccurred()
 			}
@@ -123,7 +132,7 @@ final class RecordingSession {
 	}
 
 	private func recordingStateChanged() {
-		guard let activeURL else { return }
+		guard let activeURL, recorder.hasRecording else { return }
 		let second = Int(recorder.duration)
 		if second >= lastCheckpointSecond + 5 {
 			lastCheckpointSecond = second
