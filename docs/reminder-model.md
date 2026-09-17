@@ -89,7 +89,7 @@ Reminder parsing is separate from title and summary generation. The parser recei
 The on-device model performs two compact semantic stages instead of producing an entire rule in one large schema:
 
 1. Read the complete transcript, existing reminder set, and ordered corrections once. Return every final action with a motivation and exact supporting excerpt. There is no maximum reminder count.
-2. Resolve clear named or attached targets directly from their grounded context. When semantic interpretation is still needed, use a separate compact scheduling request per action; independent requests run concurrently, so additional reminders do not create a serial model-call chain.
+2. Resolve clear named or attached targets directly from their grounded context. When semantic interpretation is still needed, use a separate compact scheduling request per action; requests share one on-device response permit, and recording preempts both queued and active analysis.
 3. Derive attached-series versus fuzzy targeting, next versus every policy, time of day, and relative validity from the grounded schedule context.
 4. Reject ungrounded actions and venues, apply manual removals deterministically, and deduplicate the assembled rules.
 
@@ -142,7 +142,7 @@ Removing a reminder deletes the rule and adds a manual-removal feedback record. 
 
 Manual removals are reapplied deterministically, so reprocessing cannot silently resurrect a reminder the user removed. Other additions, replacements, and corrections pass through the same transcript-wide grounded parser. Feedback reprocessing changes reminders only; it does not rewrite the note title, summary, or transcript.
 
-Full note reprocessing starts with a fresh extraction from the stored transcript, then reapplies every stored feedback correction and manual removal before replacing the reminders. It also regenerates the note title and summary, but never retranscribes or changes the source transcript.
+Full note reprocessing retranscribes the saved audio, regenerates the title and summary, then extracts reminders while reapplying every stored feedback correction and manual removal. Previously completed results remain available until each replacement stage succeeds.
 
 ## Live Activity
 

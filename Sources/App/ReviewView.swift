@@ -4,12 +4,23 @@ struct ReviewView: View {
 	@Bindable var store: JournalStore
 	let date: Date
 	@State private var review: WeeklyReview?
+	@State private var requestID = UUID()
 
 	var body: some View {
 		ZStack {
 			AppStyle.background.ignoresSafeArea()
 
-			if let review {
+			if let review, !review.outcome.isComplete {
+				VStack(spacing: 18) {
+					Text(review.outcome == .cancelled ? "Review paused" : "Review unavailable")
+						.font(.headline)
+					Text(review.outcome == .cancelled ? "Try again when recording has finished." : "The on-device model could not finish this review. Your notes are unchanged.")
+						.foregroundStyle(AppStyle.secondary)
+						.multilineTextAlignment(.center)
+					Button("Retry") { self.review = nil; requestID = UUID() }
+				}
+				.padding(24)
+			} else if let review {
 				ScrollView {
 					VStack(alignment: .leading, spacing: 25) {
 						Text(review.weekStart.formatted(.dateTime.month(.abbreviated).day().year()))
@@ -49,7 +60,10 @@ struct ReviewView: View {
 		.navigationTitle("Weekly review")
 		.navigationBarTitleDisplayMode(.inline)
 		.toolbar(.visible, for: .navigationBar)
-		.task(id: date) { review = await store.weeklyReview(for: date) }
+		.task(id: requestID) {
+			let result = await store.weeklyReview(for: date)
+			if !Task.isCancelled { review = result }
+		}
 	}
 }
 

@@ -33,6 +33,7 @@ final class RecordingSession {
 	@ObservationIgnored private let liveActivity = RecordingActivityManager()
 	@ObservationIgnored private(set) var startupTask: Task<Void, Never>?
 	@ObservationIgnored private var generation: UUID?
+	@ObservationIgnored private var capturePriorityOwner: UUID?
 	@ObservationIgnored private var activeURL: URL?
 	@ObservationIgnored private var calendarEvent: JournalCalendarEvent?
 	@ObservationIgnored private var lastCheckpointSecond = 0
@@ -93,6 +94,7 @@ final class RecordingSession {
 		generation = nil
 		liveActivity.end()
 		UIApplication.shared.isIdleTimerDisabled = false
+		await releaseCapturePriority()
 		do {
 			let entryID = try await store.finishRecording(
 				at: recording.url, calendarEvent: calendarEvent)
@@ -118,6 +120,7 @@ final class RecordingSession {
 		if recorder.state == .starting { _ = recorder.cancel() }
 		liveActivity.end()
 		UIApplication.shared.isIdleTimerDisabled = false
+		await releaseCapturePriority()
 		do {
 			if let url = finishedRecording?.url ?? activeURL {
 				try await store.cancelRecording(at: url)
@@ -138,11 +141,18 @@ final class RecordingSession {
 
 	private func beginRecording(generation: UUID) async {
 		guard self.generation == generation, !Task.isCancelled else { return }
+		capturePriorityOwner = generation
+		await store.beginCapturePriority(owner: generation)
+		guard self.generation == generation, !Task.isCancelled else {
+			await releaseCapturePriority(owner: generation)
+			return
+		}
 		do {
 			let url = try await store.destinationForNewRecording(calendarEvent: calendarEvent)
 			guard self.generation == generation, !Task.isCancelled else {
 				do { try await store.cancelRecording(at: url) }
 				catch { store.storageErrorMessage = "Cancelled recording cleanup is pending. " + error.localizedDescription }
+				await releaseCapturePriority(owner: generation)
 				return
 			}
 			activeURL = url
@@ -164,6 +174,7 @@ final class RecordingSession {
 			}
 			UIApplication.shared.isIdleTimerDisabled = store.settings.keepScreenAwakeWhileRecording
 		} catch {
+			await releaseCapturePriority(owner: generation)
 			guard self.generation == generation else { return }
 			startupTask = nil
 			errorMessage = error.localizedDescription
@@ -171,6 +182,10 @@ final class RecordingSession {
 	}
 
 	private func recordingStateChanged() {
+		if case .stopped = recorder.state, let owner = capturePriorityOwner {
+			capturePriorityOwner = nil
+			Task { await store.endCapturePriority(owner: owner) }
+		}
 		guard let activeURL, recorder.hasRecording else { return }
 		let second = Int(recorder.duration)
 		if second >= lastCheckpointSecond + 5 {
@@ -181,5 +196,11 @@ final class RecordingSession {
 			lastPausedState = recorder.isPaused
 			liveActivity.setPaused(recorder.isPaused, elapsed: recorder.duration)
 		}
+	}
+
+	private func releaseCapturePriority(owner: UUID? = nil) async {
+		guard let owner = owner ?? capturePriorityOwner else { return }
+		if capturePriorityOwner == owner { capturePriorityOwner = nil }
+		await store.endCapturePriority(owner: owner)
 	}
 }

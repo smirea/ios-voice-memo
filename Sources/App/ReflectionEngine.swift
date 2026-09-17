@@ -12,6 +12,7 @@ enum ModelProcessingOutcome: Sendable, Equatable {
 
 	static func failure(_ error: any Error, message: String) -> Self {
 		if Task.isCancelled || error is CancellationError { return .cancelled }
+		if error is ServiceAdmissionError { return .failed("The on-device analysis took too long. Try again.") }
 		switch error as? ModelProcessingError {
 		case .unavailable: return .unavailable
 		case .timedOut: return .failed("The on-device analysis took too long. Try again.")
@@ -71,7 +72,7 @@ enum ReflectionEngine {
 			guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
 				return ReflectionResult(headline: "No speech detected", summary: nil, modelName: "", outcome: .skipped)
 			}
-			let generated = try await withGenerationTimeout(generation)
+			let generated = try await generation()
 			try Task.checkCancellation()
 			return generated
 		} catch {
@@ -88,26 +89,41 @@ enum ReflectionEngine {
 
 	static func weeklyReview(entries: [JournalEntry], weekStart: Date) async -> WeeklyReview {
 		let sorted = entries.sorted { $0.createdAt < $1.createdAt }
-		let joined = sorted.map { $0.transcript }.joined(separator: "\n\n")
-
-		if let generated = try? await withGenerationTimeout({
+		return await weeklyReview(entries: sorted, weekStart: weekStart) {
 			try await modelWeeklyReview(
-				transcript: joined,
+				transcript: sorted.map(\.transcript).joined(separator: "\n\n"),
 				entries: sorted,
 				weekStart: weekStart
 			)
-		}) {
-			return generated
 		}
+	}
 
-		let title = sorted.last?.headline ?? "No entries this week"
-		let body = sorted.isEmpty
-			? "There are no entries for this week yet."
-			: sorted.map(\.transcript).joined(separator: " ")
-		let trend = sorted.enumerated().map { index, entry in
-			min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
+	static func weeklyReview(
+		entries: [JournalEntry],
+		weekStart: Date,
+		generation: @Sendable () async throws -> WeeklyReview
+	) async -> WeeklyReview {
+		do {
+			try Task.checkCancellation()
+			guard !entries.isEmpty else {
+				return WeeklyReview(weekStart: weekStart, title: "No entries this week",
+					body: "There are no entries for this week yet.", trend: [], outcome: .skipped)
+			}
+			let result = try await generation()
+			try Task.checkCancellation()
+			return result
+		} catch {
+			let outcome = ModelProcessingOutcome.failure(error,
+				message: "The on-device model could not finish the weekly review. Try again.")
+			guard outcome != .cancelled else {
+				return WeeklyReview(weekStart: weekStart, title: "", body: "", trend: [], outcome: .cancelled)
+			}
+			let trend = entries.enumerated().map { index, entry in
+				min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
+			}
+			return WeeklyReview(weekStart: weekStart, title: entries.last?.headline ?? "No entries this week",
+				body: entries.map(\.transcript).joined(separator: " "), trend: trend, outcome: outcome)
 		}
-		return WeeklyReview(weekStart: weekStart, title: title, body: body, trend: trend)
 	}
 
 	private static func fallbackReflection(
@@ -143,53 +159,53 @@ enum ReflectionEngine {
 		includeSummary: Bool
 	) async throws -> ReflectionResult {
 		guard SystemLanguageModel.default.availability == .available else { throw ModelProcessingError.unavailable }
-		let session = LanguageModelSession(instructions: """
+		let instructions = """
 		Read the entire private voice memo before responding. Identify its most meaningful theme, realization, decision, or next step. Ignore false starts, filler, transcription repetitions, and comments about making the recording. Never use the opening phrase as a title merely because it appears first. Keep the title natural, specific, sentence case, and free of ending punctuation. Summaries must cover the whole memo without interpretation or advice. Address the memo owner directly as "you"; never call them "the user," "user," or "the speaker." Never output filenames, logs, metadata, identifiers, or other tokens absent from the memo. Never give advice, diagnose, ask a question, or chat.
-		""")
+		"""
 		if includeSummary {
-			let response = try await session.respond(
-				to: transcript,
-				generating: GeneratedSummarizedReflection.self
-			)
-			guard !containsUngroundedArtifact(response.content.title, transcript: transcript),
-				!containsUngroundedArtifact(response.content.summary, transcript: transcript)
+			let generated = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+				let session = LanguageModelSession(instructions: instructions)
+				return try await session.respond(to: transcript, generating: GeneratedSummarizedReflection.self).content
+			}
+			guard !containsUngroundedArtifact(generated.title, transcript: transcript),
+				!containsUngroundedArtifact(generated.summary, transcript: transcript)
 			else { throw ModelProcessingError.invalidOutput }
 			return ReflectionResult(
-				headline: cleanTitle(response.content.title),
-				summary: cleanSentence(response.content.summary).nonempty,
+				headline: cleanTitle(generated.title),
+				summary: cleanSentence(generated.summary).nonempty,
 				modelName: "SystemLanguageModel.default · guided"
 			)
 		}
-		let response = try await session.respond(
-			to: transcript,
-			generating: GeneratedReflection.self
-		)
-		guard !containsUngroundedArtifact(response.content.title, transcript: transcript) else {
+		let generated = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+			let session = LanguageModelSession(instructions: instructions)
+			return try await session.respond(to: transcript, generating: GeneratedReflection.self).content
+		}
+		guard !containsUngroundedArtifact(generated.title, transcript: transcript) else {
 			throw ModelProcessingError.invalidOutput
 		}
 		return ReflectionResult(
-			headline: cleanTitle(response.content.title),
+			headline: cleanTitle(generated.title),
 			summary: nil,
 			modelName: "SystemLanguageModel.default · guided"
 		)
 	}
 
-	private static func modelWeeklyReview(transcript: String, entries: [JournalEntry], weekStart: Date) async throws -> WeeklyReview? {
-		guard !entries.isEmpty, SystemLanguageModel.default.availability == .available else { return nil }
-		let session = LanguageModelSession(instructions: """
+	private static func modelWeeklyReview(transcript: String, entries: [JournalEntry], weekStart: Date) async throws -> WeeklyReview {
+		guard SystemLanguageModel.default.availability == .available else { throw ModelProcessingError.unavailable }
+		let instructions = """
 		Read all entries before writing a weekly reflection. Use only these entries, notice repetition and change, and ignore transcription artifacts. Address their owner directly as "you"; never call them "the user," "user," or "the speaker." Keep the title natural, specific, sentence case, and free of ending punctuation. Never give advice, diagnose, ask questions, or chat.
-		""")
-		let response = try await session.respond(
-			to: transcript,
-			generating: GeneratedWeeklyReview.self
-		)
+		"""
+		let generated = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+			let session = LanguageModelSession(instructions: instructions)
+			return try await session.respond(to: transcript, generating: GeneratedWeeklyReview.self).content
+		}
 		let trend = entries.enumerated().map { index, entry in
 			min(0.9, max(0.15, Double(entry.transcript.count % 80) / 100 + Double(index) * 0.08))
 		}
 		return WeeklyReview(
 			weekStart: weekStart,
-			title: cleanTitle(response.content.title),
-			body: response.content.body.trimmingCharacters(in: .whitespacesAndNewlines),
+			title: cleanTitle(generated.title),
+			body: generated.body.trimmingCharacters(in: .whitespacesAndNewlines),
 			trend: trend
 		)
 	}
@@ -230,25 +246,6 @@ enum ReflectionEngine {
 			return !transcript.reminderNormalized.contains(
 				String(generated[matchRange]).reminderNormalized
 			)
-		}
-	}
-
-	private static func withGenerationTimeout<T: Sendable>(
-		_ operation: @escaping @Sendable () async throws -> T
-	) async throws -> T {
-		try Task.checkCancellation()
-		return try await withThrowingTaskGroup(of: T.self) { group in
-			defer { group.cancelAll() }
-			group.addTask { try await operation() }
-			group.addTask {
-				try await Task.sleep(for: .seconds(45))
-				throw ModelProcessingError.timedOut
-			}
-			guard let result = try await group.next() else {
-				throw ModelProcessingError.timedOut
-			}
-			try Task.checkCancellation()
-			return result
 		}
 	}
 }

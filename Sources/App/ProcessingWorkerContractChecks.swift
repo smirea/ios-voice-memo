@@ -70,6 +70,9 @@ enum ProcessingWorkerContractChecks {
 			try expect(store.entry(id: entry.id)?.transcript == entry.transcript && store.entry(id: entry.id)?.summary == entry.summary,
 				"A stage write failure must preserve prior completed transcript and analysis")
 			try restore(entry.id, root, held)
+			store.resumeStaleProcessing()
+			try await Task.sleep(for: .milliseconds(20))
+			try expect(await probe.starts == 1, "Foreground must not override a storage suspension")
 			store.retryProcessingEntry(id: entry.id)
 			try await wait { await probe.starts == 2 }
 			await probe.finish("Durably retried transcript")

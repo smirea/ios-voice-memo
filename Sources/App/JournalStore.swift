@@ -15,6 +15,7 @@ final class JournalStore {
 	var storageErrorMessage: String?
 	private(set) var hasUnsavedNoteChanges = false
 	var transcriptionAlertMessage: String?
+	private(set) var reminderSchedulingMessage: String?
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
 
@@ -34,7 +35,16 @@ final class JournalStore {
 	@ObservationIgnored private var processingWatchdog: Task<Void, Never>?
 	@ObservationIgnored private var retryWakeTask: Task<Void, Never>?
 	@ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-	@ObservationIgnored private var processingSuspended = false
+	@ObservationIgnored private var backgroundRegistration: UUID?
+	@ObservationIgnored private var storageSuspended = false
+	@ObservationIgnored private var backgroundSuspended = false
+	@ObservationIgnored private var capturePriorityOwners = Set<UUID>()
+	@ObservationIgnored private var admissionPolicyRevision: UInt64 = 0
+	private static var nextAdmissionPolicyRevision: UInt64 = 0
+	@ObservationIgnored private var admittedAt: ContinuousClock.Instant?
+	@ObservationIgnored private var remainingStageTime: TimeInterval = 0
+	var isCapturePriorityActive: Bool { !capturePriorityOwners.isEmpty }
+	private var processingSuspended: Bool { storageSuspended || backgroundSuspended || isCapturePriorityActive }
 	@ObservationIgnored private var lastPartialCheckpoint = Date.distantPast
 	@ObservationIgnored private var deletedEntryIDs = Set<UUID>()
 	@ObservationIgnored private var committedRecords: [UUID: JournalRecord] = [:]
@@ -43,6 +53,7 @@ final class JournalStore {
 	private let processingEnabled: Bool
 	#if DEBUG
 	var processingIdleCheckpoint: (() async -> Void)?
+	var processingDeadlineOverride: TimeInterval?
 	#endif
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
@@ -79,6 +90,9 @@ final class JournalStore {
 			isLoading = false
 			#if DEBUG
 			hasUnsavedNoteChanges = ProcessInfo.processInfo.arguments.contains("-demo-unsaved-notes")
+			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") {
+				reminderSchedulingMessage = "Some reminders could not be matched because on-device analysis is unavailable."
+			}
 			if ProcessInfo.processInfo.arguments.contains("-demo-finalization-failed") {
 				for entry in entries { entryProcessingPhases[entry.id] = .finalizationFailed }
 			}
@@ -119,7 +133,8 @@ final class JournalStore {
 			let loaded = try await repository.load()
 			entries = loaded.entries
 			for record in loaded.records { publish(record) }
-			storageLoadMessage = loaded.issues.isEmpty ? nil : loaded.issues.joined(separator: "\n")
+			let issues = loaded.issues
+			storageLoadMessage = issues.isEmpty ? nil : issues.joined(separator: "\n")
 			pendingICloudDeletionReferences.formUnion(loaded.deletionReferences)
 			if let configuration = loadConfiguration() {
 				settings = configuration.settings
@@ -289,8 +304,56 @@ final class JournalStore {
 	}
 
 	func resumeStaleProcessing(now: Date = .now) {
-		processingSuspended = false
-		kickProcessing()
+		backgroundSuspended = false
+		updateServiceAdmission()
+	}
+
+	func beginCapturePriority(owner: UUID) async {
+		capturePriorityOwners.insert(owner)
+		preemptProcessing()
+		let revision = newAdmissionRevision()
+		await synchronizeServiceAdmission(revision: revision)
+	}
+
+	func endCapturePriority(owner: UUID) async {
+		guard capturePriorityOwners.remove(owner) != nil else { return }
+		let revision = newAdmissionRevision()
+		await synchronizeServiceAdmission(revision: revision)
+	}
+
+	private func newAdmissionRevision() -> UInt64 {
+		Self.nextAdmissionPolicyRevision += 1
+		admissionPolicyRevision = Self.nextAdmissionPolicyRevision
+		return admissionPolicyRevision
+	}
+
+	private func updateServiceAdmission() {
+		let revision = newAdmissionRevision()
+		Task { await synchronizeServiceAdmission(revision: revision) }
+	}
+
+	private func synchronizeServiceAdmission(revision: UInt64) async {
+		guard revision == admissionPolicyRevision else { return }
+		let suspended = backgroundSuspended || isCapturePriorityActive
+		await ServiceAdmission.model.setSuspended(suspended, revision: revision)
+		await ServiceAdmission.speech.setSuspended(suspended, revision: revision)
+		guard revision == admissionPolicyRevision else { return }
+		if !processingSuspended { kickProcessing() }
+	}
+
+	private func preemptProcessing() {
+		retryWakeTask?.cancel()
+		retryWakeTask = nil
+		processingWatchdog?.cancel()
+		admittedAt = nil
+		activeStage?.cancel()
+		endBackgroundProcessing()
+		guard let lease = activeLease else { return }
+		Task {
+			do { publish(try await repository.pauseProcessing(lease)) }
+			catch RepositoryError.staleProcessing {}
+			catch { reportProcessingStorageError(error, entryID: lease.entryID) }
+		}
 	}
 
 	private func kickProcessing() {
@@ -307,6 +370,10 @@ final class JournalStore {
 			endBackgroundProcessing()
 			Task { await scheduleProcessingRetry() }
 		}
+		let temporaryIssues = await ProcessingTemporaryFiles.shared.cleanOnce()
+		if !temporaryIssues.isEmpty {
+			storageLoadMessage = ([storageLoadMessage].compactMap { $0 } + temporaryIssues).joined(separator: "\n")
+		}
 		while !Task.isCancelled, !processingSuspended {
 			let work: ProcessingWork
 			do {
@@ -322,7 +389,7 @@ final class JournalStore {
 				}
 				work = next
 			} catch {
-				processingSuspended = true
+				storageSuspended = true
 				storageErrorMessage = "Processing could not save its progress. Your audio is preserved. " + error.localizedDescription
 				break
 			}
@@ -330,25 +397,50 @@ final class JournalStore {
 			activeLease = work.lease
 			lastPartialCheckpoint = .distantPast
 			beginBackgroundProcessing()
-			let task = Task { await process(work) }
-			activeStage = task
-			processingWatchdog = Task { [weak self] in
-				try? await Task.sleep(for: Self.processingTimeout)
-				guard !Task.isCancelled, let self, self.activeLease == work.lease else { return }
-				do {
-					let record = try await self.repository.failProcessing(work.lease,
-						message: "Processing took too long. Retry this stage.", retryAfter: .now.addingTimeInterval(Self.processingTimeoutSeconds))
-					self.publish(record)
-					task.cancel()
-				} catch RepositoryError.staleProcessing {
-				} catch { self.reportProcessingStorageError(error, entryID: work.lease.entryID); task.cancel() }
+			remainingStageTime = work.record.entry.map { ProcessingDeadline.seconds(stage: work.lease.stage, entry: $0) } ?? 300
+			#if DEBUG
+			if let processingDeadlineOverride { remainingStageTime = processingDeadlineOverride }
+			#endif
+			let task = Task { [weak self] in
+				_ = await ServiceAdmission.$activity.withValue({ [weak self] active in
+					await self?.serviceActivityChanged(active, lease: work.lease)
+				}) {
+					await self?.process(work)
+				}
 			}
+			activeStage = task
+			if work.lease.stage == .finalizeAudio { serviceActivityChanged(true, lease: work.lease) }
 			await task.value
 			processingWatchdog?.cancel()
 			processingWatchdog = nil
+			admittedAt = nil
 			activeStage = nil
 			activeLease = nil
 			endBackgroundProcessing()
+		}
+	}
+
+	private func serviceActivityChanged(_ active: Bool, lease: ProcessingLease) {
+		guard activeLease == lease, !processingSuspended, activeStage?.isCancelled == false else { return }
+		if let admittedAt {
+			let elapsed = admittedAt.duration(to: .now).components
+			remainingStageTime -= Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+		}
+		admittedAt = active ? .now : nil
+		processingWatchdog?.cancel()
+		processingWatchdog = nil
+		guard active, let task = activeStage else { return }
+		let remaining = max(0, remainingStageTime)
+		processingWatchdog = Task { [weak self] in
+			do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+			guard let self, self.activeLease == lease, !self.processingSuspended else { return }
+			do {
+				self.publish(try await self.repository.failProcessing(lease,
+					message: "Processing took too long. Your saved results are preserved."))
+			} catch is CancellationError { return
+			} catch RepositoryError.staleProcessing {
+			} catch { self.reportProcessingStorageError(error, entryID: lease.entryID) }
+			task.cancel()
 		}
 	}
 
@@ -405,8 +497,7 @@ final class JournalStore {
 				let failure = error as? TranscriptionFailure
 				let record = try await repository.failProcessing(lease, message: error.localizedDescription,
 					partial: failure?.partial,
-					retryAfter: failure?.category == .unavailable ? nil : .now.addingTimeInterval(Self.processingTimeoutSeconds),
-					kind: failure?.category == .unavailable ? .unavailable : .execution)
+					kind: failure?.category == .unavailable ? .unavailable : (failure?.category == .unreadableAudio ? .unreadableAudio : .execution))
 				publish(record)
 			} catch RepositoryError.staleProcessing {
 			} catch { reportProcessingStorageError(error, entryID: lease.entryID) }
@@ -415,18 +506,15 @@ final class JournalStore {
 
 	private func failModelStage(_ outcome: ModelProcessingOutcome, lease: ProcessingLease, fallback: ReflectionResult? = nil) async throws {
 		let message: String
-		let retryAfter: Date?
 		switch outcome {
 		case .cancelled: throw CancellationError()
 		case .unavailable:
 			message = "On-device analysis is unavailable. Your recording and completed text are preserved."
-			retryAfter = nil
 		case let .failed(reason):
 			message = reason
-			retryAfter = .now.addingTimeInterval(Self.processingTimeoutSeconds)
 		case .complete, .skipped: return
 		}
-		publish(try await repository.failProcessing(lease, message: message, retryAfter: retryAfter, fallback: fallback, kind: outcome == .unavailable ? .unavailable : .execution))
+		publish(try await repository.failProcessing(lease, message: message, fallback: fallback, kind: outcome == .unavailable ? .unavailable : .execution))
 	}
 
 	private func receivePartial(_ progress: TranscriptionProgress, lease: ProcessingLease) async {
@@ -441,14 +529,14 @@ final class JournalStore {
 	}
 
 	private func reportProcessingStorageError(_ error: Error, entryID: UUID) {
-		processingSuspended = true
+		storageSuspended = true
 		entryProcessingPhases[entryID] = .failed
 		storageErrorMessage = "Processing progress could not be saved. Your audio and previous results are preserved. Retry after storage is available. " + error.localizedDescription
 	}
 
 	private func scheduleProcessingRetry() async {
 		guard processingEnabled, !processingSuspended, processingWorker == nil,
-			let next = await repository.nextProcessingRetry(), processingWorker == nil else { return }
+			let next = await repository.nextProcessingRetry(), processingWorker == nil, !processingSuspended else { return }
 		retryWakeTask?.cancel()
 		retryWakeTask = Task { [weak self] in
 			try? await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow)))
@@ -459,19 +547,25 @@ final class JournalStore {
 
 	private func beginBackgroundProcessing() {
 		guard usesExternalServices, let lease = activeLease else { return }
+		let registration = UUID()
+		backgroundRegistration = registration
 		backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Process voice memo") { [weak self] in
 			Task { @MainActor [weak self] in
 				guard let self, self.activeLease == lease else { return }
-				self.processingSuspended = true
-				let task = self.activeStage
-				task?.cancel()
-				if let record = try? await self.repository.pauseProcessing(lease) { self.publish(record) }
-				if self.activeLease == lease { self.endBackgroundProcessing() }
+				self.expireBackgroundProcessing(lease: lease, registration: registration)
 			}
 		}
 	}
 
+	func expireBackgroundProcessing(lease: ProcessingLease, registration: UUID? = nil) {
+		guard activeLease == lease, backgroundRegistration == registration else { return }
+		backgroundSuspended = true
+		preemptProcessing()
+		updateServiceAdmission()
+	}
+
 	private func endBackgroundProcessing() {
+		backgroundRegistration = nil
 		guard backgroundTask != .invalid else { return }
 		UIApplication.shared.endBackgroundTask(backgroundTask)
 		backgroundTask = .invalid
@@ -483,7 +577,7 @@ final class JournalStore {
 				let record = try await repository.requestProcessing(id: entryID)
 				publish(record)
 				cancelObsoleteStage()
-				processingSuspended = false
+				storageSuspended = false
 				kickProcessing()
 			} catch { reportProcessingStorageError(error, entryID: entryID) }
 		}
@@ -493,14 +587,21 @@ final class JournalStore {
 		Task {
 			do {
 				publish(try await repository.retryProcessing(id: entryID))
-				processingSuspended = false
+				cancelObsoleteStage()
+				storageSuspended = false
 				kickProcessing()
 			} catch { reportProcessingStorageError(error, entryID: entryID) }
 		}
 	}
 
 	func partialTranscript(for entryID: UUID) -> TranscriptionProgress? { processingStates[entryID]?.partialTranscript }
-	func processingFailure(for entryID: UUID) -> String? { processingStates[entryID]?.failure }
+	func processingFailure(for entryID: UUID) -> String? {
+		guard let job = processingStates[entryID], let failure = job.failure else { return nil }
+		if let retry = job.retryAfter {
+			return failure + " Automatic retry at " + retry.formatted(date: .omitted, time: .shortened) + "."
+		}
+		return failure
+	}
 
 	func publish(_ record: JournalRecord) {
 		if record.state == .deleted { deletedEntryIDs.insert(record.id); entries.removeAll { $0.id == record.id } }
@@ -604,7 +705,13 @@ final class JournalStore {
 	}
 
 	func weeklyReview(for date: Date) async -> WeeklyReview {
-		if isDemoMode { return .demo }
+		if isDemoMode {
+			var review = WeeklyReview.demo
+			#if DEBUG
+			if ProcessInfo.processInfo.arguments.contains("-demo-review-unavailable") { review.outcome = .unavailable }
+			#endif
+			return review
+		}
 		return await ReflectionEngine.weeklyReview(entries: entries(inWeekContaining: date), weekStart: date.startOfWeek())
 	}
 
@@ -649,11 +756,20 @@ final class JournalStore {
 	}
 
 	func refreshReminderSchedule(now: Date = .now) async {
+		#if DEBUG
+		if isDemoMode, ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") { return }
+		#endif
 		guard settings.calendarSyncEnabled, settings.eventRemindersEnabled else {
 			await reminderActivityManager.endAll()
 			return
 		}
 		let result = await ReminderEngine.resolve(entries: entries, events: calendarSync.events, now: now)
+		guard !Task.isCancelled, result.outcome != .cancelled else { return }
+		switch result.outcome {
+		case .unavailable: reminderSchedulingMessage = "Some reminders could not be matched because on-device analysis is unavailable."
+		case let .failed(message): reminderSchedulingMessage = message
+		default: reminderSchedulingMessage = nil
+		}
 
 		for entry in entries {
 			for reminder in entry.reminders {
@@ -818,8 +934,6 @@ final class JournalStore {
 		try url.setResourceValues(values)
 	}
 
-	private static let processingTimeoutSeconds: TimeInterval = 15 * 60
-	private static let processingTimeout = Duration.seconds(processingTimeoutSeconds)
 	private static let iCloudDeletionKey = "pending-icloud-drive-deletions"
 }
 

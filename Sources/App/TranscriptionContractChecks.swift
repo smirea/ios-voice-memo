@@ -28,8 +28,10 @@ enum TranscriptionContractChecks {
 			try await remoteChecks()
 			trace("remote end; cancellation begin")
 			try await cancellationChecks()
-			trace("cancellation end")
-			print("TRANSCRIPTION CONTRACT: native audio conversion/tail, partial failure/fallback, silence vs unavailable, setup cleanup, owned analysis/results, preferred remote/fallback, and cancellation draining passed")
+			trace("cancellation end; admission begin")
+			try await admissionChecks()
+			trace("admission end")
+			print("TRANSCRIPTION CONTRACT: native audio conversion/tail, partial failure/fallback, silence vs unavailable, owned analysis/results, remote fallback, cancellation draining, and actual-service admission passed")
 			fflush(stdout)
 		} catch { fatalError("TRANSCRIPTION CONTRACT: \(error)") }
 	}
@@ -114,7 +116,7 @@ enum TranscriptionContractChecks {
 		trace("partial speech to dictation begin")
 		let calls = Probe()
 		let longer = "The beginning and middle of a recording"
-		let complete = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: false,
+		let complete = try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: false,
 			providers: providers(speech: { _, update in
 				calls.append("speech")
 				return try await partialFailure(longer, model: "speech", update: update)
@@ -127,7 +129,7 @@ enum TranscriptionContractChecks {
 		trace("partial speech to dictation end; exhausted providers begin")
 
 		do {
-			_ = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: false,
+			_ = try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: false,
 				providers: providers(speech: { _, update in
 					try await partialFailure(longer, model: "speech", update: update)
 				}, dictation: { _, update in
@@ -139,11 +141,11 @@ enum TranscriptionContractChecks {
 				"Exhausted providers must report failure while retaining the best available incomplete text")
 		}
 
-		let silence = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: false,
+		let silence = try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: false,
 			providers: providers(speech: { _, _ in TranscriptionResult(transcript: "", modelName: "speech") }))
 		try expect(silence.transcript.isEmpty && silence.modelName == "speech", "Successfully analyzed silence must remain a complete empty result")
 		do {
-			_ = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: false, providers: providers())
+			_ = try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: false, providers: providers())
 			throw Failure("Unavailable local providers were counted as silent success")
 		} catch let failure as TranscriptionFailure {
 			try expect(failure.category == .unavailable && failure.partial == nil, "Unsupported language must report availability failure, not empty speech")
@@ -234,7 +236,7 @@ enum TranscriptionContractChecks {
 		trace("preferred remote begin")
 		let lifetime = Probe()
 		let appleStarted = Signal()
-		let preferred = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
+		let preferred = try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
 			providers: providers(speech: { _, update in
 				update(TranscriptionProgress(transcript: "Apple preview", modelName: "speech"))
 				await appleStarted.open()
@@ -248,11 +250,11 @@ enum TranscriptionContractChecks {
 			"Remote success must win and drain canceled Apple work before returning")
 		trace("preferred remote end; remote fallback begin")
 
-		let fallback = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
+		let fallback = try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
 			providers: providers(speech: { _, _ in TranscriptionResult(transcript: "Complete Apple fallback", modelName: "speech") }))
 		try expect(fallback.modelName == "speech" && fallback.warning != nil, "Remote failure may use completed Apple output with a warning")
 		do {
-			_ = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
+			_ = try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
 				providers: providers(speech: { _, update in try await partialFailure("Partial Apple fallback", model: "speech", update: update) }))
 			throw Failure("Remote failure accepted incomplete Apple output")
 		} catch let failure as TranscriptionFailure {
@@ -265,7 +267,7 @@ enum TranscriptionContractChecks {
 			trace("fallback cancellation key=\(hasKey) begin")
 			let lifetime = Probe()
 			let task = Task {
-				try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: hasKey ? "fixture" : nil,
+				try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: hasKey ? "fixture" : nil,
 					providers: providers(speech: { _, _ in
 						lifetime.append("apple started")
 						do { try await Task.sleep(for: .seconds(60)); throw Failure("Apple was not canceled") }
@@ -285,7 +287,7 @@ enum TranscriptionContractChecks {
 		let lifetime = Probe()
 		let remoteGate = Signal()
 		let task = Task {
-			try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
+			try await AudioTranscriber.performTranscription(url: fixtureURL, preferElevenLabs: true, elevenLabsAPIKey: "fixture",
 				providers: providers(speech: { _, _ in
 					lifetime.append("apple started")
 					do { try await Task.sleep(for: .seconds(60)); throw Failure("Apple was not canceled") }
@@ -312,6 +314,55 @@ enum TranscriptionContractChecks {
 			analyze: { await partialReady.wait(); throw Failure("Decoder stopped early") },
 			consume: { accumulator in await accumulator.append(AttributedString(text)); await partialReady.open() },
 			cancel: { await partialReady.open() })
+	}
+
+	private static func admissionChecks() async throws {
+		let lifetime = Probe()
+		let release = Signal()
+		let first = Task {
+			do {
+				_ = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: false,
+					providers: providers(speech: { _, _ in
+						await withTaskCancellationHandler {
+							lifetime.append("first started")
+							await release.wait()
+							lifetime.append("first exited")
+							return TranscriptionResult(transcript: "Late completion", modelName: "fixture")
+						} onCancel: { lifetime.append("first canceled") }
+					}))
+				throw Failure("Canceled admitted transcription returned a result")
+			} catch is CancellationError { lifetime.append("caller returned") }
+		}
+		defer { first.cancel(); Task { await release.open() } }
+		try await waitUntil { lifetime.values.contains("first started") }
+		first.cancel()
+		try await waitUntil { lifetime.values.contains("caller returned") && lifetime.values.contains("first canceled") }
+		try await first.value
+		try expect(!lifetime.values.contains("first exited"), "Cancel must return promptly while admission still owns unfinished provider cleanup")
+		let second = Task {
+			lifetime.append("second requested")
+			return try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: false,
+				providers: providers(speech: { _, _ in
+					lifetime.append("second started")
+					return TranscriptionResult(transcript: "Next complete result", modelName: "fixture")
+				}))
+		}
+		defer { second.cancel() }
+		try await waitUntil { lifetime.values.contains("second requested") }
+		try await Task.sleep(for: .milliseconds(30))
+		try expect(!lifetime.values.contains("second started"), "A replacement transcription must not overlap a canceled provider still cleaning up")
+		await release.open()
+		let result = try await second.value
+		try expect(result.transcript == "Next complete result" && lifetime.values.firstIndex(of: "first exited")! < lifetime.values.firstIndex(of: "second started")!,
+			"Admission may reopen only after the previous provider actually exits")
+		await ServiceAdmission.speech.setSuspended(true)
+		do {
+			_ = try await AudioTranscriber.transcribe(url: fixtureURL, preferElevenLabs: false,
+				providers: providers(speech: { _, _ in lifetime.append("suspended provider started"); return nil }))
+			throw Failure("Capture-suspended speech unexpectedly ran")
+		} catch is CancellationError {}
+		await ServiceAdmission.speech.setSuspended(false)
+		try expect(!lifetime.values.contains("suspended provider started"), "Capture suspension must prevent optional speech from starting")
 	}
 
 	private static func providers(

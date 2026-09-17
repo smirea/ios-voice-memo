@@ -11,8 +11,9 @@ enum RecordingContractChecks {
 		do {
 			try await run()
 			try await runCaptureStateChecks()
+			try await runCapturePriorityChecks()
 			try await runDurabilityChecks()
-			print("RECORDING CONTRACT: startup cancellation, route/pause races, interruption recovery, reset preservation, stale callbacks, durable finish/discard retries, and cancelled permission after failed discard passed")
+			print("RECORDING CONTRACT: startup cancellation, route/pause races, interruption recovery, reset preservation, stale callbacks, durable finish/discard retries, cancelled permission after failed discard, and capture-priority ownership passed")
 			fflush(stdout)
 		} catch {
 			fatalError("RECORDING CONTRACT: \(error)")
@@ -31,12 +32,14 @@ enum RecordingContractChecks {
 
 		session.present(startsImmediately: true)
 		try await permission.waitForRequest(1)
+		try expect(store.isCapturePriorityActive, "Capture priority must be claimed before requesting microphone permission")
 		let cancelledStart = session.startupTask!
 		let originalContext = session.context?.id
 		session.present(startsImmediately: true)
 		try expect(session.context?.id == originalContext, "Opening the recorder again must preserve its session")
 		try expect(permission.requests.count == 1, "One session must not create competing microphone requests")
 		await session.discard()
+		try expect(!store.isCapturePriorityActive, "Discarding pending permission must release capture priority without waiting for the user")
 		permission.resolve(0, granted: true)
 		await cancelledStart.value
 		await store.waitForPendingWrites()
@@ -51,6 +54,7 @@ enum RecordingContractChecks {
 		await failedStart.value
 		await store.waitForPendingWrites()
 		try expect(session.errorMessage != nil && session.context != nil, "A denied microphone must keep the error visible until acknowledged")
+		try expect(!store.isCapturePriorityActive, "Denied permission must release priority while its error remains visible")
 
 		await session.discard()
 
@@ -60,6 +64,7 @@ enum RecordingContractChecks {
 		await session.discard()
 		session.present(startsImmediately: true)
 		try await permission.waitForRequest(4)
+		try expect(store.isCapturePriorityActive, "Replacement startup must acquire its own capture priority")
 		let newStart = session.startupTask!
 		let newContext = session.context?.id
 		await store.waitForPendingWrites()
@@ -70,6 +75,7 @@ enum RecordingContractChecks {
 		let newPending = try Data(contentsOf: pendingURL)
 		permission.resolve(2, granted: true)
 		await oldStart.value
+		try expect(store.isCapturePriorityActive, "A stale permission result must not release the replacement session's capture priority")
 		try expect(session.context?.id == newContext && session.errorMessage == nil, "The old permission result must not dismiss or fail the replacement session")
 		try expect(try Data(contentsOf: pendingURL) == newPending, "The old completion must not remove the replacement session's recovery metadata")
 		try expect(!recorder.isRecording, "The old session must not start capture while the replacement awaits permission")
@@ -78,6 +84,7 @@ enum RecordingContractChecks {
 		await newStart.value
 		await store.waitForPendingWrites()
 		try expect(!recorder.isRecording && session.context == nil, "The replacement startup must also be cancellable")
+		try expect(!store.isCapturePriorityActive, "Both cancelled startup generations must release only their own priority")
 		try expect(try recordingFiles(in: root).isEmpty, "Neither cancelled generation may leave audio behind")
 	}
 
@@ -185,6 +192,73 @@ enum RecordingContractChecks {
 		_ = recorder.cancel()
 	}
 
+	private static func runCapturePriorityChecks() async throws {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("capture-priority-contract-\(UUID().uuidString)", isDirectory: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+		let store = JournalStore(storageRootURL: root)
+		let backend = CaptureBackend()
+		let recorder = AudioRecorder(permissionRequest: { true }, hardware: RecordingHardware(
+			makeRecorder: { try backend.makeRecorder(at: $0) },
+			activate: { _ in try backend.activate() }, deactivate: { _ in backend.deactivations += 1 }),
+			observeSession: false)
+		let session = RecordingSession(store: store, recorder: recorder)
+		session.present(startsImmediately: true)
+		await session.startupTask?.value
+		try expect(recorder.isRecording && store.isCapturePriorityActive, "Active capture must hold priority over optional processing")
+		recorder.pause()
+		await settleCallbacks()
+		try expect(recorder.state == .pausedByUser && store.isCapturePriorityActive,
+			"User pause must keep capture priority so Resume does not compete with optional processing")
+		recorder.togglePause()
+		recorder.handleInterruption(interruption(.began))
+		await settleCallbacks()
+		try expect(recorder.state == .interrupted && store.isCapturePriorityActive,
+			"An audio interruption must retain priority for the same resumable capture")
+		backend.activationShouldFail = true
+		recorder.handleInterruption(interruption(.ended))
+		await settleCallbacks()
+		try expect(recorder.state == .waitingForInput && store.isCapturePriorityActive,
+			"Waiting for an unavailable microphone must retain capture priority")
+		backend.activationShouldFail = false
+		recorder.togglePause()
+		recorder.togglePause()
+		try expect(recorder.isRecording && store.isCapturePriorityActive, "Successful input recovery must keep the same priority claim")
+		recorder.handleMediaServicesReset()
+		try await waitForPriorityRelease(store)
+		try expect(session.context != nil && session.canFinish,
+			"Terminal reset must release priority while keeping captured audio available to finish")
+		await session.discard()
+
+		session.present(startsImmediately: true)
+		await session.startupTask?.value
+		try expect(recorder.isRecording && store.isCapturePriorityActive, "A fresh capture must reacquire priority after a terminal reset")
+		recorder.handleDeviceFinished(ObjectIdentifier(backend.devices.last!), successfully: false)
+		try await waitForPriorityRelease(store)
+		try expect(session.canFinish && recorder.state == .stopped(.encodingFailure),
+			"An encoder failure must release priority without discarding the captured audio")
+		await session.discard()
+
+		backend.activationShouldFail = true
+		session.present(startsImmediately: true)
+		await session.startupTask?.value
+		try expect(session.errorMessage != nil && !recorder.hasRecording && !store.isCapturePriorityActive,
+			"Startup hardware failure must release priority without waiting for its error to be dismissed")
+		await session.discard()
+	}
+
+	private static func settleCallbacks() async {
+		for _ in 0..<10 { await Task.yield() }
+	}
+
+	private static func waitForPriorityRelease(_ store: JournalStore) async throws {
+		let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+		while store.isCapturePriorityActive {
+			guard ContinuousClock.now < deadline else { throw Failure(message: "Stopped capture never released processing priority") }
+			await Task.yield()
+		}
+	}
+
 	private static func runDurabilityChecks() async throws {
 		let root = FileManager.default.temporaryDirectory
 			.appendingPathComponent("recording-durability-contract-\(UUID().uuidString)", isDirectory: true)
@@ -197,7 +271,7 @@ enum RecordingContractChecks {
 		let session = RecordingSession(store: store, recorder: recorder)
 		session.present(startsImmediately: true)
 		await session.startupTask?.value
-		try expect(recorder.isRecording, "The capture fixture must actually enter recording")
+		try expect(recorder.isRecording && store.isCapturePriorityActive, "The capture fixture must actually record with capture priority held")
 		backend.devices[0].currentTime = 12
 		let audioURL = backend.devices[0].url
 		let id = UUID(uuidString: audioURL.deletingPathExtension().lastPathComponent)!
@@ -209,6 +283,7 @@ enum RecordingContractChecks {
 		try expect(failedFinish == nil && session.context != nil && session.canFinish && session.saveErrorMessage != nil,
 			"A real finish write failure must retain the presentation and retryable finalized recording")
 		try expect(!recorder.isRecording && store.entries.isEmpty, "A failed finish must stop capture without publishing a saved note")
+		try expect(!store.isCapturePriorityActive, "A failed metadata save must not hold capture priority after the microphone stops")
 		try expect(try Data(contentsOf: audioURL) == bytes, "Failed finish must preserve the original audio bytes")
 		try restoreWrite(at: recordURL, from: heldURL)
 		let finishedID = await session.finish()
@@ -231,6 +306,7 @@ enum RecordingContractChecks {
 		try expect(!failedDiscard && session.context != nil && session.canFinish && session.discardErrorMessage != nil,
 			"A failed discard tombstone must retain session ownership and explicit retry controls")
 		try expect(!recorder.isRecording && session.duration >= 12, "A failed discard must not leave the microphone running")
+		try expect(!store.isCapturePriorityActive, "A failed discard tombstone must release priority while retaining retryable audio")
 		try expect(try Data(contentsOf: discardedAudio) == discardedBytes, "Audio must not be removed before deletion intent is durable")
 		try restoreWrite(at: discardedRecord, from: heldDiscard)
 		let retriedDiscard = await session.discard()
@@ -244,6 +320,7 @@ enum RecordingContractChecks {
 		let pendingSession = RecordingSession(store: store, recorder: pendingRecorder)
 		pendingSession.present(startsImmediately: true)
 		try await permission.waitForRequest(1)
+		try expect(store.isCapturePriorityActive, "Pending startup must reserve capture priority before discard is attempted")
 		let pendingTask = pendingSession.startupTask!
 		let pendingRecord = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("Records"), includingPropertiesForKeys: nil).first {
 			try JSONDecoder().decode(JournalRecord.self, from: Data(contentsOf: $0)).state == .recording
@@ -251,8 +328,10 @@ enum RecordingContractChecks {
 		let heldPending = try blockWrite(to: pendingRecord, root: root)
 		let pendingDiscard = await pendingSession.discard()
 		try expect(!pendingDiscard && pendingSession.context != nil, "A pending startup must retain its context if its tombstone cannot be written")
+		try expect(!store.isCapturePriorityActive, "Cancelled permission must release priority even when its tombstone cannot be written")
 		permission.resolve(0, granted: true)
 		await pendingTask.value
+		try expect(!store.isCapturePriorityActive, "A late granted permission must not reacquire released capture priority")
 		try expect(!pendingRecorder.isRecording && pendingSession.discardErrorMessage != nil,
 			"Permission granted after failed discard must never restart capture or clear its retry error")
 		try restoreWrite(at: pendingRecord, from: heldPending)

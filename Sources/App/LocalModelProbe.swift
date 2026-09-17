@@ -13,15 +13,11 @@ enum LocalModelProbe {
 		fflush(stdout)
 		switch SystemLanguageModel.default.availability {
 		case .available:
-			let timeout = Task {
-				try? await Task.sleep(for: .seconds(60))
-				guard !Task.isCancelled else { return }
-				finish("ERROR: The local model did not respond within 60 seconds.", status: 1)
-			}
-			defer { timeout.cancel() }
 			do {
-				let response = try await LanguageModelSession().respond(to: prompt)
-				finish(response.content, status: 0)
+				let response = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+					try await LanguageModelSession().respond(to: prompt).content
+				}
+				finish(response, status: 0)
 			} catch {
 				finish("ERROR: \(error.localizedDescription)", status: 1)
 			}

@@ -7,7 +7,7 @@
 - Never places content in decorative background boxes; uses spacing, typography, alignment, and dividers for hierarchy.
 - Uses native horizontal back navigation wherever a back button is hidden.
 - Loads local note metadata without blocking the interface, preserves damaged originals, and keeps readable notes available while reporting storage problems.
-- Stores notes and audio locally for offline use, includes them in device backups, continues processing briefly in the background, and retries interrupted or stalled processing after 15 minutes or on the next launch.
+- Stores notes and audio locally for offline use, includes them in device backups, continues processing briefly in the background, and resumes interrupted processing when the app is active. Transient stage failures retry after 1, 5, and 15 minutes, then wait for manual Retry; unavailable services and unreadable audio wait for manual Retry immediately.
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.
 - Stores app settings, named locations, and API keys in a versioned, backed-up `config.json`, mirrors it beside iCloud Drive exports, and restores it when no local config exists.
 - Treats local data as authoritative: iCloud note exports are not imported, and deleting a note removes its local audio and exports. A failed deletion keeps the note available to retry; pending audio cleanup retries on launch without restoring deliberately deleted notes.
@@ -15,6 +15,7 @@
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
 - Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback, and alerts when ElevenLabs could not be used; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
 - Saves processing progress per note and resumes the unfinished stage after a restart. Keeps completed transcript and analysis during reprocessing, labels incomplete transcript text, and offers Retry for failed stages without treating partial results as complete.
+- Gives permanent and feedback recording priority over transcription and on-device analysis, including weekly reviews and reminder matching. Optional work pauses through recording interruptions and user pauses, then resumes after capture stops; timed-out native work cannot overlap its replacement.
 - Generates summaries only for recordings longer than 20 seconds.
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md).
 - Captures each recording's original coordinates and city when available, then resolves shared place names using the behavior in [`docs/location-model.md`](docs/location-model.md).
@@ -69,7 +70,7 @@
 
 # Review Screen
 
-- Generates the current week's review on open, showing a loading state followed by the week, title, trend, and reflection.
+- Generates the current week's review on open, showing a loading state followed by the week, title, trend, and reflection; interrupted or unavailable analysis shows a retry action instead of a generated review.
 - Uses the standard back button and native back swipe to return home.
 
 # Settings Screen
@@ -79,7 +80,7 @@
 - Stores an optional ElevenLabs API key in `config.json` and prefers it over the bundled fallback.
 - Calendar sync requests Full Access for read-only event access and lets each calendar be included or excluded.
 - Calendar settings can prefer direct Google Calendar links, with an exact native event view as fallback.
-- Reminder settings control delivery, Live Activities, and the global pre-event lead time.
+- Reminder settings control delivery, Live Activities, and the global pre-event lead time, and report incomplete on-device event matching while known deterministic matches remain available.
 - Reminder Benchmark runs the production parser against grouped on-device accuracy, grounding, feedback, and fuzzy-matching cases.
 - Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export; if a deletion fails, reports it in Settings and retains the affected notes for retry.
 

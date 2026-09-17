@@ -92,6 +92,8 @@ struct ReminderResolutionResult: Sendable {
 	var occurrences: [EventReminderOccurrence]
 	var examplesByReminderID: [UUID: [ReminderMatchExample]]
 	var resolvedOccurrencesByReminderID: [UUID: JournalCalendarEvent]
+	var incompleteReminderIDs: Set<UUID> = []
+	var outcome: ModelProcessingOutcome = .complete
 }
 
 enum ReminderEngine {
@@ -161,15 +163,35 @@ enum ReminderEngine {
 	static func resolve(
 		entries: [JournalEntry],
 		events: [JournalCalendarEvent],
-		now: Date = .now
+		now: Date = .now,
+		modelIsAvailable: @Sendable () -> Bool = { SystemLanguageModel.default.availability == .available }
 	) async -> ReminderResolutionResult {
+		do {
+			return try await resolvedReminders(entries: entries, events: events, now: now, modelIsAvailable: modelIsAvailable)
+		} catch {
+			return ReminderResolutionResult(occurrences: [], examplesByReminderID: [:],
+				resolvedOccurrencesByReminderID: [:], outcome: .failure(error,
+					message: "The on-device model could not finish matching reminders. Try again."))
+		}
+	}
+
+	private static func resolvedReminders(
+		entries: [JournalEntry],
+		events: [JournalCalendarEvent],
+		now: Date,
+		modelIsAvailable: @Sendable () -> Bool
+	) async throws -> ReminderResolutionResult {
+		try Task.checkCancellation()
 		var occurrences: [EventReminderOccurrence] = []
 		var examplesByReminderID: [UUID: [ReminderMatchExample]] = [:]
 		var resolvedOccurrencesByReminderID: [UUID: JournalCalendarEvent] = [:]
+		var incompleteReminderIDs: Set<UUID> = []
+		var outcome: ModelProcessingOutcome = .complete
 		let orderedEvents = events.sorted { $0.startDate < $1.startDate }
 
 		for entry in entries {
 			for reminder in entry.reminders where reminder.isActive(at: now) {
+				try Task.checkCancellation()
 				let candidatesAfterCreation = orderedEvents.filter {
 					$0.startDate > reminder.createdAt
 				}
@@ -179,7 +201,12 @@ enum ReminderEngine {
 				case let .series(series):
 					matchedEvents = candidatesAfterCreation.filter { series.matches($0) }
 				case let .fuzzy(selector):
-					let decisions = await match(selector: selector, candidates: orderedEvents)
+					let result = try await match(selector: selector, candidates: orderedEvents, modelIsAvailable: modelIsAvailable)
+					let decisions = result.decisions
+					if !result.outcome.isComplete {
+						incompleteReminderIDs.insert(reminder.id)
+						outcome = result.outcome
+					}
 					matchedEvents = candidatesAfterCreation.filter {
 						decisions[$0.focusKey]?.matches == true
 					}
@@ -197,7 +224,8 @@ enum ReminderEngine {
 					} else if let resolved = reminder.resolvedOccurrence,
 						let current = orderedEvents.first(where: { $0.focusKey == resolved.focusKey }) {
 						selected = current.endDate >= now ? [current] : []
-					} else if let next = matchedEvents.first(where: { $0.endDate >= now }) {
+					} else if !incompleteReminderIDs.contains(reminder.id),
+						let next = matchedEvents.first(where: { $0.endDate >= now }) {
 						selected = [next]
 						resolvedOccurrencesByReminderID[reminder.id] = next
 					} else {
@@ -212,10 +240,13 @@ enum ReminderEngine {
 			}
 		}
 
+		try Task.checkCancellation()
 		return ReminderResolutionResult(
 			occurrences: occurrences.sorted { $0.event.startDate < $1.event.startDate },
 			examplesByReminderID: examplesByReminderID,
-			resolvedOccurrencesByReminderID: resolvedOccurrencesByReminderID
+			resolvedOccurrencesByReminderID: resolvedOccurrencesByReminderID,
+			incompleteReminderIDs: incompleteReminderIDs,
+			outcome: outcome
 		)
 	}
 
@@ -243,7 +274,7 @@ enum ReminderEngine {
 			: feedback.enumerated().map { index, correction in
 				"\(index + 1). \(correction.kind.rawValue): \(correction.text)"
 			}.joined(separator: "\n")
-		let session = LanguageModelSession(instructions: """
+		let instructions = """
 		Read the complete event-attached memo before extracting anything. Return the final useful reminders after applying every correction in order. A reminder is an action you gave your future self for immediately before or during a calendar event.
 
 		Use context across sentences. Resolve "this event," "the game," "same thing," "today and tomorrow," and similar references before deciding whether an action is useful. If the same action applies to multiple events, create one reminder for that action rather than duplicate phrasings.
@@ -258,7 +289,7 @@ enum ReminderEngine {
 		- Vague advice that would waste attention.
 
 		Keep related people facts together. Keep distinct actions separate. Do not create duplicate phrasings of the same action. Existing reminders are context, not evidence. Corrections are authoritative: add what was missed, replace what changed, and omit anything removed. Return any useful number of reminders, including zero. Address the note owner as "you," never as user or speaker.
-		""")
+		"""
 		let prompt = """
 		Attached event:
 		Title: \(sourceEvent.title)
@@ -274,32 +305,18 @@ enum ReminderEngine {
 		Corrections, oldest to newest:
 		\(corrections)
 		"""
-		let drafts = try await withGenerationTimeout {
+		let drafts = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+			let session = LanguageModelSession(instructions: instructions)
 			let response = try await session.respond(
 				to: prompt,
 				generating: GeneratedReminderBatch.self
 			)
 			return response.content.reminders
 		}
-		let reminders = try await withThrowingTaskGroup(of: (Int, GeneratedReminder).self) { group in
-			for (index, draft) in drafts.enumerated() {
-				group.addTask {
-					(
-						index,
-						try await generatedReminder(
-							from: draft,
-							sourceEvent: sourceEvent,
-							evidenceCorpus: evidenceCorpus
-						)
-					)
-				}
-			}
-			var indexed: [(Int, GeneratedReminder)] = []
-			for try await reminder in group {
-				indexed.append(reminder)
-			}
+		var reminders: [GeneratedReminder] = []
+		for draft in drafts {
 			try Task.checkCancellation()
-			return indexed.sorted { $0.0 < $1.0 }.map(\.1)
+			reminders.append(try await generatedReminder(from: draft, sourceEvent: sourceEvent, evidenceCorpus: evidenceCorpus))
 		}
 		return (reminders, true)
 	}
@@ -325,11 +342,11 @@ enum ReminderEngine {
 				&& !sharedTargetSignals.contains(where: fallback.context.reminderNormalized.contains))
 		let generated: GeneratedReminderSchedule?
 		if needsModel {
-			let session = LanguageModelSession(instructions: """
+			let instructions = """
 			Determine the calendar-event target for one already-extracted action. Read the complete memo context and resolve pronouns or generic references such as "the game" from earlier specific names.
 
 			Schedule context must be exact contiguous text copied from the supplied memo context and retain the target, frequency, and duration. For a cue applying to multiple explicitly named events, preserve every name in eventDescription; never reduce names such as "Ultimate Werewolf" and "Blood on the Clocktower" to "game" or "event." Use only the stable event name or class, without time of day or duration. Use none for location unless the memo explicitly requires a venue. Do not invent details from the attached event.
-			""")
+			"""
 			let prompt = """
 			Attached event: \(sourceEvent.title)
 			Action: \(draft.text)
@@ -338,7 +355,8 @@ enum ReminderEngine {
 			Complete memo and corrections:
 			\(evidenceCorpus)
 			"""
-			generated = try await withGenerationTimeout {
+			generated = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+				let session = LanguageModelSession(instructions: instructions)
 				let response = try await session.respond(
 					to: prompt,
 					generating: GeneratedReminderSchedule.self
@@ -821,9 +839,11 @@ enum ReminderEngine {
 
 	private static func match(
 		selector: FuzzyEventSelector,
-		candidates: [JournalCalendarEvent]
-	) async -> [String: EventMatchAssessment] {
-		guard !candidates.isEmpty else { return [:] }
+		candidates: [JournalCalendarEvent],
+		modelIsAvailable: @Sendable () -> Bool
+	) async throws -> (decisions: [String: EventMatchAssessment], outcome: ModelProcessingOutcome) {
+		try Task.checkCancellation()
+		guard !candidates.isEmpty else { return ([:], .complete) }
 		var decisions = Dictionary(uniqueKeysWithValues: candidates.map {
 			(
 				$0.focusKey,
@@ -850,13 +870,17 @@ enum ReminderEngine {
 			)
 		}
 
-		guard SystemLanguageModel.default.availability == .available else { return decisions }
 		let exactMatchKeys = Set(exactMatches.map(\.focusKey))
 		let modelCandidates = eligibleCandidates
 			.filter { !exactMatchKeys.contains($0.focusKey) }
 			.filter { hasSemanticAnchor(selector: selector, event: $0) }
-		for event in modelCandidates {
-			let session = LanguageModelSession(instructions: """
+		guard modelCandidates.isEmpty || modelIsAvailable() else {
+			for event in modelCandidates { decisions.removeValue(forKey: event.focusKey) }
+			return (decisions, .unavailable)
+		}
+		for (index, event) in modelCandidates.enumerated() {
+			try Task.checkCancellation()
+			let instructions = """
 			Classify one calendar event against the supplied semantic selector. A match must clearly satisfy the event type and every stated constraint. Prefer false when uncertain. Title, notes, location, and time are evidence; do not invent missing facts. A shared venue or one related word is not enough to establish the event type.
 
 			Canonical negatives:
@@ -864,7 +888,7 @@ enum ReminderEngine {
 			- A fantasy book club mentioning characters or campaign themes is not a role-playing session.
 			- An internal quarterly review is not a client call unless the title or notes identify a client.
 			- A vague social event at a tabletop venue is not a tabletop gaming meetup without title or notes evidence.
-			""")
+			"""
 			let prompt = """
 			Selector: \(selector.semanticDescription)
 			Time constraint: \(selector.timeBucket.rawValue)
@@ -878,16 +902,24 @@ enum ReminderEngine {
 			Location: \(event.location ?? "None")
 			Notes: \(event.notes ?? "None")
 			"""
-			guard let response = try? await session.respond(
-				to: prompt,
-				generating: GeneratedEventMatch.self
-			) else { continue }
-			decisions[event.focusKey] = EventMatchAssessment(
-				matches: response.content.matches,
-				reason: clean(response.content.reason)
-			)
+			do {
+				let generated = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+					let session = LanguageModelSession(instructions: instructions)
+					return try await session.respond(to: prompt, generating: GeneratedEventMatch.self).content
+				}
+				decisions[event.focusKey] = EventMatchAssessment(
+					matches: generated.matches,
+					reason: clean(generated.reason)
+				)
+			} catch {
+				let outcome = ModelProcessingOutcome.failure(error,
+					message: "The on-device model could not finish matching reminders. Try again.")
+				if outcome == .cancelled { throw CancellationError() }
+				for pending in modelCandidates[index...] { decisions.removeValue(forKey: pending.focusKey) }
+				return (decisions, outcome)
+			}
 		}
-		return decisions
+		return (decisions, .complete)
 	}
 
 	private static func exactNamedTargetMatch(
@@ -1048,25 +1080,6 @@ enum ReminderEngine {
 			evidenceCorpus.reminderNormalized.contains(value.reminderNormalized)
 		else { return nil }
 		return value
-	}
-
-	private static func withGenerationTimeout<T: Sendable>(
-		_ operation: @escaping @Sendable () async throws -> T
-	) async throws -> T {
-		try Task.checkCancellation()
-		return try await withThrowingTaskGroup(of: T.self) { group in
-			defer { group.cancelAll() }
-			group.addTask { try await operation() }
-			group.addTask {
-				try await Task.sleep(for: .seconds(45))
-				throw ModelProcessingError.timedOut
-			}
-			guard let result = try await group.next() else {
-				throw ModelProcessingError.timedOut
-			}
-			try Task.checkCancellation()
-			return result
-		}
 	}
 }
 

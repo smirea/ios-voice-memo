@@ -8,7 +8,9 @@ enum ModelOutcomeContractChecks {
 		do {
 			try await reflectionChecks()
 			try await reminderChecks()
-			print("MODEL OUTCOME CONTRACT: 17 completion, skip, unavailable, failure, and cancellation checks passed")
+			try await weeklyChecks()
+			try await resolutionChecks()
+			print("MODEL OUTCOME CONTRACT: completion, skip, unavailable, failure, cancellation, weekly review, and partial reminder resolution checks passed")
 			fflush(nil)
 		} catch { fatalError("MODEL OUTCOME CONTRACT: \(error)") }
 	}
@@ -96,6 +98,75 @@ enum ModelOutcomeContractChecks {
 		task.cancel()
 		let late = await task.value
 		try expect(late.outcome == .cancelled && late.reminders == [rule], "A late reminder success after cancellation must be discarded")
+	}
+
+	private static func weeklyChecks() async throws {
+		let entry = JournalEntry(duration: 10, transcript: "You planned a focused week.", headline: "Your plans")
+		let start = Date(timeIntervalSince1970: 1_800_000_000)
+		let complete = WeeklyReview(weekStart: start, title: "Your week", body: "You planned ahead.", trend: [])
+		let success = await ReflectionEngine.weeklyReview(entries: [entry], weekStart: start) { complete }
+		try expect(success.outcome == .complete && success.title == complete.title, "A completed weekly review must remain complete")
+		let empty = await ReflectionEngine.weeklyReview(entries: [], weekStart: start) {
+			throw Failure(message: "Empty week invoked generation")
+		}
+		try expect(empty.outcome == .skipped, "An empty week must skip generation")
+		let unavailable = await ReflectionEngine.weeklyReview(entries: [entry], weekStart: start) { throw ModelProcessingError.unavailable }
+		try expect(unavailable.outcome == .unavailable && !unavailable.body.isEmpty, "Weekly fallback must remain explicitly incomplete")
+		let canceled = await ReflectionEngine.weeklyReview(entries: [entry], weekStart: start) { throw CancellationError() }
+		try expect(canceled.outcome == .cancelled && canceled.title.isEmpty && canceled.body.isEmpty,
+			"Canceled review must not manufacture fallback text")
+		let started = ModelOutcomeSignal()
+		let task = Task {
+			await ReflectionEngine.weeklyReview(entries: [entry], weekStart: start) {
+				await started.send()
+				try? await Task.sleep(for: .seconds(5))
+				return complete
+			}
+		}
+		defer { task.cancel() }
+		try await started.wait()
+		task.cancel()
+		let late = await task.value
+		try expect(late.outcome == .cancelled && late.body.isEmpty, "Late weekly generation must not publish after cancellation")
+	}
+
+	private static func resolutionChecks() async throws {
+		let now = Date(timeIntervalSince1970: 1_800_000_000)
+		let seriesEvent = JournalCalendarEvent(id: "series", calendarIdentifier: "calendar", calendarTitle: "Calendar",
+			title: "Project review", startDate: now.addingTimeInterval(3_600), endDate: now.addingTimeInterval(5_400), isAllDay: false)
+		let exactEvent = JournalCalendarEvent(id: "exact", calendarIdentifier: "calendar", calendarTitle: "Calendar",
+			title: "Tabletop campaign", startDate: now.addingTimeInterval(7_200), endDate: now.addingTimeInterval(9_000), isAllDay: false)
+		let unknownEvent = JournalCalendarEvent(id: "unknown", calendarIdentifier: "calendar", calendarTitle: "Calendar",
+			title: "Campaign planning", startDate: now.addingTimeInterval(1_800), endDate: now.addingTimeInterval(3_600), isAllDay: false)
+		let series = EventReminderRule(text: "Bring notes", motivation: "You need them.", evidence: "Bring notes",
+			selector: .series(EventSeriesReference(event: seriesEvent)), occurrencePolicy: .everyMatch, createdAt: now)
+		let fuzzy = EventReminderRule(text: "Bring dice", motivation: "You need them.", evidence: "Bring dice",
+			selector: .fuzzy(FuzzyEventSelector(semanticDescription: "Tabletop campaign", timeBucket: .any, examples: [])),
+			occurrencePolicy: .everyMatch, createdAt: now)
+		var entry = JournalEntry(createdAt: now, duration: 10, transcript: "Bring notes and dice.", headline: "Your plan", reminders: [series, fuzzy])
+		let events = [seriesEvent, exactEvent, unknownEvent]
+		let partial = await ReminderEngine.resolve(entries: [entry], events: events, now: now, modelIsAvailable: { false })
+		try expect(partial.outcome == .unavailable && partial.incompleteReminderIDs == [fuzzy.id],
+			"Unavailable fuzzy matching must identify its affected rule")
+		try expect(Set(partial.occurrences.map(\.eventKey)) == [seriesEvent.focusKey, exactEvent.focusKey],
+			"Unavailable fuzzy matching must retain unrelated series and exact matches")
+		try expect(partial.examplesByReminderID[fuzzy.id]?.contains(where: { $0.event.focusKey == unknownEvent.focusKey }) == false,
+			"An unclassified event must not become a confident negative example")
+		entry.reminders[1].occurrencePolicy = .nextMatch
+		let next = await ReminderEngine.resolve(entries: [entry], events: events, now: now, modelIsAvailable: { false })
+		try expect(next.resolvedOccurrencesByReminderID[fuzzy.id] == nil && next.occurrences.count == 1,
+			"Incomplete classification must not pin a later occurrence past an unknown earlier candidate")
+		let deterministic = await ReminderEngine.resolve(entries: [entry], events: [seriesEvent, exactEvent], now: now, modelIsAvailable: { false })
+		try expect(deterministic.outcome == .complete && deterministic.occurrences.count == 2,
+			"Deterministic matching must complete without a model")
+		let task = Task {
+			try? await Task.sleep(for: .seconds(5))
+			return await ReminderEngine.resolve(entries: [entry], events: events, now: now, modelIsAvailable: { false })
+		}
+		task.cancel()
+		let canceled = await task.value
+		try expect(canceled.outcome == .cancelled && canceled.occurrences.isEmpty,
+			"Canceled resolution must not publish a partial schedule")
 	}
 
 	private static func expect(_ condition: Bool, _ message: String) throws {

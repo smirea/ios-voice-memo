@@ -7,6 +7,8 @@ struct ReminderFeedbackView: View {
 
 	@State private var recorder = AudioRecorder()
 	@State private var activeURL: URL?
+	@State private var capturePriorityOwner: UUID?
+	@State private var capturePriorityReleaseTask: Task<Void, Never>?
 	@State private var isSubmitting = false
 	@State private var errorMessage: String?
 
@@ -73,6 +75,8 @@ struct ReminderFeedbackView: View {
 				ToolbarItem(placement: .cancellationAction) {
 					Button("Cancel") {
 						_ = recorder.cancel()
+						activeURL = nil
+						_ = releaseCapturePriority()
 						dismiss()
 					}
 					.disabled(isSubmitting)
@@ -97,6 +101,11 @@ struct ReminderFeedbackView: View {
 		.onDisappear {
 			guard !isSubmitting else { return }
 			_ = recorder.cancel()
+			activeURL = nil
+			_ = releaseCapturePriority()
+		}
+		.onChange(of: recorder.state) { _, _ in
+			if case .stopped = recorder.state { _ = releaseCapturePriority() }
 		}
 		.alert("Couldn’t update reminders", isPresented: Binding(
 			get: { errorMessage != nil },
@@ -113,12 +122,24 @@ struct ReminderFeedbackView: View {
 
 	private func startRecording() async {
 		guard activeURL == nil else { return }
+		let owner = UUID()
+		capturePriorityOwner = owner
 		let url = store.temporaryReminderFeedbackURL()
 		activeURL = url
+		await store.beginCapturePriority(owner: owner)
+		guard capturePriorityOwner == owner, !Task.isCancelled else {
+			if capturePriorityOwner == owner { capturePriorityOwner = nil; activeURL = nil }
+			await store.endCapturePriority(owner: owner)
+			return
+		}
 		do {
 			try await recorder.start(at: url)
 		} catch {
+			if capturePriorityOwner == owner { capturePriorityOwner = nil }
+			await store.endCapturePriority(owner: owner)
+			guard activeURL == url else { return }
 			activeURL = nil
+			guard !Task.isCancelled else { return }
 			errorMessage = error.localizedDescription
 		}
 	}
@@ -126,9 +147,11 @@ struct ReminderFeedbackView: View {
 	private func useFeedback() {
 		guard !isVisualDemo else { return }
 		guard let finished = recorder.finish() else { return }
+		let release = releaseCapturePriority()
 		activeURL = nil
 		isSubmitting = true
 		Task {
+			await release?.value
 			do {
 				try await store.applyReminderFeedback(entryID: entryID, audioURL: finished.url)
 				dismiss()
@@ -137,6 +160,14 @@ struct ReminderFeedbackView: View {
 				isSubmitting = false
 			}
 		}
+	}
+
+	private func releaseCapturePriority() -> Task<Void, Never>? {
+		guard let owner = capturePriorityOwner else { return capturePriorityReleaseTask }
+		capturePriorityOwner = nil
+		let task = Task { await store.endCapturePriority(owner: owner) }
+		capturePriorityReleaseTask = task
+		return task
 	}
 
 	private var demoLevels: [Double] {

@@ -187,6 +187,7 @@ struct WeeklyReview: Sendable {
 	var title: String
 	var body: String
 	var trend: [Double]
+	var outcome: ModelProcessingOutcome = .complete
 }
 
 struct ReflectionResult: Sendable {

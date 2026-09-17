@@ -248,6 +248,7 @@ actor JournalRepository {
 		job.failure = nil
 		job.failureKind = nil
 		job.retryAfter = nil
+		job.failedAttempts = 0
 		job.inputRevision = record.inputRevision
 		record.processing = job
 		try write(record)
@@ -326,7 +327,8 @@ actor JournalRepository {
 	}
 
 	func failProcessing(_ lease: ProcessingLease, message: String, partial: TranscriptionProgress? = nil,
-		retryAfter: Date? = nil, fallback: ReflectionResult? = nil, kind: ProcessingFailureKind = .execution) throws -> JournalRecord {
+		retryAfter: Date? = nil, fallback: ReflectionResult? = nil, kind: ProcessingFailureKind = .execution,
+		now: Date = .now) throws -> JournalRecord {
 		var record = try currentRecord(for: lease)
 		if let partial { record.processing?.partialTranscript = partial }
 		let hasPartial = record.processing?.partialTranscript != nil
@@ -334,7 +336,10 @@ actor JournalRepository {
 		record.processing?.failure = message
 		record.processing?.failureKind = kind
 		record.processing?.attemptID = nil
-		record.processing?.retryAfter = retryAfter
+		let failures = (record.processing?.failedAttempts ?? 0) + 1
+		record.processing?.failedAttempts = failures
+		let delay = kind == .execution ? EntryProcessing.retryDelay(after: failures) : nil
+		record.processing?.retryAfter = delay.map { retryAfter ?? now.addingTimeInterval($0) }
 		if let fallback, record.processing?.completedStages.contains(.reflect) != true {
 			record.entry?.headline = fallback.headline
 			record.entry?.summary = fallback.summary
@@ -396,6 +401,7 @@ actor JournalRepository {
 		job.failure = nil
 		job.failureKind = nil
 		job.retryAfter = nil
+		job.failedAttempts = 0
 		job.status = .queued
 		switch stage {
 		case .finalizeAudio: job.stage = .transcribe

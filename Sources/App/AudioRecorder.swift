@@ -454,6 +454,24 @@ enum AudioTranscriber {
 		onUpdate: @escaping TranscriptionUpdate = { _ in }
 	) async throws -> TranscriptionResult {
 		try Task.checkCancellation()
+		let file = try? AVAudioFile(forReading: url)
+		let duration = file.map { Double($0.length) / $0.processingFormat.sampleRate } ?? 0
+		file?.close()
+		let timeout = Duration.seconds(max(120, (duration.isFinite ? duration : 0) * 2 + 60))
+		return try await ServiceAdmission.speech.run(timeout: timeout) {
+			try await performTranscription(url: url, preferElevenLabs: preferElevenLabs,
+				elevenLabsAPIKey: elevenLabsAPIKey, providers: providers, onUpdate: onUpdate)
+		}
+	}
+
+	static func performTranscription(
+		url: URL,
+		preferElevenLabs: Bool,
+		elevenLabsAPIKey: String? = nil,
+		providers: TranscriptionProviders = .live,
+		onUpdate: @escaping TranscriptionUpdate = { _ in }
+	) async throws -> TranscriptionResult {
+		try Task.checkCancellation()
 		guard preferElevenLabs else {
 			return try await transcribeWithApple(url: url, providers: providers, onUpdate: onUpdate)
 		}

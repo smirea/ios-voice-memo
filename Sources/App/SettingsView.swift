@@ -17,66 +17,76 @@ struct SettingsView: View {
 
 	var body: some View {
 		NavigationStack {
-			List {
-				Section("Recording") {
-					Toggle("Keep screen awake", isOn: $draft.keepScreenAwakeWhileRecording)
-					Toggle("Haptics", isOn: $draft.hapticsEnabled)
-				}
-				.listRowBackground(AppStyle.background)
-
-				Section("Journal") {
-					Toggle("Show transcripts", isOn: $draft.showTranscripts)
-				}
-				.listRowBackground(AppStyle.background)
-
-				Section {
-					Toggle(
-						"Prefer ElevenLabs transcription",
-						isOn: $draft.preferElevenLabsTranscription
-					)
-					LabeledContent("API key") {
-						SecureField("Optional", text: elevenLabsAPIKeyBinding)
-							.multilineTextAlignment(.trailing)
-							.textInputAutocapitalization(.never)
-							.autocorrectionDisabled()
-							.textContentType(.password)
-							.privacySensitive()
+			ScrollViewReader { proxy in
+				List {
+					Section("Recording") {
+						Toggle("Keep screen awake", isOn: $draft.keepScreenAwakeWhileRecording)
+						Toggle("Haptics", isOn: $draft.hapticsEnabled)
 					}
-				} header: {
-					Text("Transcription")
+					.listRowBackground(AppStyle.background)
+
+					Section("Journal") {
+						Toggle("Show transcripts", isOn: $draft.showTranscripts)
+					}
+					.listRowBackground(AppStyle.background)
+
+					Section {
+						Toggle(
+							"Prefer ElevenLabs transcription",
+							isOn: $draft.preferElevenLabsTranscription
+						)
+						LabeledContent("API key") {
+							SecureField("Optional", text: elevenLabsAPIKeyBinding)
+								.multilineTextAlignment(.trailing)
+								.textInputAutocapitalization(.never)
+								.autocorrectionDisabled()
+								.textContentType(.password)
+								.privacySensitive()
+						}
+					} header: {
+						Text("Transcription")
+					}
+					.listRowBackground(AppStyle.background)
+
+					calendarSection
+
+					if draft.calendarSyncEnabled {
+						reminderSection.id("reminder-settings")
+					}
+
+					Section("Model") {
+						NavigationLink {
+							ReminderBenchmarkView()
+						} label: {
+							Label("Reminder benchmark", systemImage: "gauge.with.dots.needle.67percent")
+						}
+					}
+					.listRowBackground(AppStyle.background)
+
+					Section("Data") {
+						Button("Delete all entries", role: .destructive) {
+							showsClearConfirmation = true
+						}
+						.disabled(store.entries.isEmpty || store.isDemoMode)
+					}
+					.listRowBackground(AppStyle.background)
 				}
-				.listRowBackground(AppStyle.background)
-
-				calendarSection
-
-				if draft.calendarSyncEnabled {
-					reminderSection
-				}
-
-				Section("Model") {
-					NavigationLink {
-						ReminderBenchmarkView()
-					} label: {
-						Label("Reminder benchmark", systemImage: "gauge.with.dots.needle.67percent")
+				.listStyle(.plain)
+				.scrollContentBackground(.hidden)
+				.background(AppStyle.background)
+				.navigationTitle("Settings")
+				.toolbar {
+					ToolbarItem(placement: .confirmationAction) {
+						Button("Done") { dismiss() }
 					}
 				}
-				.listRowBackground(AppStyle.background)
-
-				Section("Data") {
-					Button("Delete all entries", role: .destructive) {
-						showsClearConfirmation = true
+				.task {
+					#if DEBUG
+					if ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") {
+						await Task.yield()
+						proxy.scrollTo("reminder-settings", anchor: .center)
 					}
-					.disabled(store.entries.isEmpty || store.isDemoMode)
-				}
-				.listRowBackground(AppStyle.background)
-			}
-			.listStyle(.plain)
-			.scrollContentBackground(.hidden)
-			.background(AppStyle.background)
-			.navigationTitle("Settings")
-			.toolbar {
-				ToolbarItem(placement: .confirmationAction) {
-					Button("Done") { dismiss() }
+					#endif
 				}
 			}
 		}
@@ -156,6 +166,8 @@ struct SettingsView: View {
 			}
 		} header: {
 			Text("Event reminders")
+		} footer: {
+			if let message = store.reminderSchedulingMessage { Text(message) }
 		}
 		.listRowBackground(AppStyle.background)
 	}
