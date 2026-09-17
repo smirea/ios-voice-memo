@@ -91,12 +91,12 @@ enum ReminderSourceRepositoryContractChecks {
 		_ = try await repository.requestProcessing(id: entry.id, startAt: .reminders)
 		let disabled = try await claim(repository, .reminders)
 		let skipped = try await repository.commitReminders(nil, lease: disabled)
-		try expect(skipped.inputRevision == parsed.inputRevision && skipped.entry?.reminders == replacement
+		try expect(skipped.inputRevision == parsed.inputRevision && skipped.entry == parsed.entry
 			&& skipped.processing?.skippedStages.contains(.reminders) == true,
 			"Disabled parsing must preserve existing rules without inventing a replacement source")
 		let restarted = try await JournalRepository(rootURL: root).load()
 		try expect(restarted.records.first?.inputRevision == skipped.inputRevision
-			&& restarted.entries.first?.reminders == replacement, "Source revisions and current rules must survive restart")
+			&& restarted.entries.first == parsed.entry, "Source revisions and reconciled rules must survive restart")
 	}
 
 	private static func sourceEditChecks() async throws {

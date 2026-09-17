@@ -214,6 +214,8 @@ enum ReminderBenchmark {
 		let startedAt = Date()
 		switch test {
 		case let .parsing(test):
+			let entry = JournalEntry(createdAt: ReminderBenchmarkCorpus.createdAt, duration: 60,
+				transcript: test.transcript, headline: test.name, calendarEvent: test.sourceEvent)
 			let parsed = await ReminderEngine.parse(
 				transcript: test.transcript,
 				sourceEvent: test.sourceEvent,
@@ -224,10 +226,13 @@ enum ReminderBenchmark {
 				name: test.name,
 				evidenceCorpus: test.transcript,
 				expected: test.expected,
-				actual: parsed.reminders,
+				actual: reconciledReminders(parsed, entry: entry),
 				duration: Date().timeIntervalSince(startedAt)
 			)
 		case let .feedback(test):
+			let entry = JournalEntry(createdAt: ReminderBenchmarkCorpus.createdAt, duration: 60,
+				transcript: test.transcript, headline: test.name, calendarEvent: test.sourceEvent,
+				reminders: test.current, reminderFeedback: test.feedback)
 			let parsed = await ReminderEngine.parse(
 				transcript: test.transcript,
 				sourceEvent: test.sourceEvent,
@@ -242,7 +247,7 @@ enum ReminderBenchmark {
 				name: test.name,
 				evidenceCorpus: evidenceCorpus,
 				expected: test.expected,
-				actual: parsed.reminders,
+				actual: reconciledReminders(parsed, entry: entry),
 				duration: Date().timeIntervalSince(startedAt)
 			)
 		case let .resolution(test):
@@ -281,6 +286,11 @@ enum ReminderBenchmark {
 				duration: Date().timeIntervalSince(startedAt)
 			)
 		}
+	}
+
+	private static func reconciledReminders(_ result: ReminderParsingResult, entry: JournalEntry) -> [EventReminderRule] {
+		guard result.outcome.isComplete else { return entry.reminders }
+		return ReminderIdentity.reconcile(generated: result.reminders, entry: entry).reminders
 	}
 
 	private static func assess(

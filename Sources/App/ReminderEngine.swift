@@ -92,6 +92,7 @@ struct ReminderResolutionUpdate: Sendable {
 	var reminderID: UUID
 	var occurrence: JournalCalendarEvent?
 	var examples: [ReminderMatchExample]?
+	var consumedAt: Date? = nil
 }
 
 struct ReminderResolutionResult: Sendable {
@@ -99,6 +100,7 @@ struct ReminderResolutionResult: Sendable {
 	var examplesByReminderID: [UUID: [ReminderMatchExample]]
 	var resolvedOccurrencesByReminderID: [UUID: JournalCalendarEvent]
 	var incompleteReminderIDs: Set<UUID> = []
+	var consumedAtByReminderID: [UUID: Date] = [:]
 	var outcome: ModelProcessingOutcome = .complete
 }
 
@@ -183,10 +185,7 @@ enum ReminderEngine {
 				)
 			}
 			return ReminderParsingResult(
-				reminders: applyingManualRemovals(
-					to: deduplicated(rules),
-					feedback: feedback
-				),
+				reminders: rules,
 				modelName: generated.usedModel ? "SystemLanguageModel.default · guided reminders" : nil
 			)
 		}
@@ -239,12 +238,27 @@ enum ReminderEngine {
 		var examplesByReminderID: [UUID: [ReminderMatchExample]] = [:]
 		var resolvedOccurrencesByReminderID: [UUID: JournalCalendarEvent] = [:]
 		var incompleteReminderIDs: Set<UUID> = []
+		var consumedAtByReminderID: [UUID: Date] = [:]
 		var outcome: ModelProcessingOutcome = .complete
 		let orderedEvents = events.sorted { $0.startDate < $1.startDate }
 
 		for entry in entries {
 			for reminder in entry.reminders where reminder.isActive(at: now) {
 				try Task.checkCancellation()
+				if reminder.occurrencePolicy == .nextMatch, let pinned = reminder.resolvedOccurrence {
+					let exact = orderedEvents.filter {
+						$0.calendarIdentifier == pinned.calendarIdentifier && $0.focusKey == pinned.focusKey
+					}
+					let current = exact.count == 1 ? exact[0] : nil
+					if let current { resolvedOccurrencesByReminderID[reminder.id] = current }
+					let latest = current ?? pinned
+					if latest.endDate < now {
+						consumedAtByReminderID[reminder.id] = latest.endDate
+					} else if let current {
+						occurrences.append(EventReminderOccurrence(sourceEntryID: entry.id, reminder: reminder, event: current))
+					}
+					continue
+				}
 				let candidatesAfterCreation = orderedEvents.filter {
 					$0.startDate > reminder.createdAt
 				}
@@ -272,12 +286,7 @@ enum ReminderEngine {
 
 				let selected: [JournalCalendarEvent]
 				if reminder.occurrencePolicy == .nextMatch {
-					if let resolved = reminder.resolvedOccurrence, resolved.endDate < now {
-						selected = []
-					} else if let resolved = reminder.resolvedOccurrence,
-						let current = orderedEvents.first(where: { $0.focusKey == resolved.focusKey }) {
-						selected = current.endDate >= now ? [current] : []
-					} else if !incompleteReminderIDs.contains(reminder.id),
+					if !incompleteReminderIDs.contains(reminder.id),
 						let next = matchedEvents.first(where: { $0.endDate >= now }) {
 						selected = [next]
 						resolvedOccurrencesByReminderID[reminder.id] = next
@@ -299,6 +308,7 @@ enum ReminderEngine {
 			examplesByReminderID: examplesByReminderID,
 			resolvedOccurrencesByReminderID: resolvedOccurrencesByReminderID,
 			incompleteReminderIDs: incompleteReminderIDs,
+			consumedAtByReminderID: consumedAtByReminderID,
 			outcome: outcome
 		)
 	}
@@ -1032,7 +1042,7 @@ enum ReminderEngine {
 	) -> EventReminderRule? {
 		let text = clean(generated.text)
 		let motivation = sentenceCase(generated.motivation)
-		let evidence = clean(generated.evidence)
+		let evidence = generated.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !text.isEmpty,
 			!motivation.isEmpty,
 			!evidence.isEmpty,
@@ -1242,57 +1252,6 @@ enum ReminderEngine {
 			return ReminderMatchExample(event: event, matches: false, reason: decision.reason)
 		}
 		return Array(matches.prefix(3)) + Array(nonmatches.prefix(3))
-	}
-
-	private static func deduplicated(_ reminders: [EventReminderRule]) -> [EventReminderRule] {
-		var kept: [EventReminderRule] = []
-		for reminder in reminders {
-			let words = meaningfulActionWords(reminder.text)
-			let duplicate = kept.contains { existing in
-				guard existing.selector.title.reminderNormalized
-					== reminder.selector.title.reminderNormalized,
-					existing.occurrencePolicy == reminder.occurrencePolicy
-				else { return false }
-				let existingWords = meaningfulActionWords(existing.text)
-				guard !words.isEmpty, !existingWords.isEmpty else { return false }
-				let overlap = words.intersection(existingWords).count
-				return overlap == min(words.count, existingWords.count)
-			}
-			if !duplicate { kept.append(reminder) }
-		}
-		return kept
-	}
-
-	private static func applyingManualRemovals(
-		to reminders: [EventReminderRule],
-		feedback: [ReminderFeedback]
-	) -> [EventReminderRule] {
-		let removed = feedback
-			.filter { $0.kind == .manualRemoval }
-			.map { meaningfulActionWords($0.text.replacingOccurrences(
-				of: "Keep removed:",
-				with: "",
-				options: [.caseInsensitive, .anchored]
-			)) }
-			.filter { !$0.isEmpty }
-		return reminders.filter { reminder in
-			let words = meaningfulActionWords(reminder.text)
-			return !removed.contains { removedWords in
-				!words.isEmpty
-					&& words.intersection(removedWords).count
-						== min(words.count, removedWords.count)
-			}
-		}
-	}
-
-	private static func meaningfulActionWords(_ text: String) -> Set<String> {
-		let ignored = Set([
-			"a", "an", "and", "at", "before", "bring", "during", "every", "for",
-			"i", "in", "just", "me", "my", "next", "of", "on", "or", "remember",
-			"session", "the", "this", "time", "to"
-		])
-		return Set(text.reminderNormalized.split(separator: " ").map(String.init))
-			.subtracting(ignored)
 	}
 
 	private static func clean(_ value: String) -> String {

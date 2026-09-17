@@ -151,9 +151,12 @@ enum JournalEdit: Sendable {
 		case let .feedback(value):
 			if !entry.reminderFeedback.contains(where: { $0.id == value.id }) { entry.reminderFeedback.append(value) }
 		case let .removeReminder(id, feedback):
+			if let removed = entry.reminders.first(where: { $0.id == id }) {
+				entry.reminderHistory.removeAll { $0.id == id }
+				entry.reminderHistory.append(removed)
+			}
 			entry.reminders.removeAll { $0.id == id }
 			if !entry.reminderFeedback.contains(where: { $0.id == feedback.id }) { entry.reminderFeedback.append(feedback) }
-
 		}
 	}
 }

@@ -107,6 +107,8 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		case reminderFeedback
 		case reminderModel
 		case analysis
+		case reminderHistory
+		case reminderProcessedFeedbackIDs
 	}
 
 	let id: UUID
@@ -124,6 +126,8 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var reminderFeedback: [ReminderFeedback]
 	var reminderModel: String?
 	var analysis: MemoAnalysis?
+	var reminderHistory: [EventReminderRule]
+	var reminderProcessedFeedbackIDs: Set<UUID>
 
 	init(
 		id: UUID = UUID(),
@@ -140,7 +144,9 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		reminders: [EventReminderRule] = [],
 		reminderFeedback: [ReminderFeedback] = [],
 		reminderModel: String? = nil,
-		analysis: MemoAnalysis? = nil
+		analysis: MemoAnalysis? = nil,
+		reminderHistory: [EventReminderRule] = [],
+		reminderProcessedFeedbackIDs: Set<UUID> = []
 	) {
 		self.id = id
 		self.createdAt = createdAt
@@ -157,6 +163,8 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.reminderFeedback = reminderFeedback
 		self.reminderModel = reminderModel
 		self.analysis = analysis
+		self.reminderHistory = reminderHistory
+		self.reminderProcessedFeedbackIDs = reminderProcessedFeedbackIDs
 	}
 
 	init(from decoder: Decoder) throws {
@@ -176,6 +184,9 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		reminderFeedback = try container.decodeIfPresent([ReminderFeedback].self, forKey: .reminderFeedback) ?? []
 		reminderModel = try container.decodeIfPresent(String.self, forKey: .reminderModel)
 		analysis = try container.decodeIfPresent(MemoAnalysis.self, forKey: .analysis)
+		reminderHistory = try container.decodeIfPresent([EventReminderRule].self, forKey: .reminderHistory) ?? []
+		reminderProcessedFeedbackIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .reminderProcessedFeedbackIDs)
+			?? Set(reminderFeedback.map(\.id))
 	}
 }
 

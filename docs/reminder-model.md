@@ -29,6 +29,8 @@ EventReminderRule
   expiresAt
   leadTimeOverride
   resolvedOccurrence
+  consumedAt
+  sourceFeedbackID
 ```
 
 `text` is a concise imperative such as “Bring electrolytes.” `motivation` is a short grounded explanation such as “You were tired after the gym.” `evidence` is the supporting excerpt from the original memo or a later correction, shown when the user inspects the rule.
@@ -46,7 +48,7 @@ There is intentionally no unbound selector. A statement that cannot be associate
 ### Occurrence policies
 
 `nextMatch`
-: Pins the first matching future occurrence, delivers there once, then retires. The pin prevents a one-time cue from drifting to every subsequent event after its original occurrence has passed.
+: Pins the first matching future occurrence and becomes consumed after that occurrence ends. Consumption records retirement, not proof that an alert was delivered or seen. Reprocessing cannot move the pin or reset consumption, and a missing calendar occurrence never redirects the cue to another event.
 
 `everyMatch`
 : Delivers at every matching event until it expires or is removed.
@@ -75,7 +77,7 @@ The number of extracted reminders is never capped. System surfaces can show a sh
 `ReminderMatchExample`
 : A compact historical or upcoming example produced while evaluating a fuzzy selector. Examples explain the rule’s current behavior but are not treated as user-confirmed training data.
 
-Calendar changes do not mutate reminder rules. They only change the derived occurrences and scheduled system presentation.
+Calendar changes update derived occurrences and presentation. A proven current version of a pinned occurrence refreshes its stored snapshot before its end is checked; once consumption is saved it never reverses. Detached events whose start changed need provable occurrence identity before a pin can be refreshed.
 
 ## Parsing
 
@@ -91,7 +93,7 @@ The on-device model performs two compact semantic stages instead of producing an
 1. When the complete transcript, existing reminder set, and ordered corrections fit, read them in one request. Otherwise walk every original passage and correction in order, rebuilding candidates from the source; each later passage revises every accumulated candidate shard before adding new actions. Return every final action with a motivation and exact supporting excerpt. There is no maximum reminder count.
 2. Resolve clear named or attached targets directly from their grounded context. When semantic interpretation is still needed, use a separate compact scheduling request per action; requests share one on-device response permit, and recording preempts both queued and active analysis.
 3. Derive attached-series versus fuzzy targeting, next versus every policy, time of day, and relative validity from the grounded schedule context.
-4. Reject ungrounded actions and venues, apply manual removals deterministically, and deduplicate the assembled rules.
+4. Reject ungrounded actions and venues. At the saved-result boundary, reconcile app-owned identity and retirement state, apply manual removals deterministically, and deduplicate exact equivalent actions.
 
 The parser follows these rules:
 
@@ -111,6 +113,14 @@ Guided generation guarantees the shape of a model result, not its semantic corre
 
 If the system language model is unavailable or parsing fails, the app produces no new reminders rather than using a speculative heuristic.
 
+## Identity and retirement
+
+Generated rules propose content; an atomic per-note commit preserves established UUIDs, creation dates, one-time pins, consumption, and manual lead-time overrides. Identity matching uses fixed-locale complete words and equivalent selectors. A shared source sentence alone cannot merge distinct actions. Uncertain regenerated wording that may refer to a retired action is omitted rather than given a fresh cue.
+
+Omitted and manually removed identities remain in a per-note archive, deduplicated by UUID and included in the complete JSON export. Reappearing rules recover their earlier state after a restart. Known manual removals veto that identity; legacy removals without a recoverable identity use complete action words rather than noun subsets.
+
+Only an unambiguous new voice instruction can establish a fresh generation: its exact contiguous evidence must occur uniquely in that feedback and be absent from the original transcript and other feedback. The source feedback ID and processed feedback IDs are saved with the reminder result, so reprocessing the same correction cannot repeatedly re-arm it. Legacy saved feedback starts as already processed. Original evidence preserves internal whitespace and line breaks.
+
 ## Event resolution
 
 Resolution happens after parsing:
@@ -122,7 +132,7 @@ Resolution happens after parsing:
 5. Resolve specific multiword event names directly against candidate titles.
 6. Require a lexical event-type anchor, then ask the model to classify each remaining fuzzy candidate independently.
 7. Treat uncertain completed fuzzy classifications as nonmatches. Unavailable or failed classification remains incomplete, preserves known deterministic matches, and does not create a negative example or choose a new one-time pin past an unknown candidate.
-8. Materialize either the first match or every match according to the occurrence policy.
+8. Materialize either the first match or every match according to the occurrence policy. A one-time pin resolves only that same occurrence; if it is missing, retain the pin and produce no substitute. Refresh a provably identical snapshot before checking its end, and save consumption after it ends. Consumed cues never materialize, even if generated policy wording changes.
 
 Resolution reads committed notes and excludes notes with pending source edits. A source revision and the original reminder set guard each atomic pin/example save; unrelated location changes do not invalidate it. A failed pin save prevents delivery for that note and can be retried. Obsolete results are discarded after relevant source, calendar, or delivery-setting changes.
 
@@ -136,7 +146,7 @@ Morning, afternoon, and evening are app-defined local-time buckets. The model ch
 
 The source note shows reminders immediately below the summary with no section heading. Tapping a row reveals its evidence, motivation, and fuzzy match examples; a native trailing swipe removes it immediately. With no reminders, the section is only the **No reminders: Add feedback** action.
 
-Removing a reminder deletes the rule and adds a manual-removal feedback record. This prevents a later reprocessing pass from recreating the same reminder from the original transcript.
+Removing a reminder archives its identity, removes the visible rule, and adds a manual-removal feedback record. This prevents a later reprocessing pass from recreating the same reminder from the original transcript.
 
 “Add feedback” records a short audio correction, transcribes it, deletes the temporary audio, and re-evaluates reminders with:
 
@@ -166,7 +176,7 @@ Rules remain stored when delivery is disabled. One owned reconciliation serializ
 
 ## Evaluation
 
-The Settings screen includes the repeatable benchmark described in [`reminder-model-evaluation.md`](reminder-model-evaluation.md). Model scores are kept separate from this contract because they describe observed quality for one OS/model version, not guaranteed product behavior.
+The Settings screen includes the repeatable benchmark described in [`reminder-model-evaluation.md`](reminder-model-evaluation.md), using the same deterministic reconciliation as saved reminder results. Model scores are kept separate from this contract because they describe observed quality for one OS/model version, not guaranteed product behavior.
 
 ## Future manual editing
 

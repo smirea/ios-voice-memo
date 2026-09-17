@@ -80,6 +80,8 @@
 		A10000000000000000000048 /* ModelContextContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000048 /* ModelContextContractChecks.swift */; };
 		A10000000000000000000049 /* ReflectionContextContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000049 /* ReflectionContextContractChecks.swift */; };
 		A1000000000000000000004A /* ReminderContextContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004A /* ReminderContextContractChecks.swift */; };
+		A1000000000000000000004B /* ReminderIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004B /* ReminderIdentity.swift */; };
+		A1000000000000000000004C /* ReminderIdentityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004C /* ReminderIdentityContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -182,6 +184,8 @@
 		B10000000000000000000048 /* ModelContextContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelContextContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000049 /* ReflectionContextContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionContextContractChecks.swift; sourceTree = "<group>"; };
 		B1000000000000000000004A /* ReminderContextContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderContextContractChecks.swift; sourceTree = "<group>"; };
+		B1000000000000000000004B /* ReminderIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderIdentity.swift; sourceTree = "<group>"; };
+		B1000000000000000000004C /* ReminderIdentityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderIdentityContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -263,6 +267,8 @@
 				B10000000000000000000020 /* ReminderBenchmarkView.swift */,
 				B10000000000000000000015 /* ICloudDriveMirror.swift */,
 				B10000000000000000000004 /* ReflectionEngine.swift */,
+				B1000000000000000000004B /* ReminderIdentity.swift */,
+				B1000000000000000000004C /* ReminderIdentityContractChecks.swift */,
 				B1000000000000000000004A /* ReminderContextContractChecks.swift */,
 				B10000000000000000000049 /* ReflectionContextContractChecks.swift */,
 				B10000000000000000000048 /* ModelContextContractChecks.swift */,
@@ -518,6 +524,8 @@
 				A10000000000000000000015 /* ICloudDriveMirror.swift in Sources */,
 				A10000000000000000000016 /* AudioPlayback.swift in Sources */,
 				A10000000000000000000004 /* ReflectionEngine.swift in Sources */,
+				A1000000000000000000004B /* ReminderIdentity.swift in Sources */,
+				A1000000000000000000004C /* ReminderIdentityContractChecks.swift in Sources */,
 				A1000000000000000000004A /* ReminderContextContractChecks.swift in Sources */,
 				A10000000000000000000049 /* ReflectionContextContractChecks.swift in Sources */,
 				A10000000000000000000048 /* ModelContextContractChecks.swift in Sources */,

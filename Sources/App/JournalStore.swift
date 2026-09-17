@@ -927,10 +927,12 @@ final class JournalStore {
 			let updates = (source.entry?.reminders ?? []).compactMap { reminder -> ReminderResolutionUpdate? in
 				let occurrence = result.resolvedOccurrencesByReminderID[reminder.id]
 				let examples = result.examplesByReminderID[reminder.id]
+				let consumedAt = result.consumedAtByReminderID[reminder.id]
 				let occurrenceChanged = occurrence != nil && occurrence != reminder.resolvedOccurrence
 				let examplesChanged = examples != nil && examples != reminder.selector.examples
-				guard occurrenceChanged || examplesChanged else { return nil }
-				return ReminderResolutionUpdate(reminderID: reminder.id, occurrence: occurrence, examples: examples)
+				let consumedChanged = consumedAt != nil && reminder.consumedAt == nil
+				guard occurrenceChanged || examplesChanged || consumedChanged else { return nil }
+				return ReminderResolutionUpdate(reminderID: reminder.id, occurrence: occurrence, examples: examples, consumedAt: consumedAt)
 			}
 			do {
 				// Validate even a no-op result at the repository boundary before delivery.

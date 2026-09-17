@@ -375,9 +375,13 @@ actor JournalRepository {
 	func commitReminders(_ result: ReminderParsingResult?, lease: ProcessingLease) throws -> JournalRecord {
 		var record = try currentRecord(for: lease)
 		guard lease.stage == .reminders, result?.outcome.isComplete != false else { throw RepositoryError.staleProcessing }
-		if let result {
-			record.entry?.reminders = result.reminders
-			record.entry?.reminderModel = result.modelName
+		if let result, var entry = record.entry {
+			let reconciled = ReminderIdentity.reconcile(generated: result.reminders, entry: entry)
+			entry.reminders = reconciled.reminders
+			entry.reminderHistory = reconciled.history
+			entry.reminderProcessedFeedbackIDs = reconciled.processedFeedbackIDs
+			entry.reminderModel = result.modelName
+			record.entry = entry
 		}
 		if result != nil { record.inputRevision += 1 }
 		advance(&record, after: .reminders)
@@ -396,6 +400,9 @@ actor JournalRepository {
 				throw RepositoryError.staleProcessing
 			}
 			if let occurrence = update.occurrence { entry.reminders[index].resolvedOccurrence = occurrence }
+			if entry.reminders[index].consumedAt == nil, let consumedAt = update.consumedAt {
+				entry.reminders[index].consumedAt = consumedAt
+			}
 			if let examples = update.examples, case var .fuzzy(selector) = entry.reminders[index].selector {
 				selector.examples = examples
 				entry.reminders[index].selector = .fuzzy(selector)

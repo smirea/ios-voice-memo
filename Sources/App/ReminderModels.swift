@@ -124,6 +124,8 @@ struct EventReminderRule: Codable, Hashable, Identifiable, Sendable {
 	var expiresAt: Date?
 	var leadTimeOverrideMinutes: Int?
 	var resolvedOccurrence: JournalCalendarEvent?
+	var consumedAt: Date?
+	var sourceFeedbackID: UUID?
 
 	init(
 		id: UUID = UUID(),
@@ -135,7 +137,9 @@ struct EventReminderRule: Codable, Hashable, Identifiable, Sendable {
 		createdAt: Date = .now,
 		expiresAt: Date? = nil,
 		leadTimeOverrideMinutes: Int? = nil,
-		resolvedOccurrence: JournalCalendarEvent? = nil
+		resolvedOccurrence: JournalCalendarEvent? = nil,
+		consumedAt: Date? = nil,
+		sourceFeedbackID: UUID? = nil
 	) {
 		self.id = id
 		self.text = text
@@ -147,10 +151,12 @@ struct EventReminderRule: Codable, Hashable, Identifiable, Sendable {
 		self.expiresAt = expiresAt
 		self.leadTimeOverrideMinutes = leadTimeOverrideMinutes
 		self.resolvedOccurrence = resolvedOccurrence
+		self.consumedAt = consumedAt
+		self.sourceFeedbackID = sourceFeedbackID
 	}
 
 	func isActive(at date: Date) -> Bool {
-		expiresAt.map { $0 >= date } ?? true
+		consumedAt == nil && (expiresAt.map { $0 >= date } ?? true)
 	}
 }
 
