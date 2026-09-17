@@ -14,6 +14,7 @@
 - Reports unsaved note changes with a persistent retry action. iCloud exports use saved metadata, and sharing waits for changes to save.
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
 - Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback, and alerts when ElevenLabs could not be used; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
+- Saves processing progress per note and resumes the unfinished stage after a restart. Keeps completed transcript and analysis during reprocessing, labels incomplete transcript text, and offers Retry for failed stages without treating partial results as complete.
 - Generates summaries only for recordings longer than 20 seconds.
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md).
 - Captures each recording's original coordinates and city when available, then resolves shared place names using the behavior in [`docs/location-model.md`](docs/location-model.md).
@@ -56,7 +57,7 @@
 - Keeps playback position when audio preparation finishes, continues only if playback was still active, and shows a retry status instead of a progress spinner when preparation fails.
 - Shows a short generated summary for recordings longer than 20 seconds and attributes the analysis model below the summary or title.
 - Shows event reminders directly below the summary with compact frequency, quoted target, and duration; tapping uses native disclosure to expand its rationale without extra top or leading padding, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
-- **Add Feedback** records and transcribes a short correction, deletes the temporary audio, and reprocesses only the reminders.
+- **Add Feedback** records and transcribes a short correction, saves it before closing, deletes the temporary audio, and queues reminder processing without replacing completed transcript or analysis.
 - Starting feedback pauses note playback; feedback reports recording interruptions or failures and keeps captured audio available to submit in a scrollable, expandable native sheet.
 - A bottom-left glass button morphs into note actions that persist **Show Models** app-wide with the whole toggle row tappable, reprocess the saved audio through transcription and all generated analysis even after leaving the note while safely queuing other reprocesses, and share complete metadata as a `.json` file with a separate **Copy JSON Text** action.
 - When enabled in Settings, shows a four-line transcript preview and its transcription model.

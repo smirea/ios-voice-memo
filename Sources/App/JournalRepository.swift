@@ -4,7 +4,7 @@ import Foundation
 struct JournalRecord: Codable, Sendable {
 	enum State: String, Codable { case recording, saved, deleted }
 	private enum CodingKeys: String, CodingKey {
-		case schemaVersion, id, entry, state, ownedAudioFilenames, inputRevision
+		case schemaVersion, id, entry, state, ownedAudioFilenames, inputRevision, revision, processing
 	}
 	var schemaVersion = 1
 	let id: UUID
@@ -12,6 +12,8 @@ struct JournalRecord: Codable, Sendable {
 	var state: State
 	var ownedAudioFilenames: Set<String>
 	var inputRevision: Int = 0
+	var revision: Int = 0
+	var processing: EntryProcessing?
 
 	init(entry: JournalEntry, state: State = .saved, ownedAudioFilenames: Set<String> = []) {
 		id = entry.id
@@ -28,11 +30,14 @@ struct JournalRecord: Codable, Sendable {
 		state = try values.decode(State.self, forKey: .state)
 		ownedAudioFilenames = try values.decode(Set<String>.self, forKey: .ownedAudioFilenames)
 		inputRevision = try values.decodeIfPresent(Int.self, forKey: .inputRevision) ?? 0
+		revision = try values.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+		processing = try values.decodeIfPresent(EntryProcessing.self, forKey: .processing)
 	}
 }
 
 struct JournalLoad: Sendable {
 	var entries: [JournalEntry]
+	var records: [JournalRecord]
 	var issues: [String]
 	var deletionReferences: Set<String>
 }
@@ -65,8 +70,7 @@ actor JournalRepository {
 		guard !didLoad else { return snapshot(issues: loadIssues) }
 		records.removeAll()
 		reservedIDs.removeAll()
-		try prepareDirectories()
-		var issues: [String] = []
+		var issues = try prepareDirectories()
 		let urls = try fileManager.contentsOfDirectory(at: recordsURL, includingPropertiesForKeys: nil)
 		for url in urls where url.pathExtension == "json" {
 			guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else {
@@ -89,6 +93,7 @@ actor JournalRepository {
 		try migrateLegacyEntries(issues: &issues)
 		migratePendingRecording(issues: &issues)
 		try recoverRecordings(issues: &issues)
+		migrateProcessing(issues: &issues)
 		didLoad = true
 		loadIssues = issues
 		return snapshot(issues: issues)
@@ -120,6 +125,7 @@ actor JournalRepository {
 		entry.duration = try Self.audioDuration(at: recordingsURL.appendingPathComponent(filename))
 		record.entry = entry
 		record.state = .saved
+		if record.processing == nil { record.processing = newProcessing(for: record) }
 		try write(record)
 		return entry
 	}
@@ -147,6 +153,7 @@ actor JournalRepository {
 		guard var record = records[id] else { throw RepositoryError.unavailableRecord }
 		record.state = .deleted
 		record.entry = nil
+		record.processing = nil
 		try write(record)
 		return record.ownedAudioFilenames.union([id.uuidString])
 	}
@@ -175,9 +182,13 @@ actor JournalRepository {
 			destinationURL: destinationURL, stagingURL: stagingURL)
 	}
 
-	func commitFinalizedAudio(_ audio: FinalizedAudio) throws -> JournalEntry {
+	func commitFinalizedAudio(_ audio: FinalizedAudio, lease: ProcessingLease? = nil) throws -> JournalEntry {
 		try Task.checkCancellation()
 		let request = audio.request
+		if let lease {
+			guard lease.entryID == request.entryID, lease.stage == .finalizeAudio else { throw RepositoryError.staleProcessing }
+			_ = try currentRecord(for: lease)
+		}
 		guard var record = records[request.entryID], record.state == .saved,
 			var entry = record.entry, entry.audioFilename == request.sourceURL.lastPathComponent,
 			record.ownedAudioFilenames.contains(request.stagingURL.lastPathComponent),
@@ -196,6 +207,7 @@ actor JournalRepository {
 		entry.audioFilename = request.destinationURL.lastPathComponent
 		entry.duration = audio.duration
 		record.entry = entry
+		if record.processing?.stage == .finalizeAudio { advance(&record, after: .finalizeAudio) }
 		try write(record)
 		try? cleanupFinalizedAudio(id: entry.id)
 		return entry
@@ -217,9 +229,223 @@ actor JournalRepository {
 		records.values.filter { $0.state == .saved }.compactMap(\.entry).sorted { $0.createdAt > $1.createdAt }
 	}
 
+	func requestProcessing(id: UUID, startAt stage: ProcessingStage? = nil) throws -> JournalRecord {
+		guard var record = records[id], record.state == .saved else { throw RepositoryError.unavailableRecord }
+		var job = newProcessing(for: record)
+		job.completedStages = record.processing?.completedStages ?? []
+		if let stage, record.entry?.audioFilename.map(RecordingAudioFormat.needsFinalization) != true { job.stage = stage }
+		record.processing = job
+		try write(record)
+		return records[id]!
+	}
+
+	func retryProcessing(id: UUID) throws -> JournalRecord {
+		guard var record = records[id], record.state == .saved, var job = record.processing else {
+			throw RepositoryError.unavailableRecord
+		}
+		job.status = .queued
+		job.attemptID = nil
+		job.failure = nil
+		job.failureKind = nil
+		job.retryAfter = nil
+		job.inputRevision = record.inputRevision
+		record.processing = job
+		try write(record)
+		return records[id]!
+	}
+
+	func claimProcessing(now: Date = .now) throws -> ProcessingWork? {
+		let candidates = records.values.filter { record in
+			guard record.state == .saved, let job = record.processing else { return false }
+			return job.status == .queued || ((job.status == .failed || job.status == .partial) && job.retryAfter.map { $0 <= now } == true)
+		}.sorted { ($0.processing!.requestedAt, $0.id.uuidString) < ($1.processing!.requestedAt, $1.id.uuidString) }
+		guard var record = candidates.first, var job = record.processing else { return nil }
+		job.status = .running
+		job.attemptID = UUID()
+		job.retryAfter = nil
+		job.failure = nil
+		job.failureKind = nil
+		job.inputRevision = record.inputRevision
+		record.processing = job
+		try write(record)
+		let lease = ProcessingLease(entryID: record.id, requestID: job.requestID, attemptID: job.attemptID!,
+			inputRevision: job.inputRevision, stage: job.stage)
+		return ProcessingWork(lease: lease, record: records[record.id]!)
+	}
+
+	func nextProcessingRetry() -> Date? {
+		records.values.compactMap { record -> Date? in
+			guard record.state == .saved, let job = record.processing else { return nil }
+			if job.status == .queued { return .distantPast }
+			return job.status == .failed || job.status == .partial ? job.retryAfter : nil
+		}.min()
+	}
+
+	func commitTranscription(_ result: TranscriptionResult, lease: ProcessingLease) throws -> JournalRecord {
+		var record = try currentRecord(for: lease)
+		guard lease.stage == .transcribe else { throw RepositoryError.staleProcessing }
+		record.entry?.transcript = result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+		record.entry?.transcriptModel = result.modelName
+		record.processing?.partialTranscript = nil
+		advance(&record, after: .transcribe)
+		try write(record)
+		return records[record.id]!
+	}
+
+	func commitReflection(_ result: ReflectionResult, lease: ProcessingLease) throws -> JournalRecord {
+		var record = try currentRecord(for: lease)
+		guard lease.stage == .reflect, result.outcome.isComplete else { throw RepositoryError.staleProcessing }
+		record.entry?.headline = result.headline
+		record.entry?.summary = result.summary
+		record.entry?.summaryModel = result.modelName
+		advance(&record, after: .reflect)
+		if result.outcome == .skipped { record.processing?.skippedStages.insert(.reflect) }
+		try write(record)
+		return records[record.id]!
+	}
+
+	func commitReminders(_ result: ReminderParsingResult?, lease: ProcessingLease) throws -> JournalRecord {
+		var record = try currentRecord(for: lease)
+		guard lease.stage == .reminders, result?.outcome.isComplete != false else { throw RepositoryError.staleProcessing }
+		if let result {
+			record.entry?.reminders = result.reminders
+			record.entry?.reminderModel = result.modelName
+		}
+		advance(&record, after: .reminders)
+		if result == nil || result?.outcome == .skipped { record.processing?.skippedStages.insert(.reminders) }
+		try write(record)
+		return records[record.id]!
+	}
+
+	func savePartial(_ progress: TranscriptionProgress, lease: ProcessingLease) throws -> JournalRecord {
+		var record = try currentRecord(for: lease)
+		guard lease.stage == .transcribe else { throw RepositoryError.staleProcessing }
+		record.processing?.partialTranscript = progress
+		try write(record)
+		return records[record.id]!
+	}
+
+	func failProcessing(_ lease: ProcessingLease, message: String, partial: TranscriptionProgress? = nil,
+		retryAfter: Date? = nil, fallback: ReflectionResult? = nil, kind: ProcessingFailureKind = .execution) throws -> JournalRecord {
+		var record = try currentRecord(for: lease)
+		if let partial { record.processing?.partialTranscript = partial }
+		let hasPartial = record.processing?.partialTranscript != nil
+		record.processing?.status = hasPartial ? .partial : .failed
+		record.processing?.failure = message
+		record.processing?.failureKind = kind
+		record.processing?.attemptID = nil
+		record.processing?.retryAfter = retryAfter
+		if let fallback, record.processing?.completedStages.contains(.reflect) != true {
+			record.entry?.headline = fallback.headline
+			record.entry?.summary = fallback.summary
+			record.entry?.summaryModel = fallback.modelName
+		}
+		try write(record)
+		return records[record.id]!
+	}
+
+	func pauseProcessing(_ lease: ProcessingLease, canceled: Bool = false) throws -> JournalRecord {
+		var record = try currentRecord(for: lease, checkCancellation: false)
+		record.processing?.status = canceled ? .canceled : .queued
+		record.processing?.attemptID = nil
+		record.processing?.retryAfter = nil
+		try write(record)
+		return records[record.id]!
+	}
+
+	func apply(_ edit: JournalEdit, to id: UUID) throws -> JournalRecord {
+		guard var record = records[id], record.state == .saved, var entry = record.entry else {
+			throw RepositoryError.unavailableRecord
+		}
+		edit.apply(to: &entry)
+		guard entry != record.entry else { return record }
+		record.entry = entry
+		switch edit {
+		case .feedback:
+			record.inputRevision += 1
+			var job = newProcessing(for: record)
+			job.stage = record.processing?.status == .complete ? .reminders : (record.processing?.stage ?? job.stage)
+			job.completedStages = record.processing?.completedStages ?? []
+			record.processing = job
+		case .removeReminder:
+			record.inputRevision += 1
+			record.processing?.inputRevision = record.inputRevision
+			record.processing?.attemptID = nil
+			if record.processing?.status == .running { record.processing?.status = .queued }
+		case .location, .reminderResolution: break
+		}
+		try write(record)
+		return records[id]!
+	}
+
+	private func currentRecord(for lease: ProcessingLease, checkCancellation: Bool = true) throws -> JournalRecord {
+		if checkCancellation { try Task.checkCancellation() }
+		guard let record = records[lease.entryID], record.state == .saved,
+			let job = record.processing, job.status == .running,
+			job.requestID == lease.requestID, job.attemptID == lease.attemptID,
+			job.stage == lease.stage, record.inputRevision == lease.inputRevision,
+			job.inputRevision == lease.inputRevision else { throw RepositoryError.staleProcessing }
+		return record
+	}
+
+	private func advance(_ record: inout JournalRecord, after stage: ProcessingStage) {
+		guard var job = record.processing else { return }
+		job.completedStages.insert(stage)
+		job.skippedStages.remove(stage)
+		job.attemptID = nil
+		job.failure = nil
+		job.failureKind = nil
+		job.retryAfter = nil
+		job.status = .queued
+		switch stage {
+		case .finalizeAudio: job.stage = .transcribe
+		case .transcribe: job.stage = .reflect
+		case .reflect: job.stage = .reminders
+		case .reminders: job.status = .complete
+		}
+		record.processing = job
+	}
+
+	private func newProcessing(for record: JournalRecord) -> EntryProcessing {
+		EntryProcessing(inputRevision: record.inputRevision,
+			stage: record.entry?.audioFilename.map(RecordingAudioFormat.needsFinalization) == true ? .finalizeAudio : .transcribe)
+	}
+
+	private func migrateProcessing(issues: inout [String]) {
+		for var record in Array(records.values) where record.state == .saved {
+			do {
+				if record.processing == nil, let entry = record.entry {
+					var job = newProcessing(for: record)
+					if !["Processing recording", "Recovered recording"].contains(entry.headline), entry.transcript != "No transcript available." {
+						job.completedStages = [.transcribe, .reflect, .reminders]
+					}
+					if entry.audioFilename == nil {
+						job.status = .complete
+					} else if entry.transcript == "No transcript available." {
+						job.status = .failed
+						job.failure = "This older recording has no completed transcript. Retry to transcribe it."
+					} else if !RecordingAudioFormat.needsFinalization(entry.audioFilename!),
+						!["Processing recording", "Recovered recording"].contains(entry.headline) {
+						job.status = .complete
+						job.completedStages = [.transcribe, .reflect, .reminders]
+					}
+					record.processing = job
+					try write(record)
+				} else if record.processing?.status == .running {
+					record.processing?.status = .queued
+					record.processing?.attemptID = nil
+					try write(record)
+				}
+			} catch {
+				issues.append("Processing state for note \(record.id.uuidString.prefix(8)) could not be saved. Its original note remains available.")
+			}
+		}
+	}
+
 	private func snapshot(issues: [String]) -> JournalLoad {
 		JournalLoad(
 			entries: committedEntries(),
+			records: Array(records.values),
 			issues: issues,
 			deletionReferences: records.values.filter { $0.state == .deleted }.reduce(into: []) {
 				$0.formUnion($1.ownedAudioFilenames)
@@ -314,6 +540,7 @@ actor JournalRepository {
 			recovered.entry?.duration = duration
 			recovered.entry?.headline = "Recovered recording"
 			recovered.state = .saved
+			if recovered.processing == nil { recovered.processing = newProcessing(for: recovered) }
 			try write(recovered)
 		}
 		for record in records.values where record.state == .deleted {
@@ -361,11 +588,14 @@ actor JournalRepository {
 		guard var record = records[id] else { throw RepositoryError.unavailableRecord }
 		record.entry = nil
 		record.state = .deleted
+		record.processing = nil
 		try write(record)
 		return record.ownedAudioFilenames
 	}
 
-	private func write(_ record: JournalRecord) throws {
+	private func write(_ value: JournalRecord) throws {
+		var record = value
+		record.revision = (records[record.id]?.revision ?? record.revision) + 1
 		guard record.ownedAudioFilenames.allSatisfy(Self.isFilename),
 			record.entry?.audioFilename.map(Self.isFilename) ?? true else { throw RepositoryError.invalidRecord }
 		let data = try JSONEncoder().encode(record)
@@ -375,15 +605,23 @@ actor JournalRepository {
 		reservedIDs.insert(record.id)
 	}
 
-	private func prepareDirectories() throws {
+	private func prepareDirectories() throws -> [String] {
+		var issues: [String] = []
 		for directory in [rootURL, recordsURL, recordingsURL] {
+			let existed = fileManager.fileExists(atPath: directory.path)
 			try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-			try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: directory.path)
-			var url = directory
-			var values = URLResourceValues()
-			values.isExcludedFromBackup = false
-			try url.setResourceValues(values)
+			do {
+				try fileManager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: directory.path)
+				var url = directory
+				var values = URLResourceValues()
+				values.isExcludedFromBackup = false
+				try url.setResourceValues(values)
+			} catch {
+				guard existed else { throw error }
+				issues.append("Storage protection or backup settings could not be refreshed. Readable notes remain available.")
+			}
 		}
+		return issues
 	}
 
 	private func requireLoaded() throws {
@@ -423,9 +661,11 @@ private struct LegacyPendingRecording: Decodable {
 }
 
 enum RepositoryError: LocalizedError {
-	case invalidRecord, invalidAudio, unavailableRecord, notLoaded
+	case invalidRecord, invalidAudio, unavailableRecord, notLoaded, staleProcessing, unsavedChanges
 	var errorDescription: String? {
 		switch self {
+		case .staleProcessing: "This processing attempt is no longer current."
+		case .unsavedChanges: "Your changes could not be saved. Use Try Again to save them."
 		case .invalidRecord: "The note metadata could not be read safely. Original files were preserved."
 		case .invalidAudio: "The recording could not be read. Its original audio was preserved."
 		case .unavailableRecord: "This recording is no longer available."

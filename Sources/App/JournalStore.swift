@@ -27,13 +27,23 @@ final class JournalStore {
 	@ObservationIgnored private let reminderActivityManager = ReminderActivityManager()
 	@ObservationIgnored private var iCloudRevision = 0
 	@ObservationIgnored private var pendingICloudDeletionReferences = Set<String>()
-	@ObservationIgnored private var entryProcessingTasks: [UUID: Task<Void, Never>] = [:]
-	@ObservationIgnored private var entryProcessingTimeoutTasks: [UUID: Task<Void, Never>] = [:]
-	@ObservationIgnored private var entryProcessingStartedAt: [UUID: Date] = [:]
-	@ObservationIgnored private var entryBackgroundTasks: [UUID: UIBackgroundTaskIdentifier] = [:]
-	@ObservationIgnored private var entryProcessingTokens: [UUID: UUID] = [:]
-	@ObservationIgnored private var pendingEntryEvaluations: [PendingEntryEvaluation] = []
-	@ObservationIgnored private var entryEvaluationWorker: Task<Void, Never>?
+	private(set) var processingStates: [UUID: EntryProcessing] = [:]
+	@ObservationIgnored private var processingWorker: Task<Void, Never>?
+	@ObservationIgnored private var activeStage: Task<Void, Never>?
+	@ObservationIgnored private var activeLease: ProcessingLease?
+	@ObservationIgnored private var processingWatchdog: Task<Void, Never>?
+	@ObservationIgnored private var retryWakeTask: Task<Void, Never>?
+	@ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+	@ObservationIgnored private var processingSuspended = false
+	@ObservationIgnored private var lastPartialCheckpoint = Date.distantPast
+	@ObservationIgnored private var deletedEntryIDs = Set<UUID>()
+	@ObservationIgnored private var committedRecords: [UUID: JournalRecord] = [:]
+	@ObservationIgnored private var pendingEdits: [PendingJournalEdit] = []
+	private let processingServices: ProcessingServices
+	private let processingEnabled: Bool
+	#if DEBUG
+	var processingIdleCheckpoint: (() async -> Void)?
+	#endif
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var isConfigurationRestorePending = false
@@ -41,10 +51,11 @@ final class JournalStore {
 	@ObservationIgnored private let audioFinalizer = AudioFinalizer()
 	@ObservationIgnored private var bootstrapTask: Task<Void, Never>?
 	@ObservationIgnored private var persistenceTask: Task<Void, Never>?
-	@ObservationIgnored private var persistenceRevision = 0
 	private let usesExternalServices: Bool
 
-	init(storageRootURL: URL? = nil) {
+	init(storageRootURL: URL? = nil, processingServices: ProcessingServices? = nil) {
+		self.processingServices = processingServices ?? .live
+		processingEnabled = storageRootURL == nil || processingServices != nil
 		isDemoMode = storageRootURL == nil && ProcessInfo.processInfo.arguments.contains("-demo")
 		usesExternalServices = storageRootURL == nil
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -71,6 +82,26 @@ final class JournalStore {
 			if ProcessInfo.processInfo.arguments.contains("-demo-finalization-failed") {
 				for entry in entries { entryProcessingPhases[entry.id] = .finalizationFailed }
 			}
+			if ProcessInfo.processInfo.arguments.contains("-demo-processing-partial") || ProcessInfo.processInfo.arguments.contains("-demo-processing-failed") {
+				for entry in entries {
+					var job = EntryProcessing(inputRevision: 0, stage: .transcribe)
+					let partial = ProcessInfo.processInfo.arguments.contains("-demo-processing-partial")
+					job.status = partial ? .partial : .failed
+					job.failure = "The last attempt could not finish. Your audio and previous completed results are preserved."
+					if partial {
+						job.partialTranscript = TranscriptionProgress(transcript: "I wanted to remember the decision we made this morning, and the next thing to follow up on was", modelName: "Apple Speech · incomplete")
+						if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+							entries[index].transcript = ""
+							entries[index].summary = nil
+							entries[index].summaryModel = nil
+							entries[index].headline = "Recording saved"
+							entries[index].reminders = []
+						}
+					}
+					processingStates[entry.id] = job
+					entryProcessingPhases[entry.id] = job.phase
+				}
+			}
 			#endif
 		} else {
 			bootstrapTask = Task { [weak self] in await self?.loadJournal() }
@@ -87,6 +118,7 @@ final class JournalStore {
 		do {
 			let loaded = try await repository.load()
 			entries = loaded.entries
+			for record in loaded.records { publish(record) }
 			storageLoadMessage = loaded.issues.isEmpty ? nil : loaded.issues.joined(separator: "\n")
 			pendingICloudDeletionReferences.formUnion(loaded.deletionReferences)
 			if let configuration = loadConfiguration() {
@@ -98,8 +130,8 @@ final class JournalStore {
 				isConfigurationRestorePending = true
 			}
 			isLoading = false
+			kickProcessing()
 			if usesExternalServices {
-				resumeInterruptedProcessing()
 				if isConfigurationRestorePending { Task { await restoreConfigurationFromICloud() } }
 				else { scheduleICloudDriveMirror() }
 			}
@@ -248,333 +280,258 @@ final class JournalStore {
 		guard let entryID = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else {
 			throw RepositoryError.unavailableRecord
 		}
-		let savedEntry = try await repository.finishRecording(id: entryID)
-		entries.removeAll { $0.id == entryID }
-		entries.append(savedEntry)
-		entries.sort { $0.createdAt > $1.createdAt }
+		_ = try await repository.finishRecording(id: entryID)
+		if let record = await repository.record(id: entryID) { publish(record) }
 		scheduleICloudDriveMirror()
-		if usesExternalServices { startProcessing(entryID: entryID, url: url) }
+		kickProcessing()
 		if usesExternalServices { attachRecordedLocation(to: entryID) }
 		return entryID
 	}
 
-	private func startProcessing(
-		entryID: UUID,
-		url: URL,
-		preserveExistingTranscriptOnFailure: Bool = false
-	) {
-		cancelProcessingAttempt(entryID)
-		pendingEntryEvaluations.removeAll { $0.entryID == entryID }
-		let processingToken = UUID()
-		entryProcessingTokens[entryID] = processingToken
-		entryProcessingPhases[entryID] = .transcribing
-		entryProcessingStartedAt[entryID] = .now
-		beginBackgroundProcessing(entryID: entryID, token: processingToken)
-		entryProcessingTimeoutTasks[entryID] = Task { @MainActor [weak self] in
-			try? await Task.sleep(for: Self.processingTimeout)
-			guard !Task.isCancelled else { return }
-			self?.retryProcessingIfCurrent(
-				entryID: entryID,
-				url: url,
-				token: processingToken,
-				preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
-			)
-		}
-		entryProcessingTasks[entryID] = Task { @MainActor [weak self] in
-			await self?.processRecording(
-				entryID: entryID,
-				url: url,
-				token: processingToken,
-				preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
-			)
-		}
-	}
-
 	func resumeStaleProcessing(now: Date = .now) {
-		for entry in entries where entry.audioFilename.map(RecordingAudioFormat.needsFinalization) == true
-			&& entryProcessingTasks[entry.id] == nil {
-			if let url = audioURL(for: entry) { startProcessing(entryID: entry.id, url: url) }
-		}
-		let staleEntryIDs = entryProcessingStartedAt.compactMap { entryID, startedAt in
-			now.timeIntervalSince(startedAt) >= Self.processingTimeoutSeconds ? entryID : nil
-		}
-		for entryID in staleEntryIDs {
-			guard let token = entryProcessingTokens[entryID],
-				let entry = entry(id: entryID),
-				let url = audioURL(for: entry),
-				fileManager.fileExists(atPath: url.path)
-			else {
-				finishProcessing(entryID)
-				continue
-			}
-			retryProcessingIfCurrent(
-				entryID: entryID,
-				url: url,
-				token: token,
-				preserveExistingTranscriptOnFailure: entry.headline != "Processing recording"
-			)
-		}
+		processingSuspended = false
+		kickProcessing()
 	}
 
-	private func retryProcessingIfCurrent(
-		entryID: UUID,
-		url: URL,
-		token: UUID,
-		preserveExistingTranscriptOnFailure: Bool
-	) {
-		guard entryProcessingTokens[entryID] == token,
-			let current = entry(id: entryID), let currentURL = audioURL(for: current),
-			fileManager.fileExists(atPath: currentURL.path)
-		else { return }
-		startProcessing(
-			entryID: entryID,
-			url: currentURL,
-			preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
-		)
+	private func kickProcessing() {
+		guard processingEnabled, !isDemoMode, !isLoading, !processingSuspended, processingWorker == nil else { return }
+		retryWakeTask?.cancel()
+		processingWorker = Task { [weak self] in await self?.drainProcessing() }
 	}
 
-	private func beginBackgroundProcessing(entryID: UUID, token: UUID) {
-		let identifier = UIApplication.shared.beginBackgroundTask(withName: "Process voice memo") { [weak self] in
-			Task { @MainActor [weak self] in
-				guard self?.entryProcessingTokens[entryID] == token else { return }
-				if self?.entryProcessingPhases[entryID] == .finalizing {
-					self?.finishProcessing(entryID, token: token)
-				} else {
-					self?.endBackgroundProcessing(entryID)
+	private func drainProcessing() async {
+		defer {
+			processingWorker = nil
+			activeStage = nil
+			activeLease = nil
+			endBackgroundProcessing()
+			Task { await scheduleProcessingRetry() }
+		}
+		while !Task.isCancelled, !processingSuspended {
+			let work: ProcessingWork
+			do {
+				guard let next = try await repository.claimProcessing() else {
+					#if DEBUG
+					await processingIdleCheckpoint?()
+					#endif
+					break
 				}
+				if Task.isCancelled || processingSuspended {
+					if let record = try? await repository.pauseProcessing(next.lease) { publish(record) }
+					break
+				}
+				work = next
+			} catch {
+				processingSuspended = true
+				storageErrorMessage = "Processing could not save its progress. Your audio is preserved. " + error.localizedDescription
+				break
 			}
-		}
-		if identifier != .invalid {
-			entryBackgroundTasks[entryID] = identifier
-		}
-	}
-
-	private func endBackgroundProcessing(_ entryID: UUID) {
-		guard let identifier = entryBackgroundTasks.removeValue(forKey: entryID) else { return }
-		UIApplication.shared.endBackgroundTask(identifier)
-	}
-
-	private func cancelProcessingAttempt(_ entryID: UUID) {
-		entryProcessingTasks.removeValue(forKey: entryID)?.cancel()
-		entryProcessingTimeoutTasks.removeValue(forKey: entryID)?.cancel()
-		entryProcessingStartedAt.removeValue(forKey: entryID)
-		endBackgroundProcessing(entryID)
-	}
-
-	private func resumeInterruptedProcessing() {
-		for entry in entries where entry.audioFilename.map(RecordingAudioFormat.needsFinalization) == true
-			|| entry.headline == "Processing recording"
-			|| entry.headline == "Recovered recording"
-		{
-			guard let url = audioURL(for: entry), fileManager.fileExists(atPath: url.path) else { continue }
-			startProcessing(entryID: entry.id, url: url)
+			publish(work.record)
+			activeLease = work.lease
+			lastPartialCheckpoint = .distantPast
+			beginBackgroundProcessing()
+			let task = Task { await process(work) }
+			activeStage = task
+			processingWatchdog = Task { [weak self] in
+				try? await Task.sleep(for: Self.processingTimeout)
+				guard !Task.isCancelled, let self, self.activeLease == work.lease else { return }
+				do {
+					let record = try await self.repository.failProcessing(work.lease,
+						message: "Processing took too long. Retry this stage.", retryAfter: .now.addingTimeInterval(Self.processingTimeoutSeconds))
+					self.publish(record)
+					task.cancel()
+				} catch RepositoryError.staleProcessing {
+				} catch { self.reportProcessingStorageError(error, entryID: work.lease.entryID); task.cancel() }
+			}
+			await task.value
+			processingWatchdog?.cancel()
+			processingWatchdog = nil
+			activeStage = nil
+			activeLease = nil
+			endBackgroundProcessing()
 		}
 	}
 
-	private func attachRecordedLocation(to entryID: UUID) {
-		let locationTask = recordingLocationTask ?? Task {
-			await EntryLocationCapture.capture()
-		}
-		recordingLocationTask = nil
-		entryLocationTasks[entryID]?.cancel()
-		entryLocationTasks[entryID] = Task { @MainActor [weak self] in
-			let location = await locationTask.value
-			guard !Task.isCancelled, let self else { return }
-			defer { self.entryLocationTasks.removeValue(forKey: entryID) }
-			guard let location,
-				let index = self.entries.firstIndex(where: { $0.id == entryID })
-			else { return }
-			self.entries[index].location = location
-			self.persist()
-		}
-	}
-
-	private func processRecording(
-		entryID: UUID,
-		url: URL,
-		token: UUID,
-		preserveExistingTranscriptOnFailure: Bool
-	) async {
-		var processingURL = url
+	private func process(_ work: ProcessingWork) async {
+		let lease = work.lease
+		guard let entry = work.record.entry else { return }
 		do {
-			guard let record = await repository.record(id: entryID), record.state == .saved,
-				let source = record.entry, let canonicalURL = audioURL(for: source)
-			else { return }
 			try Task.checkCancellation()
-			guard entryProcessingTokens[entryID] == token else { return }
-			processingURL = canonicalURL
-			if RecordingAudioFormat.needsFinalization(canonicalURL.lastPathComponent) {
-				entryProcessingPhases[entryID] = .finalizing
-				let request = try await repository.prepareAudioFinalization(id: entryID)
+			let record: JournalRecord
+			switch lease.stage {
+			case .finalizeAudio:
+				let request = try await repository.prepareAudioFinalization(id: entry.id)
 				defer { try? fileManager.removeItem(at: request.stagingURL) }
 				let prepared = try await audioFinalizer.prepare(request)
+				_ = try await repository.commitFinalizedAudio(prepared, lease: lease)
+				guard let saved = await repository.record(id: entry.id) else { return }
+				record = saved
+			case .transcribe:
+				guard let url = audioURL(for: entry) else { throw RepositoryError.invalidAudio }
+				let result = try await processingServices.transcribe(url, settings.preferElevenLabsTranscription, elevenLabsAPIKey) { [weak self] progress in
+					Task { @MainActor [weak self] in await self?.receivePartial(progress, lease: lease) }
+				}
 				try Task.checkCancellation()
-				guard entryProcessingTokens[entryID] == token else { return }
-				let committed = try await repository.commitFinalizedAudio(prepared)
-				if let index = entries.firstIndex(where: { $0.id == entryID }) {
-					entries[index].audioFilename = committed.audioFilename
-					entries[index].duration = committed.duration
+				record = try await repository.commitTranscription(result, lease: lease)
+				transcriptionAlertMessage = result.warning
+			case .reflect:
+				let result: ReflectionResult
+				if entry.transcript.isEmpty {
+					result = ReflectionResult(headline: "No speech detected", summary: nil, modelName: "Completed transcription", outcome: .skipped)
+				} else { result = await processingServices.reflect(entry.transcript, entry.duration > 20) }
+				try Task.checkCancellation()
+				guard result.outcome.isComplete else {
+					try await failModelStage(result.outcome, lease: lease, fallback: result)
+					return
 				}
-				processingURL = request.destinationURL
-				scheduleICloudDriveMirror()
-			}
-			try Task.checkCancellation()
-			guard entryProcessingTokens[entryID] == token else { return }
-			entryProcessingPhases[entryID] = .transcribing
-		} catch {
-			guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
-			entryProcessingPhases[entryID] = .finalizationFailed
-			endBackgroundProcessing(entryID)
-			storageErrorMessage = "Audio preparation failed. It will retry in 15 minutes or when the app next opens; you can also choose Reprocess. " + error.localizedDescription
-			return
-		}
-		let transcription: TranscriptionResult?
-		var transcriptionError: Error?
-		do {
-			let result = try await AudioTranscriber.transcribe(
-				url: processingURL,
-				preferElevenLabs: settings.preferElevenLabsTranscription,
-				elevenLabsAPIKey: elevenLabsAPIKey
-			) { [weak self] partialResult in
-				guard !preserveExistingTranscriptOnFailure else { return }
-				Task { @MainActor [weak self] in
-					self?.updatePartialTranscript(partialResult, for: entryID, token: token)
+				record = try await repository.commitReflection(result, lease: lease)
+			case .reminders:
+				let result = settings.eventRemindersEnabled ? await processingServices.reminders(entry) : nil
+				try Task.checkCancellation()
+				if let result, !result.outcome.isComplete {
+					try await failModelStage(result.outcome, lease: lease)
+					return
 				}
+				record = try await repository.commitReminders(result, lease: lease)
 			}
-			transcription = result
-			transcriptionAlertMessage = result.warning
+			publish(record)
+			scheduleICloudDriveMirror()
+			if record.processing?.status == .complete, usesExternalServices { Task { await refreshReminderSchedule() } }
+		} catch is CancellationError {
+			if let record = try? await repository.pauseProcessing(lease, canceled: !Task.isCancelled) { publish(record) }
+		} catch RepositoryError.staleProcessing {
 		} catch {
-			transcription = nil
-			transcriptionError = error
-			if settings.preferElevenLabsTranscription,
-				!preserveExistingTranscriptOnFailure,
-				!Task.isCancelled {
-				transcriptionAlertMessage = error.localizedDescription
+			do {
+				let failure = error as? TranscriptionFailure
+				let record = try await repository.failProcessing(lease, message: error.localizedDescription,
+					partial: failure?.partial,
+					retryAfter: failure?.category == .unavailable ? nil : .now.addingTimeInterval(Self.processingTimeoutSeconds),
+					kind: failure?.category == .unavailable ? .unavailable : .execution)
+				publish(record)
+			} catch RepositoryError.staleProcessing {
+			} catch { reportProcessingStorageError(error, entryID: lease.entryID) }
+		}
+	}
+
+	private func failModelStage(_ outcome: ModelProcessingOutcome, lease: ProcessingLease, fallback: ReflectionResult? = nil) async throws {
+		let message: String
+		let retryAfter: Date?
+		switch outcome {
+		case .cancelled: throw CancellationError()
+		case .unavailable:
+			message = "On-device analysis is unavailable. Your recording and completed text are preserved."
+			retryAfter = nil
+		case let .failed(reason):
+			message = reason
+			retryAfter = .now.addingTimeInterval(Self.processingTimeoutSeconds)
+		case .complete, .skipped: return
+		}
+		publish(try await repository.failProcessing(lease, message: message, retryAfter: retryAfter, fallback: fallback, kind: outcome == .unavailable ? .unavailable : .execution))
+	}
+
+	private func receivePartial(_ progress: TranscriptionProgress, lease: ProcessingLease) async {
+		guard activeLease == lease, let state = processingStates[lease.entryID],
+			state.attemptID == lease.attemptID, state.status == .running else { return }
+		processingStates[lease.entryID]?.partialTranscript = progress
+		guard Date.now.timeIntervalSince(lastPartialCheckpoint) >= 1 else { return }
+		lastPartialCheckpoint = .now
+		do { publish(try await repository.savePartial(progress, lease: lease)) }
+		catch RepositoryError.staleProcessing {}
+		catch { storageErrorMessage = "Partial transcript progress could not be saved. " + error.localizedDescription }
+	}
+
+	private func reportProcessingStorageError(_ error: Error, entryID: UUID) {
+		processingSuspended = true
+		entryProcessingPhases[entryID] = .failed
+		storageErrorMessage = "Processing progress could not be saved. Your audio and previous results are preserved. Retry after storage is available. " + error.localizedDescription
+	}
+
+	private func scheduleProcessingRetry() async {
+		guard processingEnabled, !processingSuspended, processingWorker == nil,
+			let next = await repository.nextProcessingRetry(), processingWorker == nil else { return }
+		retryWakeTask?.cancel()
+		retryWakeTask = Task { [weak self] in
+			try? await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow)))
+			guard !Task.isCancelled else { return }
+			self?.kickProcessing()
+		}
+	}
+
+	private func beginBackgroundProcessing() {
+		guard usesExternalServices, let lease = activeLease else { return }
+		backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Process voice memo") { [weak self] in
+			Task { @MainActor [weak self] in
+				guard let self, self.activeLease == lease else { return }
+				self.processingSuspended = true
+				let task = self.activeStage
+				task?.cancel()
+				if let record = try? await self.repository.pauseProcessing(lease) { self.publish(record) }
+				if self.activeLease == lease { self.endBackgroundProcessing() }
 			}
 		}
-		let transcript = transcription?.transcript.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
-		guard let transcriptIndex = entries.firstIndex(where: { $0.id == entryID }) else {
-			finishProcessing(entryID, token: token)
-			return
-		}
-		if preserveExistingTranscriptOnFailure, transcript.isEmpty {
-			let reason = transcriptionError.map { " \($0.localizedDescription)" } ?? ""
-			transcriptionAlertMessage =
-				"Reprocessing could not transcribe this recording.\(reason) The existing transcript and analysis were kept."
-			finishProcessing(entryID, token: token)
-			return
-		}
+	}
 
-		entries[transcriptIndex].transcript = transcript.isEmpty ? "No transcript available." : transcript
-		entries[transcriptIndex].summary = nil
-		entries[transcriptIndex].transcriptModel = transcription?.modelName
-		entryProcessingPhases[entryID] = .reflecting
-		persist()
-
-		enqueueEvaluation(entryID: entryID, transcript: transcript, token: token)
+	private func endBackgroundProcessing() {
+		guard backgroundTask != .invalid else { return }
+		UIApplication.shared.endBackgroundTask(backgroundTask)
+		backgroundTask = .invalid
 	}
 
 	func reprocessEntry(id entryID: UUID) {
-		guard let entry = entry(id: entryID),
-			let url = audioURL(for: entry),
-			fileManager.fileExists(atPath: url.path)
-		else { return }
-		startProcessing(
-			entryID: entryID,
-			url: url,
-			preserveExistingTranscriptOnFailure: true
-		)
-	}
-
-	private func enqueueEvaluation(entryID: UUID, transcript: String, token: UUID) {
-		pendingEntryEvaluations.removeAll { $0.entryID == entryID }
-		pendingEntryEvaluations.append(PendingEntryEvaluation(
-			entryID: entryID,
-			transcript: transcript,
-			token: token
-		))
-		guard entryEvaluationWorker == nil else {
-			entryProcessingPhases[entryID] = .queued
-			return
-		}
-		entryEvaluationWorker = Task { @MainActor [weak self] in
-			await self?.drainEntryEvaluations()
+		Task {
+			do {
+				let record = try await repository.requestProcessing(id: entryID)
+				publish(record)
+				cancelObsoleteStage()
+				processingSuspended = false
+				kickProcessing()
+			} catch { reportProcessingStorageError(error, entryID: entryID) }
 		}
 	}
 
-	private func drainEntryEvaluations() async {
-		defer { entryEvaluationWorker = nil }
-		while !Task.isCancelled, !pendingEntryEvaluations.isEmpty {
-			let evaluation = pendingEntryEvaluations.removeFirst()
-			guard entryProcessingTokens[evaluation.entryID] == evaluation.token else { continue }
-			entryProcessingPhases[evaluation.entryID] = .reflecting
-			await evaluateEntry(
-				entryID: evaluation.entryID,
-				transcript: evaluation.transcript,
-				token: evaluation.token
-			)
+	func retryProcessingEntry(id entryID: UUID) {
+		Task {
+			do {
+				publish(try await repository.retryProcessing(id: entryID))
+				processingSuspended = false
+				kickProcessing()
+			} catch { reportProcessingStorageError(error, entryID: entryID) }
 		}
 	}
 
-	private func evaluateEntry(entryID: UUID, transcript: String, token: UUID) async {
-		guard !Task.isCancelled,
-			entryProcessingTokens[entryID] == token,
-			let source = entry(id: entryID)
-		else { return }
-		let reflection = await ReflectionEngine.reflect(
-			on: transcript,
-			includeSummary: source.duration > 20
-		)
+	func partialTranscript(for entryID: UUID) -> TranscriptionProgress? { processingStates[entryID]?.partialTranscript }
+	func processingFailure(for entryID: UUID) -> String? { processingStates[entryID]?.failure }
 
-		guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
-		entryProcessingPhases[entryID] = .reminders
-		var reminderResult: ReminderParsingResult?
-		if settings.eventRemindersEnabled {
-			reminderResult = await ReminderEngine.parse(
-				transcript: transcript,
-				sourceEvent: source.calendarEvent,
-				createdAt: source.createdAt,
-				currentReminders: source.reminders,
-				feedback: source.reminderFeedback
-			)
-		}
-
-		guard !Task.isCancelled,
-			entryProcessingTokens[entryID] == token,
-			let index = entries.firstIndex(where: { $0.id == entryID })
-		else { return }
-		entries[index].headline = reflection.headline
-		entries[index].summary = reflection.summary
-		entries[index].summaryModel = reflection.modelName
-		if let reminderResult {
-			entries[index].reminders = reminderResult.reminders
-			entries[index].reminderModel = reminderResult.modelName
-		}
-		persist()
-		Task { @MainActor [weak self] in
-			await self?.refreshReminderSchedule()
-		}
-		entryProcessingPhases[entryID] = .complete
-		try? await Task.sleep(for: .seconds(1.4))
-		guard !Task.isCancelled else { return }
-		finishProcessing(entryID, token: token)
+	func publish(_ record: JournalRecord) {
+		if record.state == .deleted { deletedEntryIDs.insert(record.id); entries.removeAll { $0.id == record.id } }
+		if record.state != .deleted, deletedEntryIDs.contains(record.id) { return }
+		guard record.revision >= (committedRecords[record.id]?.revision ?? -1) else { return }
+		committedRecords[record.id] = record
+		processingStates[record.id] = record.processing
+		entryProcessingPhases[record.id] = record.processing?.phase
+		guard record.state == .saved, var entry = record.entry else { return }
+		for pending in pendingEdits where pending.entryID == record.id { pending.edit.apply(to: &entry) }
+		if let index = entries.firstIndex(where: { $0.id == entry.id }) { entries[index] = entry }
+		else { entries.append(entry); entries.sort { $0.createdAt > $1.createdAt } }
 	}
 
-	private func updatePartialTranscript(_ result: TranscriptionResult, for entryID: UUID, token: UUID) {
-		guard entryProcessingTokens[entryID] == token,
-			entryProcessingPhases[entryID] == .transcribing,
-			let index = entries.firstIndex(where: { $0.id == entryID })
-		else { return }
-		entries[index].transcript = result.transcript
-		entries[index].transcriptModel = result.modelName
+	private func cancelObsoleteStage() {
+		guard let lease = activeLease, let current = committedRecords[lease.entryID] else { return }
+		if current.processing?.requestID != lease.requestID || current.processing?.attemptID != lease.attemptID
+			|| current.inputRevision != lease.inputRevision { activeStage?.cancel() }
 	}
 
-	private func finishProcessing(_ entryID: UUID, token: UUID? = nil) {
-		if let token, entryProcessingTokens[entryID] != token { return }
-		entryProcessingPhases.removeValue(forKey: entryID)
-		cancelProcessingAttempt(entryID)
-		entryProcessingTokens.removeValue(forKey: entryID)
+	private func attachRecordedLocation(to entryID: UUID) {
+		let locationTask = recordingLocationTask ?? Task { await EntryLocationCapture.capture() }
+		recordingLocationTask = nil
+		entryLocationTasks[entryID]?.cancel()
+		entryLocationTasks[entryID] = Task { [weak self] in
+			let location = await locationTask.value
+			guard !Task.isCancelled, let self else { return }
+			defer { self.entryLocationTasks.removeValue(forKey: entryID) }
+			guard let location, self.entries.contains(where: { $0.id == entryID }) else { return }
+			self.persist(.location(location), entryID: entryID)
+		}
 	}
 
 	@discardableResult
@@ -594,9 +551,11 @@ final class JournalStore {
 			guard entries.contains(where: { $0.id == entryID }) else { continue }
 			do {
 				let references = try await repository.delete(id: entryID)
-				cancelProcessingAttempt(entryID)
-				pendingEntryEvaluations.removeAll { $0.entryID == entryID }
-				entryProcessingTokens.removeValue(forKey: entryID)
+				if activeLease?.entryID == entryID { activeStage?.cancel() }
+				pendingEdits.removeAll { $0.entryID == entryID }
+				deletedEntryIDs.insert(entryID)
+				processingStates.removeValue(forKey: entryID)
+				if pendingEdits.isEmpty { hasUnsavedNoteChanges = false }
 				entryProcessingPhases.removeValue(forKey: entryID)
 				entryLocationTasks.removeValue(forKey: entryID)?.cancel()
 				entries.removeAll { $0.id == entryID }
@@ -624,54 +583,24 @@ final class JournalStore {
 
 	func applyReminderFeedback(entryID: UUID, audioURL: URL) async throws {
 		defer { try? fileManager.removeItem(at: audioURL) }
-		guard entries.contains(where: { $0.id == entryID }) else {
-			throw ReminderFeedbackError.entryUnavailable
-		}
-		let transcription = try await AudioTranscriber.transcribe(
-			url: audioURL,
-			preferElevenLabs: settings.preferElevenLabsTranscription,
-			elevenLabsAPIKey: elevenLabsAPIKey
-		)
+		guard entries.contains(where: { $0.id == entryID }) else { throw ReminderFeedbackError.entryUnavailable }
+		let transcription = try await processingServices.transcribe(audioURL, settings.preferElevenLabsTranscription, elevenLabsAPIKey, { _ in })
+		try Task.checkCancellation()
 		transcriptionAlertMessage = transcription.warning
-		let feedbackText = transcription.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !feedbackText.isEmpty else { throw ReminderFeedbackError.emptyTranscript }
-
-		guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
-			throw ReminderFeedbackError.entryUnavailable
-		}
-		let feedback = ReminderFeedback(kind: .voice, text: feedbackText)
-		entries[index].reminderFeedback.append(feedback)
-		let source = entries[index]
-		let result = await ReminderEngine.parse(
-			transcript: source.transcript,
-			sourceEvent: source.calendarEvent,
-			createdAt: source.createdAt,
-			currentReminders: source.reminders,
-			feedback: source.reminderFeedback
-		)
-		guard let updatedIndex = entries.firstIndex(where: { $0.id == entryID }) else {
-			throw ReminderFeedbackError.entryUnavailable
-		}
-		entries[updatedIndex].reminders = result.reminders
-		entries[updatedIndex].reminderModel = result.modelName
-		persist()
-		await refreshReminderSchedule()
+		let text = transcription.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !text.isEmpty else { throw ReminderFeedbackError.emptyTranscript }
+		guard entries.contains(where: { $0.id == entryID }) else { throw ReminderFeedbackError.entryUnavailable }
+		persist(.feedback(ReminderFeedback(kind: .voice, text: text)), entryID: entryID)
+		await persistenceTask?.value
+		guard !hasUnsavedNoteChanges else { throw RepositoryError.unsavedChanges }
+		kickProcessing()
 	}
 
 	func removeReminder(entryID: UUID, reminderID: UUID) {
-		guard let entryIndex = entries.firstIndex(where: { $0.id == entryID }),
-			let reminder = entries[entryIndex].reminders.first(where: { $0.id == reminderID })
-		else { return }
-		entries[entryIndex].reminders.removeAll { $0.id == reminderID }
-		entries[entryIndex].reminderFeedback.append(ReminderFeedback(
-			kind: .manualRemoval,
-			text: "Keep removed: \(reminder.text)",
-			focusedReminderID: reminderID
-		))
-		persist()
-		Task { @MainActor [weak self] in
-			await self?.refreshReminderSchedule()
-		}
+		guard let entry = entry(id: entryID), let reminder = entry.reminders.first(where: { $0.id == reminderID }) else { return }
+		persist(.removeReminder(reminderID, ReminderFeedback(kind: .manualRemoval,
+			text: "Keep removed: \(reminder.text)", focusedReminderID: reminderID)), entryID: entryID)
+		if usesExternalServices { Task { await refreshReminderSchedule() } }
 	}
 
 	func weeklyReview(for date: Date) async -> WeeklyReview {
@@ -726,25 +655,15 @@ final class JournalStore {
 		}
 		let result = await ReminderEngine.resolve(entries: entries, events: calendarSync.events, now: now)
 
-		var rulesChanged = false
-		for entryIndex in entries.indices {
-			for reminderIndex in entries[entryIndex].reminders.indices {
-				let reminderID = entries[entryIndex].reminders[reminderIndex].id
-				if let resolved = result.resolvedOccurrencesByReminderID[reminderID],
-					entries[entryIndex].reminders[reminderIndex].resolvedOccurrence != resolved {
-					entries[entryIndex].reminders[reminderIndex].resolvedOccurrence = resolved
-					rulesChanged = true
-				}
-				if let examples = result.examplesByReminderID[reminderID],
-					case var .fuzzy(selector) = entries[entryIndex].reminders[reminderIndex].selector,
-					selector.examples != examples {
-					selector.examples = examples
-					entries[entryIndex].reminders[reminderIndex].selector = .fuzzy(selector)
-					rulesChanged = true
-				}
+		for entry in entries {
+			for reminder in entry.reminders {
+				let occurrence = result.resolvedOccurrencesByReminderID[reminder.id]
+				let examples = result.examplesByReminderID[reminder.id]
+				var changed = occurrence != nil && occurrence != reminder.resolvedOccurrence
+				if let examples, case let .fuzzy(selector) = reminder.selector { changed = changed || examples != selector.examples }
+				if changed { persist(.reminderResolution(reminder.id, occurrence, examples), entryID: entry.id) }
 			}
 		}
-		if rulesChanged { persist() }
 		await reminderActivityManager.synchronize(
 			occurrences: result.occurrences,
 			settings: settings,
@@ -811,7 +730,7 @@ final class JournalStore {
 	}
 
 	func retrySavingChanges() async {
-		persist()
+		queuePendingWrites()
 		await persistenceTask?.value
 	}
 
@@ -821,22 +740,35 @@ final class JournalStore {
 		return await repository.committedEntries()
 	}
 
-	private func persist() {
+	func persist(_ edit: JournalEdit, entryID: UUID) {
+		guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
+		edit.apply(to: &entries[index])
 		guard !isDemoMode else { return }
-		persistenceRevision += 1
-		let revision = persistenceRevision
-		let snapshot = entries
+		pendingEdits.append(PendingJournalEdit(entryID: entryID, edit: edit))
+		queuePendingWrites()
+	}
+
+	private func queuePendingWrites() {
 		let previous = persistenceTask
 		persistenceTask = Task {
 			await previous?.value
-			do {
-				try await repository.save(snapshot)
-				if persistenceRevision == revision { hasUnsavedNoteChanges = false }
-				scheduleICloudDriveMirror()
-			} catch {
-				hasUnsavedNoteChanges = true
-				storageErrorMessage = "Note changes haven’t been saved. Try saving again. " + error.localizedDescription
+			while let pending = pendingEdits.first {
+				do {
+					let record = try await repository.apply(pending.edit, to: pending.entryID)
+					pendingEdits.removeAll { $0.id == pending.id }
+					publish(record)
+					cancelObsoleteStage()
+					scheduleICloudDriveMirror()
+				} catch RepositoryError.unavailableRecord {
+					pendingEdits.removeAll { $0.id == pending.id }
+				} catch {
+					hasUnsavedNoteChanges = true
+					storageErrorMessage = "Note changes haven’t been saved. Try saving again. " + error.localizedDescription
+					return
+				}
 			}
+			hasUnsavedNoteChanges = false
+			kickProcessing()
 		}
 	}
 
@@ -905,10 +837,10 @@ enum ReminderFeedbackError: LocalizedError {
 	}
 }
 
-private struct PendingEntryEvaluation {
-	var entryID: UUID
-	var transcript: String
-	var token: UUID
+private struct PendingJournalEdit {
+	let id = UUID()
+	let entryID: UUID
+	let edit: JournalEdit
 }
 
 struct JournalSettings: Codable, Equatable, Sendable {

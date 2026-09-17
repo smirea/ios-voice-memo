@@ -74,7 +74,9 @@ struct EntryView: View {
 				}
 
 				if let phase = store.processingPhase(for: entry.id) {
-					EntryProcessingStatusView(phase: phase)
+					EntryProcessingStatusView(phase: phase, failure: store.processingFailure(for: entry.id)) {
+						store.retryProcessingEntry(id: entry.id)
+					}
 						.transition(.move(edge: .top).combined(with: .opacity))
 						.entryListRow()
 				}
@@ -177,6 +179,17 @@ struct EntryView: View {
 						}
 					}
 						.entryListRow()
+				}
+
+				if store.settings.showTranscripts, let partial = store.partialTranscript(for: entry.id), !partial.transcript.isEmpty {
+					VStack(alignment: .leading, spacing: 10) {
+						Text("Incomplete transcript")
+							.font(.footnote.weight(.semibold))
+							.foregroundStyle(AppStyle.secondary)
+						SummaryToPopup(text: partial.transcript, accessibilityName: "Incomplete transcript")
+						if store.settings.showModelNames { ModelAttribution(model: partial.modelName) }
+					}
+					.entryListRow()
 				}
 
 				if let location = currentEntry.location {
@@ -350,7 +363,7 @@ struct EntryView: View {
 		.buttonStyle(.plain)
 		.disabled(
 			!store.settings.eventRemindersEnabled
-				|| store.processingPhase(for: entry.id) != nil
+				|| store.processingPhase(for: entry.id)?.isActive == true
 		)
 		.accessibilityHint("Records a temporary correction and reprocesses these reminders")
 	}
@@ -1104,29 +1117,27 @@ private enum ExternalLinks {
 
 private struct EntryProcessingStatusView: View {
 	let phase: EntryProcessingPhase
+	let failure: String?
+	let retry: () -> Void
 
 	var body: some View {
-		HStack(spacing: 11) {
-			Group {
-				if phase == .finalizationFailed {
-					Image(systemName: "exclamationmark.circle")
-				} else if phase == .complete {
-					Image(systemName: "checkmark")
-						.font(.system(size: 13, weight: .bold))
-				} else {
-					ProgressView()
-						.controlSize(.small)
+		VStack(alignment: .leading, spacing: 8) {
+			HStack(spacing: 11) {
+				Group {
+					if phase == .complete { Image(systemName: "checkmark") }
+					else if !phase.isActive { Image(systemName: "exclamationmark.circle") }
+					else { ProgressView().controlSize(.small) }
 				}
+				.foregroundStyle(AppStyle.accent)
+				.tint(AppStyle.accent)
+				.frame(width: 24, height: 30)
+				Text(phase.title)
+					.font(.system(size: 14, weight: .semibold))
+					.foregroundStyle(.white)
+				Spacer()
+				if !phase.isActive, phase != .complete { Button("Retry", action: retry).font(.subheadline.weight(.semibold)) }
 			}
-			.foregroundStyle(AppStyle.accent)
-			.tint(AppStyle.accent)
-			.frame(width: 24, height: 30)
-
-			Text(phase.title)
-				.font(.system(size: 14, weight: .semibold))
-				.foregroundStyle(.white)
-
-			Spacer()
+			if let failure { Text(failure).font(.footnote).foregroundStyle(AppStyle.secondary) }
 		}
 		.padding(.vertical, 4)
 	}

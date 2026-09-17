@@ -404,12 +404,45 @@ struct TranscriptionResult: Sendable {
 	}
 
 	func warningThatElevenLabsFailed(_ reason: String) -> TranscriptionResult {
-		TranscriptionResult(
-			transcript: transcript,
-			modelName: modelName,
-			warning: "\(reason) Apple Speech was used instead."
-		)
+		TranscriptionResult(transcript: transcript, modelName: modelName,
+			warning: "\(reason) Apple Speech was used instead.")
 	}
+}
+
+struct TranscriptionProgress: Codable, Hashable, Sendable {
+	let transcript: String
+	let modelName: String
+}
+
+struct TranscriptionFailure: LocalizedError, Sendable {
+	enum Category: String, Codable, Sendable { case unavailable, unreadableAudio, serviceFailure }
+	let category: Category
+	let message: String
+	let partial: TranscriptionProgress?
+
+	init(category: Category, message: String, partial: TranscriptionProgress? = nil) {
+		self.category = category
+		self.message = message
+		self.partial = partial
+	}
+
+	var errorDescription: String? { message }
+}
+
+typealias TranscriptionUpdate = @Sendable (TranscriptionProgress) -> Void
+
+struct TranscriptionProviders: Sendable {
+	typealias AppleProvider = @Sendable (URL, @escaping TranscriptionUpdate) async throws -> TranscriptionResult?
+	var speech: AppleProvider
+	var dictation: AppleProvider
+	var elevenLabs: @Sendable (URL, String) async throws -> TranscriptionResult
+	var bundledAPIKey: @Sendable () -> String?
+
+	static let live = TranscriptionProviders(
+		speech: AudioTranscriber.transcribeWithSpeech,
+		dictation: AudioTranscriber.transcribeWithDictation,
+		elevenLabs: ElevenLabsTranscriber.transcribe,
+		bundledAPIKey: { ElevenLabsTranscriber.bundledAPIKey })
 }
 
 enum AudioTranscriber {
@@ -417,177 +450,281 @@ enum AudioTranscriber {
 		url: URL,
 		preferElevenLabs: Bool,
 		elevenLabsAPIKey: String? = nil,
-		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void = { _ in }
+		providers: TranscriptionProviders = .live,
+		onUpdate: @escaping TranscriptionUpdate = { _ in }
 	) async throws -> TranscriptionResult {
+		try Task.checkCancellation()
 		guard preferElevenLabs else {
-			return try await transcribeWithApple(url: url, onUpdate: onUpdate)
+			return try await transcribeWithApple(url: url, providers: providers, onUpdate: onUpdate)
 		}
-		guard let apiKey = preferredAPIKey(elevenLabsAPIKey)
-			?? ElevenLabsTranscriber.bundledAPIKey
-		else {
+		guard let apiKey = preferredAPIKey(elevenLabsAPIKey) ?? providers.bundledAPIKey() else {
 			do {
-				return try await transcribeWithApple(url: url, onUpdate: onUpdate)
-					.warningThatElevenLabsFailed(
-						"ElevenLabs is enabled, but its API key is missing from this build."
-					)
+				let result = try await transcribeWithApple(url: url, providers: providers, onUpdate: onUpdate)
+				try Task.checkCancellation()
+				return result.warningThatElevenLabsFailed("ElevenLabs is enabled, but no API key is available.")
 			} catch {
-				throw AudioTranscriptionError.allServicesFailed(
-					"its API key is missing from this build"
-				)
+				try rethrowCancellation(error)
+				let failure = normalized(error)
+				throw TranscriptionFailure(category: failure.category,
+					message: "No ElevenLabs API key is available. " + failure.message, partial: failure.partial)
 			}
 		}
 
 		let appleTask = Task {
-			try await transcribeWithApple(url: url, onUpdate: onUpdate)
+			try await transcribeWithApple(url: url, providers: providers, onUpdate: onUpdate)
 		}
-		do {
-			let result = try await ElevenLabsTranscriber.transcribe(url: url, apiKey: apiKey)
-			appleTask.cancel()
-			_ = try? await appleTask.value
-			return result
-		} catch {
-			guard !Task.isCancelled else {
-				appleTask.cancel()
-				throw CancellationError()
-			}
-			let reason = (error as? LocalizedError)?.errorDescription
-				?? error.localizedDescription
+		return try await withTaskCancellationHandler {
 			do {
-				return try await appleTask.value.warningThatElevenLabsFailed(
-					"ElevenLabs transcription failed: \(reason)."
-				)
+				let result = try await providers.elevenLabs(url, apiKey)
+				try Task.checkCancellation()
+				appleTask.cancel()
+				_ = await appleTask.result
+				try Task.checkCancellation()
+				return result
 			} catch {
-				throw AudioTranscriptionError.allServicesFailed(reason)
+				if isCancellation(error) {
+					appleTask.cancel()
+					_ = await appleTask.result
+					throw CancellationError()
+				}
+				let remoteReason = error.localizedDescription
+				do {
+					let result = try await appleTask.value
+					try Task.checkCancellation()
+					return result.warningThatElevenLabsFailed("ElevenLabs transcription failed: \(remoteReason)")
+				} catch {
+					try rethrowCancellation(error)
+					let failure = normalized(error)
+					throw TranscriptionFailure(category: .serviceFailure,
+						message: "ElevenLabs transcription failed: \(remoteReason). " + failure.message,
+						partial: failure.partial)
+				}
 			}
+		} onCancel: {
+			appleTask.cancel()
 		}
 	}
 
 	private static func preferredAPIKey(_ apiKey: String?) -> String? {
-		guard let apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines),
-			!apiKey.isEmpty
-		else { return nil }
+		guard let apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else { return nil }
 		return apiKey
 	}
 
 	private static func transcribeWithApple(
 		url: URL,
-		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void
+		providers: TranscriptionProviders,
+		onUpdate: @escaping TranscriptionUpdate
 	) async throws -> TranscriptionResult {
-		if SpeechTranscriber.isAvailable,
-			let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current)
-		{
-			let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+		var lastFailure: TranscriptionFailure?
+		var bestPartial: TranscriptionProgress?
+		for provider in [providers.speech, providers.dictation] {
+			try Task.checkCancellation()
 			do {
-				return try await transcribe(
-					url: url,
-					with: transcriber,
-					modelName: "Apple SpeechTranscriber · \(locale.identifier)",
-					onUpdate: onUpdate
-				)
-			} catch where !Task.isCancelled {}
+				if let completed = try await provider(url, onUpdate) {
+					try Task.checkCancellation()
+					return completed
+				}
+			} catch {
+				try rethrowCancellation(error)
+				let failure = normalized(error)
+				lastFailure = failure
+				if let partial = failure.partial, partial.transcript.count > (bestPartial?.transcript.count ?? 0) {
+					bestPartial = partial
+				}
+			}
 		}
-
-		if let locale = await DictationTranscriber.supportedLocale(equivalentTo: .current) {
-			let transcriber = DictationTranscriber(locale: locale, preset: .longDictation)
-			return try await transcribe(
-				url: url,
-				with: transcriber,
-				modelName: "Apple DictationTranscriber · \(locale.identifier)",
-				onUpdate: onUpdate
-			)
+		try Task.checkCancellation()
+		guard let failure = lastFailure else {
+			throw TranscriptionFailure(category: .unavailable,
+				message: "Apple Speech is not available for the current language on this device.")
 		}
-
-		return TranscriptionResult(transcript: "", modelName: "Apple Speech")
+		throw TranscriptionFailure(category: failure.category,
+			message: "Apple Speech could not finish transcribing this recording. " + failure.message, partial: bestPartial)
 	}
 
-	private static func transcribe(
-		url: URL,
-		with transcriber: SpeechTranscriber,
-		modelName: String,
-		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void
-	) async throws -> TranscriptionResult {
-		if let installationRequest = try await AssetInventory.assetInstallationRequest(
-			supporting: [transcriber]
-		) {
-			try await installationRequest.downloadAndInstall()
-		}
-
-		let accumulator = TranscriptAccumulator(modelName: modelName, onUpdate: onUpdate)
-		let resultsTask = Task {
+	static func transcribeWithSpeech(url: URL, onUpdate: @escaping TranscriptionUpdate) async throws -> TranscriptionResult? {
+		try Task.checkCancellation()
+		guard SpeechTranscriber.isAvailable,
+			let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current)
+		else { return nil }
+		let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+		return try await analyze(url: url, with: transcriber,
+			modelName: "Apple SpeechTranscriber · \(locale.identifier)", onUpdate: onUpdate) { accumulator in
 			for try await result in transcriber.results {
+				try Task.checkCancellation()
 				await accumulator.append(result.text)
 			}
 		}
-		return try await analyze(
-			url: url,
-			with: transcriber,
-			resultsTask: resultsTask,
-			accumulator: accumulator
-		)
 	}
 
-	private static func transcribe(
-		url: URL,
-		with transcriber: DictationTranscriber,
-		modelName: String,
-		onUpdate: @escaping @Sendable (TranscriptionResult) -> Void
-	) async throws -> TranscriptionResult {
-		if let installationRequest = try await AssetInventory.assetInstallationRequest(
-			supporting: [transcriber]
-		) {
-			try await installationRequest.downloadAndInstall()
-		}
-
-		let accumulator = TranscriptAccumulator(modelName: modelName, onUpdate: onUpdate)
-		let resultsTask = Task {
+	static func transcribeWithDictation(url: URL, onUpdate: @escaping TranscriptionUpdate) async throws -> TranscriptionResult? {
+		try Task.checkCancellation()
+		guard let locale = await DictationTranscriber.supportedLocale(equivalentTo: .current) else { return nil }
+		let transcriber = DictationTranscriber(locale: locale, preset: .longDictation)
+		return try await analyze(url: url, with: transcriber,
+			modelName: "Apple DictationTranscriber · \(locale.identifier)", onUpdate: onUpdate) { accumulator in
 			for try await result in transcriber.results {
+				try Task.checkCancellation()
 				await accumulator.append(result.text)
 			}
 		}
-		return try await analyze(
-			url: url,
-			with: transcriber,
-			resultsTask: resultsTask,
-			accumulator: accumulator
-		)
 	}
 
-	private static func analyze(
+	static func analyze(
 		url: URL,
 		with module: any SpeechModule,
-		resultsTask: Task<Void, any Error>,
-		accumulator: TranscriptAccumulator
+		modelName: String,
+		onUpdate: @escaping TranscriptionUpdate,
+		consume: @escaping @Sendable (TranscriptAccumulator) async throws -> Void
 	) async throws -> TranscriptionResult {
-		let file = try AVAudioFile(forReading: url)
-		let analyzer = SpeechAnalyzer(modules: [module])
-
+		try Task.checkCancellation()
+		let file: AVAudioFile
 		do {
-			if let lastSample = try await analyzer.analyzeSequence(from: file) {
-				try await analyzer.finalizeAndFinish(through: lastSample)
-			} else {
-				await analyzer.cancelAndFinishNow()
+			file = try AVAudioFile(forReading: url)
+			guard file.length > 0 else {
+				throw TranscriptionFailure(category: .unreadableAudio, message: "The recording contains no audio samples.")
 			}
-			try await resultsTask.value
-			return await accumulator.result
 		} catch {
-			await analyzer.cancelAndFinishNow()
-			resultsTask.cancel()
-			_ = try? await resultsTask.value
-			let partialResult = await accumulator.result
-			guard partialResult.transcript.isEmpty else { return partialResult }
+			try rethrowCancellation(error)
+			throw TranscriptionFailure(category: .unreadableAudio,
+				message: "The recording could not be read. " + error.localizedDescription)
+		}
+		do {
+			if let installation = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
+				try await installation.downloadAndInstall()
+			}
+		} catch {
+			try rethrowCancellation(error)
+			throw TranscriptionFailure(category: .unavailable,
+				message: "Apple Speech language assets are unavailable. " + error.localizedDescription)
+		}
+		try Task.checkCancellation()
+		guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [module], considering: file.processingFormat) else {
+			throw TranscriptionFailure(category: .unavailable, message: "Apple Speech has no available audio format for this language.")
+		}
+		let convertedURL = FileManager.default.temporaryDirectory.appendingPathComponent("speech-input-\(UUID().uuidString).caf")
+		defer { try? FileManager.default.removeItem(at: convertedURL) }
+		let analysisFile: AVAudioFile
+		do {
+			analysisFile = try prepareAnalysisFile(file, format: format, temporaryURL: convertedURL)
+		} catch {
+			try rethrowCancellation(error)
+			throw TranscriptionFailure(category: .unreadableAudio,
+				message: "The recording could not be prepared for Apple Speech. " + error.localizedDescription)
+		}
+		let analyzer = SpeechAnalyzer(modules: [module])
+		return try await runAnalysis(modelName: modelName, onUpdate: onUpdate, analyze: {
+			guard let lastSample = try await analyzer.analyzeSequence(from: analysisFile) else {
+				try Task.checkCancellation()
+				throw TranscriptionFailure(category: .unreadableAudio, message: "No audio samples could be analyzed.")
+			}
+			try Task.checkCancellation()
+			try await analyzer.finalizeAndFinish(through: lastSample)
+		}, consume: consume, cancel: { await analyzer.cancelAndFinishNow() })
+	}
+
+	static func prepareAnalysisFile(_ source: AVAudioFile, format: AVAudioFormat, temporaryURL: URL) throws -> AVAudioFile {
+		try Task.checkCancellation()
+		source.framePosition = 0
+		if source.processingFormat == format { return source }
+		do {
+			try writeConvertedAudio(source, format: format, url: temporaryURL)
+			try Task.checkCancellation()
+			return try AVAudioFile(forReading: temporaryURL, commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+		} catch {
+			try? FileManager.default.removeItem(at: temporaryURL)
 			throw error
 		}
 	}
-}
 
-private enum AudioTranscriptionError: LocalizedError {
-	case allServicesFailed(String)
-
-	var errorDescription: String? {
-		switch self {
-		case let .allServicesFailed(elevenLabsReason):
-			"ElevenLabs transcription failed: \(elevenLabsReason). Apple Speech also could not transcribe this recording."
+	private static func writeConvertedAudio(_ source: AVAudioFile, format: AVAudioFormat, url: URL) throws {
+		guard let converter = AVAudioConverter(from: source.processingFormat, to: format),
+			let inputBuffer = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 4_096),
+			let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_096)
+		else { throw TranscriptionFailure(category: .unreadableAudio, message: "The audio format cannot be converted.") }
+		let destination = try AVAudioFile(forWriting: url, settings: format.settings,
+			commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+		defer { destination.close() }
+		// AVAudioConverter invokes its input block synchronously during convert; these values never cross tasks.
+		nonisolated(unsafe) let input = inputBuffer
+		while true {
+			try Task.checkCancellation()
+			nonisolated(unsafe) var inputError: Error?
+			var conversionError: NSError?
+			let status = converter.convert(to: output, error: &conversionError) { requested, inputStatus in
+				do {
+					try Task.checkCancellation()
+					let remaining = source.length - source.framePosition
+					guard remaining > 0 else { inputStatus.pointee = .endOfStream; return nil }
+					try source.read(into: input, frameCount: AVAudioFrameCount(min(Int64(min(requested, input.frameCapacity)), remaining)))
+					guard input.frameLength > 0 else {
+						throw TranscriptionFailure(category: .unreadableAudio, message: "The recording ended before all audio samples could be read.")
+					}
+					inputStatus.pointee = .haveData
+					return input
+				} catch {
+					inputError = error
+					inputStatus.pointee = .noDataNow
+					return nil
+				}
+			}
+			if let inputError { throw inputError }
+			if let conversionError { throw conversionError }
+			if status == .error {
+				throw TranscriptionFailure(category: .unreadableAudio, message: "Audio conversion failed.")
+			}
+			try Task.checkCancellation()
+			if output.frameLength > 0 { try destination.write(from: output) }
+			if status == .endOfStream { return }
 		}
+	}
+
+	static func runAnalysis(
+		modelName: String,
+		onUpdate: @escaping TranscriptionUpdate,
+		analyze: @escaping @Sendable () async throws -> Void,
+		consume: @escaping @Sendable (TranscriptAccumulator) async throws -> Void,
+		cancel: @escaping @Sendable () async -> Void
+	) async throws -> TranscriptionResult {
+		let accumulator = TranscriptAccumulator(modelName: modelName, onUpdate: onUpdate)
+		do {
+			try await withTaskCancellationHandler {
+				try await withThrowingTaskGroup(of: Void.self) { group in
+					do {
+						try Task.checkCancellation()
+						group.addTask { try Task.checkCancellation(); try await analyze() }
+						group.addTask { try Task.checkCancellation(); try await consume(accumulator) }
+						while try await group.next() != nil {}
+					} catch {
+						group.cancelAll()
+						await cancel()
+						throw error
+					}
+				}
+			} onCancel: {
+				Task { await cancel() }
+			}
+			try Task.checkCancellation()
+			return await accumulator.result
+		} catch {
+			try rethrowCancellation(error)
+			let progress = await accumulator.progress
+			let failure = normalized(error)
+			throw TranscriptionFailure(category: failure.category, message: failure.message,
+				partial: progress.transcript.isEmpty ? failure.partial : progress)
+		}
+	}
+
+	private static func normalized(_ error: Error) -> TranscriptionFailure {
+		(error as? TranscriptionFailure) ?? TranscriptionFailure(category: .serviceFailure, message: error.localizedDescription)
+	}
+
+	private static func isCancellation(_ error: Error) -> Bool {
+		Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
+	}
+
+	private static func rethrowCancellation(_ error: Error) throws {
+		if isCancellation(error) { throw CancellationError() }
 	}
 }
 
@@ -599,7 +736,6 @@ private enum ElevenLabsTranscriber {
 	private enum TranscriptionError: LocalizedError {
 		case invalidResponse
 		case requestFailed(Int)
-		case emptyTranscript
 
 		var errorDescription: String? {
 			switch self {
@@ -607,8 +743,6 @@ private enum ElevenLabsTranscriber {
 				"the server returned an invalid response"
 			case let .requestFailed(status):
 				"the server returned HTTP \(status)"
-			case .emptyTranscript:
-				"the server returned an empty transcript"
 			}
 		}
 	}
@@ -629,6 +763,7 @@ private enum ElevenLabsTranscriber {
 	}
 
 	static func transcribe(url: URL, apiKey: String) async throws -> TranscriptionResult {
+		try Task.checkCancellation()
 		let boundary = "MyVoiceMemo-\(UUID().uuidString)"
 		let bodyURL = try multipartBody(audioURL: url, boundary: boundary)
 		defer { try? FileManager.default.removeItem(at: bodyURL) }
@@ -651,7 +786,7 @@ private enum ElevenLabsTranscriber {
 			.decode(Response.self, from: data)
 			.text
 			.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !transcript.isEmpty else { throw TranscriptionError.emptyTranscript }
+		try Task.checkCancellation()
 		return TranscriptionResult(transcript: transcript, modelName: "ElevenLabs Scribe v2")
 	}
 
@@ -663,6 +798,8 @@ private enum ElevenLabsTranscriber {
 			throw TranscriptionError.invalidResponse
 		}
 
+		var completed = false
+		defer { if !completed { try? FileManager.default.removeItem(at: bodyURL) } }
 		let output = try FileHandle(forWritingTo: bodyURL)
 		do {
 			try writeField("model_id", value: "scribe_v2", boundary: boundary, to: output)
@@ -678,14 +815,15 @@ private enum ElevenLabsTranscriber {
 			let input = try FileHandle(forReadingFrom: audioURL)
 			defer { try? input.close() }
 			while let chunk = try input.read(upToCount: 1_048_576), !chunk.isEmpty {
+				try Task.checkCancellation()
 				try output.write(contentsOf: chunk)
 			}
 			try write("\r\n--\(boundary)--\r\n", to: output)
 			try output.close()
+			completed = true
 			return bodyURL
 		} catch {
 			try? output.close()
-			try? FileManager.default.removeItem(at: bodyURL)
 			throw error
 		}
 	}
@@ -709,12 +847,12 @@ private enum ElevenLabsTranscriber {
 	}
 }
 
-private actor TranscriptAccumulator {
+actor TranscriptAccumulator {
 	private var transcript = ""
 	private let modelName: String
-	private let onUpdate: @Sendable (TranscriptionResult) -> Void
+	private let onUpdate: TranscriptionUpdate
 
-	init(modelName: String, onUpdate: @escaping @Sendable (TranscriptionResult) -> Void) {
+	init(modelName: String, onUpdate: @escaping TranscriptionUpdate) {
 		self.modelName = modelName
 		self.onUpdate = onUpdate
 	}
@@ -723,8 +861,13 @@ private actor TranscriptAccumulator {
 		TranscriptionResult(transcript: transcript, modelName: modelName)
 	}
 
+	var progress: TranscriptionProgress {
+		TranscriptionProgress(transcript: transcript, modelName: modelName)
+	}
+
 	func append(_ fragment: AttributedString) {
+		guard !Task.isCancelled else { return }
 		transcript += String(fragment.characters)
-		onUpdate(result)
+		onUpdate(progress)
 	}
 }

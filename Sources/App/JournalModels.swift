@@ -193,11 +193,15 @@ struct ReflectionResult: Sendable {
 	var headline: String
 	var summary: String?
 	var modelName: String
+	var outcome: ModelProcessingOutcome = .complete
 }
 
 enum EntryProcessingPhase: Equatable, Sendable {
 	case finalizing
 	case finalizationFailed
+	case partial
+	case failed
+	case canceled
 	case transcribing
 	case queued
 	case reflecting
@@ -208,6 +212,9 @@ enum EntryProcessingPhase: Equatable, Sendable {
 		switch self {
 		case .finalizing: "Preparing audio"
 		case .finalizationFailed: "Audio preparation needs retry"
+		case .partial: "Transcript incomplete"
+		case .failed: "Processing needs retry"
+		case .canceled: "Processing paused"
 		case .transcribing: "Transcribing"
 		case .queued: "Waiting"
 		case .reflecting: "Analyzing"
@@ -216,7 +223,7 @@ enum EntryProcessingPhase: Equatable, Sendable {
 		}
 	}
 
-	var isActive: Bool { self != .finalizationFailed }
+	var isActive: Bool { ![.finalizationFailed, .partial, .failed, .canceled, .complete].contains(self) }
 
 }
 

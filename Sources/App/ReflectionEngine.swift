@@ -1,6 +1,32 @@
 import Foundation
 import FoundationModels
 
+enum ModelProcessingOutcome: Sendable, Equatable {
+	case complete
+	case skipped
+	case unavailable
+	case failed(String)
+	case cancelled
+
+	var isComplete: Bool { self == .complete || self == .skipped }
+
+	static func failure(_ error: any Error, message: String) -> Self {
+		if Task.isCancelled || error is CancellationError { return .cancelled }
+		switch error as? ModelProcessingError {
+		case .unavailable: return .unavailable
+		case .timedOut: return .failed("The on-device analysis took too long. Try again.")
+		case .invalidOutput: return .failed("The on-device model returned an unusable analysis. Try again.")
+		case nil: return .failed(message)
+		}
+	}
+}
+
+enum ModelProcessingError: Error {
+	case unavailable
+	case invalidOutput
+	case timedOut
+}
+
 @Generable(description: "A concise title for a private voice memo")
 private struct GeneratedReflection {
 	@Guide(description: "A sentence-case title of 4 to 12 words naming your central theme, realization, decision, or next step; use you rather than user or speaker")
@@ -27,15 +53,37 @@ private struct GeneratedWeeklyReview {
 
 enum ReflectionEngine {
 	static func reflect(on transcript: String, includeSummary: Bool) async -> ReflectionResult {
-		if let generated = try? await withGenerationTimeout({
+		await reflect(on: transcript, includeSummary: includeSummary) {
 			try await modelReflection(
 				on: transcript,
 				includeSummary: includeSummary
 			)
-		}) {
-			return generated
 		}
-		return fallbackReflection(on: transcript, includeSummary: includeSummary)
+	}
+
+	static func reflect(
+		on transcript: String,
+		includeSummary: Bool,
+		generation: @escaping @Sendable () async throws -> ReflectionResult
+	) async -> ReflectionResult {
+		do {
+			try Task.checkCancellation()
+			guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+				return ReflectionResult(headline: "No speech detected", summary: nil, modelName: "", outcome: .skipped)
+			}
+			let generated = try await withGenerationTimeout(generation)
+			try Task.checkCancellation()
+			return generated
+		} catch {
+			let outcome = ModelProcessingOutcome.failure(error,
+				message: "The on-device model could not finish the analysis. Try again.")
+			guard outcome != .cancelled else {
+				return ReflectionResult(headline: "", summary: nil, modelName: "", outcome: .cancelled)
+			}
+			var fallback = fallbackReflection(on: transcript, includeSummary: includeSummary)
+			fallback.outcome = outcome
+			return fallback
+		}
 	}
 
 	static func weeklyReview(entries: [JournalEntry], weekStart: Date) async -> WeeklyReview {
@@ -93,8 +141,8 @@ enum ReflectionEngine {
 	private static func modelReflection(
 		on transcript: String,
 		includeSummary: Bool
-	) async throws -> ReflectionResult? {
-		guard SystemLanguageModel.default.availability == .available else { return nil }
+	) async throws -> ReflectionResult {
+		guard SystemLanguageModel.default.availability == .available else { throw ModelProcessingError.unavailable }
 		let session = LanguageModelSession(instructions: """
 		Read the entire private voice memo before responding. Identify its most meaningful theme, realization, decision, or next step. Ignore false starts, filler, transcription repetitions, and comments about making the recording. Never use the opening phrase as a title merely because it appears first. Keep the title natural, specific, sentence case, and free of ending punctuation. Summaries must cover the whole memo without interpretation or advice. Address the memo owner directly as "you"; never call them "the user," "user," or "the speaker." Never output filenames, logs, metadata, identifiers, or other tokens absent from the memo. Never give advice, diagnose, ask a question, or chat.
 		""")
@@ -105,7 +153,7 @@ enum ReflectionEngine {
 			)
 			guard !containsUngroundedArtifact(response.content.title, transcript: transcript),
 				!containsUngroundedArtifact(response.content.summary, transcript: transcript)
-			else { return nil }
+			else { throw ModelProcessingError.invalidOutput }
 			return ReflectionResult(
 				headline: cleanTitle(response.content.title),
 				summary: cleanSentence(response.content.summary).nonempty,
@@ -117,7 +165,7 @@ enum ReflectionEngine {
 			generating: GeneratedReflection.self
 		)
 		guard !containsUngroundedArtifact(response.content.title, transcript: transcript) else {
-			return nil
+			throw ModelProcessingError.invalidOutput
 		}
 		return ReflectionResult(
 			headline: cleanTitle(response.content.title),
@@ -188,23 +236,21 @@ enum ReflectionEngine {
 	private static func withGenerationTimeout<T: Sendable>(
 		_ operation: @escaping @Sendable () async throws -> T
 	) async throws -> T {
-		try await withThrowingTaskGroup(of: T.self) { group in
+		try Task.checkCancellation()
+		return try await withThrowingTaskGroup(of: T.self) { group in
+			defer { group.cancelAll() }
 			group.addTask { try await operation() }
 			group.addTask {
 				try await Task.sleep(for: .seconds(45))
-				throw ReflectionGenerationError.timedOut
+				throw ModelProcessingError.timedOut
 			}
 			guard let result = try await group.next() else {
-				throw ReflectionGenerationError.timedOut
+				throw ModelProcessingError.timedOut
 			}
-			group.cancelAll()
+			try Task.checkCancellation()
 			return result
 		}
 	}
-}
-
-private enum ReflectionGenerationError: Error {
-	case timedOut
 }
 
 private extension String {

@@ -160,6 +160,7 @@ enum ReminderFeedbackKind: String, Codable, Hashable, Sendable {
 }
 
 struct ReminderFeedback: Codable, Hashable, Sendable {
+	let id: UUID
 	var kind: ReminderFeedbackKind
 	var text: String
 	var focusedReminderID: UUID?
@@ -169,9 +170,18 @@ struct ReminderFeedback: Codable, Hashable, Sendable {
 		text: String,
 		focusedReminderID: UUID? = nil
 	) {
+		id = UUID()
 		self.kind = kind
 		self.text = text
 		self.focusedReminderID = focusedReminderID
+	}
+
+	init(from decoder: Decoder) throws {
+		let values = try decoder.container(keyedBy: CodingKeys.self)
+		id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+		kind = try values.decode(ReminderFeedbackKind.self, forKey: .kind)
+		text = try values.decode(String.self, forKey: .text)
+		focusedReminderID = try values.decodeIfPresent(UUID.self, forKey: .focusedReminderID)
 	}
 }
 

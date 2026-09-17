@@ -198,7 +198,7 @@ private struct EntryCard: View {
 
 			if let processingPhase {
 				HStack(spacing: 6) {
-					if processingPhase == .finalizationFailed {
+					if !processingPhase.isActive, processingPhase != .complete {
 						Image(systemName: "exclamationmark.circle")
 					} else if processingPhase == .complete {
 						Image(systemName: "checkmark.circle.fill")

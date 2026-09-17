@@ -85,6 +85,7 @@ private struct GeneratedEventMatch {
 struct ReminderParsingResult: Sendable {
 	var reminders: [EventReminderRule]
 	var modelName: String?
+	var outcome: ModelProcessingOutcome = .complete
 }
 
 struct ReminderResolutionResult: Sendable {
@@ -99,30 +100,33 @@ enum ReminderEngine {
 		sourceEvent: JournalCalendarEvent?,
 		createdAt: Date,
 		currentReminders: [EventReminderRule] = [],
-		feedback: [ReminderFeedback] = []
+		feedback: [ReminderFeedback] = [],
+		modelIsAvailable: @Sendable () -> Bool = { SystemLanguageModel.default.availability == .available }
 	) async -> ReminderParsingResult {
-		guard let sourceEvent else {
-			return ReminderParsingResult(reminders: [], modelName: nil)
+		guard !Task.isCancelled else {
+			return ReminderParsingResult(reminders: currentReminders, modelName: nil, outcome: .cancelled)
 		}
-
-		do {
-			guard let generated = try await generatedReminders(
+		guard let sourceEvent else {
+			return ReminderParsingResult(reminders: [], modelName: nil, outcome: .skipped)
+		}
+		let corpus = ([transcript] + feedback.map(\.text)).joined(separator: "\n")
+		guard !corpus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+			return ReminderParsingResult(reminders: [], modelName: nil, outcome: .skipped)
+		}
+		return await parse(currentReminders: currentReminders) {
+			let generated = try await generatedReminders(
 				transcript: transcript,
 				sourceEvent: sourceEvent,
 				currentReminders: currentReminders,
-				feedback: feedback
-			) else {
-				return ReminderParsingResult(reminders: currentReminders, modelName: nil)
-			}
-			let evidenceCorpus = ([transcript] + feedback.map(\.text))
-				.joined(separator: "\n")
-				.reminderNormalized
-			let rules = generated.compactMap {
+				feedback: feedback,
+				modelIsAvailable: modelIsAvailable
+			)
+			let rules = generated.reminders.compactMap {
 				rule(
 					from: $0,
 					sourceEvent: sourceEvent,
 					createdAt: createdAt,
-					evidenceCorpus: evidenceCorpus
+					evidenceCorpus: corpus.reminderNormalized
 				)
 			}
 			return ReminderParsingResult(
@@ -130,18 +134,28 @@ enum ReminderEngine {
 					to: deduplicated(rules),
 					feedback: feedback
 				),
-				modelName: "SystemLanguageModel.default · guided reminders"
+				modelName: generated.usedModel ? "SystemLanguageModel.default · guided reminders" : nil
 			)
-		} catch {
-			if ProcessInfo.processInfo.arguments.contains("-reminder-benchmark") {
-				print("REMINDER_GENERATION_ERROR \(error)")
-			}
 		}
+	}
 
-		return ReminderParsingResult(
-			reminders: currentReminders,
-			modelName: nil
-		)
+	static func parse(
+		currentReminders: [EventReminderRule],
+		generation: @Sendable () async throws -> ReminderParsingResult
+	) async -> ReminderParsingResult {
+		do {
+			try Task.checkCancellation()
+			let result = try await generation()
+			try Task.checkCancellation()
+			return result
+		} catch {
+			let outcome = ModelProcessingOutcome.failure(error,
+				message: "The on-device model could not finish finding reminders. Try again.")
+			if outcome != .cancelled, ProcessInfo.processInfo.arguments.contains("-reminder-benchmark") {
+				print("REMINDER_GENERATION_ERROR \(outcome)")
+			}
+			return ReminderParsingResult(reminders: currentReminders, modelName: nil, outcome: outcome)
+		}
 	}
 
 	static func resolve(
@@ -209,13 +223,15 @@ enum ReminderEngine {
 		transcript: String,
 		sourceEvent: JournalCalendarEvent,
 		currentReminders: [EventReminderRule],
-		feedback: [ReminderFeedback]
-	) async throws -> [GeneratedReminder]? {
-		guard SystemLanguageModel.default.availability == .available else { return nil }
+		feedback: [ReminderFeedback],
+		modelIsAvailable: @Sendable () -> Bool
+	) async throws -> (reminders: [GeneratedReminder], usedModel: Bool) {
+		try Task.checkCancellation()
 		let evidenceCorpus = ([transcript] + feedback.map(\.text)).joined(separator: "\n")
 		guard sentenceExcerpts(evidenceCorpus).contains(where: hasFutureCueSignal) else {
-			return []
+			return ([], false)
 		}
+		guard modelIsAvailable() else { throw ModelProcessingError.unavailable }
 
 		let existing = currentReminders.isEmpty
 			? "None"
@@ -265,12 +281,12 @@ enum ReminderEngine {
 			)
 			return response.content.reminders
 		}
-		return await withTaskGroup(of: (Int, GeneratedReminder).self) { group in
+		let reminders = try await withThrowingTaskGroup(of: (Int, GeneratedReminder).self) { group in
 			for (index, draft) in drafts.enumerated() {
 				group.addTask {
 					(
 						index,
-						await generatedReminder(
+						try await generatedReminder(
 							from: draft,
 							sourceEvent: sourceEvent,
 							evidenceCorpus: evidenceCorpus
@@ -279,18 +295,21 @@ enum ReminderEngine {
 				}
 			}
 			var indexed: [(Int, GeneratedReminder)] = []
-			for await reminder in group {
+			for try await reminder in group {
 				indexed.append(reminder)
 			}
+			try Task.checkCancellation()
 			return indexed.sorted { $0.0 < $1.0 }.map(\.1)
 		}
+		return (reminders, true)
 	}
 
 	private static func generatedReminder(
 		from draft: GeneratedReminderDraft,
 		sourceEvent: JournalCalendarEvent,
 		evidenceCorpus: String
-	) async -> GeneratedReminder {
+	) async throws -> GeneratedReminder {
+		try Task.checkCancellation()
 		let fallback = groundedSchedule(
 			for: draft.evidence,
 			in: evidenceCorpus
@@ -319,7 +338,7 @@ enum ReminderEngine {
 			Complete memo and corrections:
 			\(evidenceCorpus)
 			"""
-			generated = try? await withGenerationTimeout {
+			generated = try await withGenerationTimeout {
 				let response = try await session.respond(
 					to: prompt,
 					generating: GeneratedReminderSchedule.self
@@ -329,6 +348,7 @@ enum ReminderEngine {
 		} else {
 			generated = nil
 		}
+		try Task.checkCancellation()
 		let scheduleContext = generated.flatMap {
 			groundedExcerpt($0.scheduleContext, in: evidenceCorpus)
 		} ?? fallback.context
@@ -1033,16 +1053,18 @@ enum ReminderEngine {
 	private static func withGenerationTimeout<T: Sendable>(
 		_ operation: @escaping @Sendable () async throws -> T
 	) async throws -> T {
-		try await withThrowingTaskGroup(of: T.self) { group in
+		try Task.checkCancellation()
+		return try await withThrowingTaskGroup(of: T.self) { group in
+			defer { group.cancelAll() }
 			group.addTask { try await operation() }
 			group.addTask {
 				try await Task.sleep(for: .seconds(45))
-				throw ReminderGenerationError.timedOut
+				throw ModelProcessingError.timedOut
 			}
 			guard let result = try await group.next() else {
-				throw ReminderGenerationError.timedOut
+				throw ModelProcessingError.timedOut
 			}
-			group.cancelAll()
+			try Task.checkCancellation()
 			return result
 		}
 	}
@@ -1051,8 +1073,4 @@ enum ReminderEngine {
 private struct EventMatchAssessment {
 	var matches: Bool
 	var reason: String
-}
-
-private enum ReminderGenerationError: Error {
-	case timedOut
 }
