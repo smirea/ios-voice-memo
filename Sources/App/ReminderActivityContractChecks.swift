@@ -40,7 +40,7 @@ enum ReminderActivityContractChecks {
 		let backend = Backend(seed: occurrence("old"))
 		let manager = ReminderActivityManager(operations: backend.operations)
 		let gate = backend.holdNextOperation()
-		let old = Task { await manager.endAll(generation: 1) }
+		let old = Task { _ = await manager.endAll(generation: 1) }
 		try await wait { gate.isWaiting }
 		let desired = occurrence("new")
 		let latest = synchronize(manager, [desired], generation: 2)
@@ -55,23 +55,25 @@ enum ReminderActivityContractChecks {
 	}
 
 	private static func replacedUpdate(sameGeneration: Bool) async throws {
-		let original = occurrence("shared", text: "original")
-		let backend = Backend(seed: original)
+		let primary = occurrence("shared", text: "Primary")
+		var original = occurrence("shared", text: "original")
+		original.reminder.createdAt.addTimeInterval(-1)
+		let backend = Backend(seeds: [primary, original])
 		let manager = ReminderActivityManager(operations: backend.operations)
 		let gate = backend.holdNextOperation()
 		var obsolete = original
 		obsolete.reminder.text = "obsolete"
-		let old = synchronize(manager, [obsolete, occurrence("obsolete-extra", offset: 7_200)], generation: 1)
+		let old = synchronize(manager, [primary, obsolete, occurrence("obsolete-extra", offset: 7_200)], generation: 1)
 		try await wait { gate.isWaiting }
 		var desired = original
 		desired.reminder.text = "latest"
-		let latest = synchronize(manager, [desired], generation: sameGeneration ? 1 : 2)
+		let latest = synchronize(manager, [primary, desired], generation: sameGeneration ? 1 : 2)
 		try await wait { backend.submissions == 2 }
 		gate.release()
 		await old.value
 		await latest.value
-		try expect(backend.items.values.first?.state.reminderTexts == ["latest"], "A delayed update must be followed by the latest content, including within one generation")
-		try expect(backend.updatedTexts == ["obsolete", "latest"] && backend.requestedKeys.isEmpty, "Superseded work must stop before requesting additional activities")
+		try expect(backend.items.values.first?.state.reminderTexts == ["Primary", "latest"], "A delayed update must be followed by the latest content, including within one generation")
+		try expect(backend.updatedTexts == ["Primary", "obsolete", "Primary", "latest"] && backend.requestedKeys.isEmpty, "Superseded work must stop before requesting additional activities")
 		try backend.verifySerialized()
 	}
 
@@ -81,7 +83,7 @@ enum ReminderActivityContractChecks {
 		let gate = backend.holdNextOperation()
 		var current = true
 		let old = Task {
-			await manager.synchronize(occurrences: [occurrence("removed")], settings: .init(), now: now,
+			_ = await manager.synchronize(occurrences: [occurrence("removed")], settings: .init(), now: now,
 				generation: 1, isCurrent: { current })
 		}
 		try await wait { gate.isWaiting }
@@ -118,7 +120,7 @@ enum ReminderActivityContractChecks {
 	}
 
 	private static func synchronize(_ manager: ReminderActivityManager, _ occurrences: [EventReminderOccurrence], generation: Int) -> Task<Void, Never> {
-		Task { await manager.synchronize(occurrences: occurrences, settings: .init(), now: now, generation: generation) }
+		Task { _ = await manager.synchronize(occurrences: occurrences, settings: .init(), now: now, generation: generation) }
 	}
 
 	private static func occurrence(_ name: String, text: String = "Reminder", offset: TimeInterval = 3_600) -> EventReminderOccurrence {
@@ -167,15 +169,15 @@ enum ReminderActivityContractChecks {
 		var activeOperations = 0
 		var maximumOperations = 0
 
-		init(seed: EventReminderOccurrence) {
-			items = ["seed": DesiredReminderActivity(attributes: .init(eventKey: seed.eventKey, sourceEntryID: seed.sourceEntryID,
-				eventTitle: seed.event.title, startDate: seed.event.startDate, endDate: seed.event.endDate),
-				state: .init(reminderTexts: [seed.reminder.text], additionalReminderCount: 0), startDate: now)]
+		convenience init(seed: EventReminderOccurrence) { self.init(seeds: [seed]) }
+
+		init(seeds: [EventReminderOccurrence]) {
+			items = ["seed": ReminderActivityManager.desiredActivities(from: seeds, defaultLeadMinutes: 60, now: now)[0]]
 		}
 
 		var operations: ReminderActivityOperations {
 			ReminderActivityOperations(enabled: { self.submissions += 1; return true },
-				existing: { self.items.map { .init(id: $0.key, attributes: $0.value.attributes) } },
+				existing: { self.items.map { .init(id: $0.key, attributes: $0.value.attributes, content: $0.value.state) } },
 				end: { id in
 					await self.begin("end")
 					self.items[id] = nil
@@ -188,8 +190,10 @@ enum ReminderActivityContractChecks {
 				}, request: { item, _ in
 					self.maximumOperations = max(self.maximumOperations, self.activeOperations + 1)
 					self.requestedKeys.append(item.attributes.eventKey)
-					self.items[UUID().uuidString] = item
+					let id = UUID().uuidString
+					self.items[id] = item
 					self.events.append("request")
+					return id
 				})
 		}
 

@@ -89,7 +89,7 @@ struct SettingsView: View {
 				}
 				.task {
 					#if DEBUG
-					if ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") {
+					if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-demo-reminder-") }) {
 						await Task.yield()
 						proxy.scrollTo("reminder-settings", anchor: .center)
 					} else if ProcessInfo.processInfo.arguments.contains("-demo-cloud-pending")
@@ -174,10 +174,17 @@ struct SettingsView: View {
 					Text("2 hours").tag(120)
 				}
 			}
+			if store.canRetryReminderDelivery {
+				Button("Try Reminders Again") { Task { await store.retryReminderDelivery() } }
+			}
 		} header: {
 			Text("Event reminders")
 		} footer: {
-			if let message = store.reminderSchedulingMessage { Text(message) }
+			VStack(alignment: .leading, spacing: 6) {
+				if let message = store.reminderSchedulingMessage { Text(message) }
+				if let message = store.reminderPresentationMessage { Text(message) }
+				if let message = store.reminderBackfillMessage { Text(message) }
+			}
 		}
 		.listRowBackground(AppStyle.background)
 	}

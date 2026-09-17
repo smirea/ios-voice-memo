@@ -232,11 +232,12 @@ enum ReminderSchedulingContractChecks {
 		await store.beginCapturePriority(owner: owner)
 		store.updateSetting(\.calendarSyncEnabled, true)
 		store.calendarSync.setEventsForContract([event])
-		try await wait { await probe.calls == 1 }
+		await store.refreshReminderSchedule()
+		try expect(await probe.calls == 0, "Capture must defer optional reminder inference")
 		await store.endCapturePriority(owner: owner)
 		try await wait { activities.items.count == 1 }
 		try await Task.sleep(for: .milliseconds(30))
-		try expect(await probe.calls == 2, "Capture release must resume one canceled schedule without a reconciliation loop")
+		try expect(await probe.calls == 1, "Capture release must resume one schedule without a reconciliation loop")
 	}
 
 	private static func disabledActivities() async throws {
@@ -320,9 +321,9 @@ enum ReminderSchedulingContractChecks {
 		var items: [String: DesiredReminderActivity] = [:]
 		func manager() -> ReminderActivityManager {
 			ReminderActivityManager(operations: ReminderActivityOperations(enabled: { true },
-				existing: { self.items.map { .init(id: $0.key, attributes: $0.value.attributes) } },
+				existing: { self.items.map { .init(id: $0.key, attributes: $0.value.attributes, content: $0.value.state) } },
 				end: { self.items.removeValue(forKey: $0) }, update: { self.items[$0] = $1 },
-				request: { item, _ in self.items[item.attributes.eventKey] = item }))
+				request: { item, _ in self.items[item.attributes.eventKey] = item; return item.attributes.eventKey }))
 		}
 	}
 }
@@ -350,9 +351,6 @@ private actor ResumeProbe {
 	private(set) var calls = 0
 	func resolve(_ entries: [JournalEntry], _ events: [JournalCalendarEvent], _ now: Date) async -> ReminderResolutionResult {
 		calls += 1
-		if calls == 1 {
-			return ReminderResolutionResult(occurrences: [], examplesByReminderID: [:], resolvedOccurrencesByReminderID: [:], outcome: .cancelled)
-		}
 		return await ReminderEngine.resolve(entries: entries, events: events, now: now, modelIsAvailable: { false })
 	}
 }

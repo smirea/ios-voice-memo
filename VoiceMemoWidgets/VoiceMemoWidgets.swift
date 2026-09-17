@@ -114,13 +114,13 @@ struct ReminderLiveActivity: Widget {
 						Text(context.attributes.eventTitle)
 							.font(.headline)
 							.lineLimit(1)
-						ForEach(context.state.reminderTexts.prefix(2), id: \.self) { reminder in
+						ForEach(Array(context.state.reminderTexts.prefix(2).enumerated()), id: \.offset) { _, reminder in
 							Label(reminder, systemImage: "circle")
 								.font(.subheadline)
 								.lineLimit(1)
 						}
-						if context.state.additionalReminderCount > 0 {
-							Text("+\(context.state.additionalReminderCount) more")
+						if context.state.hiddenCount(visibleLimit: 2) > 0 {
+							Text("+\(context.state.hiddenCount(visibleLimit: 2)) more")
 								.font(.caption)
 								.foregroundStyle(.secondary)
 						}
@@ -132,7 +132,8 @@ struct ReminderLiveActivity: Widget {
 						.font(.subheadline.weight(.semibold))
 						.foregroundStyle(.secondary)
 				}
-				.padding(.horizontal, 5)
+				.padding(.horizontal, 16)
+				.padding(.vertical, 14)
 			}
 			.activityBackgroundTint(.black)
 			.activitySystemActionForegroundColor(.white)
@@ -150,6 +151,11 @@ struct ReminderLiveActivity: Widget {
 							.font(.caption)
 							.foregroundStyle(.secondary)
 							.lineLimit(2)
+						if context.state.hiddenCount(visibleLimit: 1) > 0 {
+							Text("+\(context.state.hiddenCount(visibleLimit: 1)) more")
+								.font(.caption2)
+								.foregroundStyle(.secondary)
+						}
 					}
 				}
 				DynamicIslandExpandedRegion(.trailing) {

@@ -84,6 +84,9 @@
 		A1000000000000000000004C /* ReminderIdentityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004C /* ReminderIdentityContractChecks.swift */; };
 		A1000000000000000000004D /* ReminderValidityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004D /* ReminderValidityContractChecks.swift */; };
 		A1000000000000000000004E /* ReminderExactTargetContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004E /* ReminderExactTargetContractChecks.swift */; };
+		A1000000000000000000004F /* ReminderBackfillContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004F /* ReminderBackfillContractChecks.swift */; };
+		A10000000000000000000050 /* ReminderDeliveryContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000050 /* ReminderDeliveryContractChecks.swift */; };
+		A10000000000000000000051 /* ReminderPresentationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000051 /* ReminderPresentationContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -190,6 +193,9 @@
 		B1000000000000000000004C /* ReminderIdentityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderIdentityContractChecks.swift; sourceTree = "<group>"; };
 		B1000000000000000000004D /* ReminderValidityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderValidityContractChecks.swift; sourceTree = "<group>"; };
 		B1000000000000000000004E /* ReminderExactTargetContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderExactTargetContractChecks.swift; sourceTree = "<group>"; };
+		B1000000000000000000004F /* ReminderBackfillContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBackfillContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000050 /* ReminderDeliveryContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderDeliveryContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000051 /* ReminderPresentationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderPresentationContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -275,6 +281,9 @@
 				B1000000000000000000004C /* ReminderIdentityContractChecks.swift */,
 				B1000000000000000000004D /* ReminderValidityContractChecks.swift */,
 				B1000000000000000000004E /* ReminderExactTargetContractChecks.swift */,
+				B1000000000000000000004F /* ReminderBackfillContractChecks.swift */,
+				B10000000000000000000050 /* ReminderDeliveryContractChecks.swift */,
+				B10000000000000000000051 /* ReminderPresentationContractChecks.swift */,
 				B1000000000000000000004A /* ReminderContextContractChecks.swift */,
 				B10000000000000000000049 /* ReflectionContextContractChecks.swift */,
 				B10000000000000000000048 /* ModelContextContractChecks.swift */,
@@ -534,6 +543,9 @@
 				A1000000000000000000004C /* ReminderIdentityContractChecks.swift in Sources */,
 				A1000000000000000000004D /* ReminderValidityContractChecks.swift in Sources */,
 				A1000000000000000000004E /* ReminderExactTargetContractChecks.swift in Sources */,
+				A1000000000000000000004F /* ReminderBackfillContractChecks.swift in Sources */,
+				A10000000000000000000050 /* ReminderDeliveryContractChecks.swift in Sources */,
+				A10000000000000000000051 /* ReminderPresentationContractChecks.swift in Sources */,
 				A1000000000000000000004A /* ReminderContextContractChecks.swift in Sources */,
 				A10000000000000000000049 /* ReflectionContextContractChecks.swift in Sources */,
 				A10000000000000000000048 /* ModelContextContractChecks.swift in Sources */,

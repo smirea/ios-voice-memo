@@ -56,6 +56,11 @@ struct JournalLoad: Sendable {
 	var deletionReferences: Set<String>
 }
 
+struct ReminderBackfillResult: Sendable {
+	var records: [JournalRecord]
+	var issues: [String]
+}
+
 actor JournalRepository {
 	private let rootURL: URL
 	private let recordsURL: URL
@@ -300,6 +305,30 @@ actor JournalRepository {
 		record.processing = job
 		try write(record)
 		return records[id]!
+	}
+
+	func backfillSkippedReminders(excluding excludedIDs: Set<UUID> = []) throws -> ReminderBackfillResult {
+		try requireLoaded()
+		var result = ReminderBackfillResult(records: [], issues: [])
+		for var record in records.values.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+			if Task.isCancelled { break }
+			guard record.state == .saved, !excludedIDs.contains(record.id), let previous = record.processing,
+				previous.status == .complete, previous.skippedStages.contains(.reminders),
+				previous.completedStages.contains(.transcribe), let entry = record.entry,
+				!entry.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, entry.calendarEvent != nil
+			else { continue }
+			var job = EntryProcessing(inputRevision: record.inputRevision, stage: .reminders)
+			job.completedStages = previous.completedStages
+			job.skippedStages = previous.skippedStages
+			record.processing = job
+			do {
+				try write(record)
+				result.records.append(records[record.id]!)
+			} catch {
+				result.issues.append("Reminder processing could not be queued for one note. " + error.localizedDescription)
+			}
+		}
+		return result
 	}
 
 	func retryProcessing(id: UUID) throws -> JournalRecord {

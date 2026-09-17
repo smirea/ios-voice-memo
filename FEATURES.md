@@ -88,7 +88,7 @@
 - Stores an optional ElevenLabs API key in `config.json` and prefers it over the bundled fallback.
 - Calendar sync requests Full Access for read-only event access and lets each calendar be included or excluded.
 - Calendar settings can prefer direct Google Calendar links, with an exact native event view as fallback.
-- Reminder settings control delivery, Live Activities, and the global pre-event lead time, and report incomplete on-device event matching while known deterministic matches remain available.
+- Reminder settings control delivery, Live Activities, and the global pre-event lead time. Turning reminders off also pauses new extraction; enabling them backfills eligible saved notes without repeating transcription or completed analysis. Settings reports incomplete matching, deferred delivery, or Live Activity failures and offers Retry when preparation fails.
 - Reminder Benchmark runs the production parser against grouped on-device accuracy, grounding, feedback, and fuzzy-matching cases.
 - Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export; if a deletion fails, reports it in Settings and retains the affected notes for retry.
 
@@ -98,4 +98,5 @@
 - Recording starts a Live Activity showing the app icon, location, date, state, and elapsed time on the Lock Screen and Dynamic Island.
 - Pausing freezes the displayed elapsed time; resuming restarts it.
 - Finishing or discarding a recording immediately clears the Live Activity.
-- Enabled event reminders schedule a Live Activity before matching events and mark it stale when the event ends.
+- Enabled event reminders prepare Live Activities for the next two event groups whose reminder time falls within 24 hours, refresh when the app opens or relevant information changes, and mark them stale when the event ends. Additional groups wait for a later refresh; reminder extraction has no count limit.
+- Grouped reminders use the earliest requested lead time, open a surviving source note, and report reminders hidden on each widget surface. Changes retire obsolete presentations before matching new ones; recording temporarily clears reminder activities and restores them afterward.

@@ -16,6 +16,10 @@ final class JournalStore {
 	private(set) var hasUnsavedNoteChanges = false
 	var transcriptionAlertMessage: String?
 	private(set) var reminderSchedulingMessage: String?
+	private(set) var reminderPresentationMessage: String?
+	private(set) var reminderBackfillMessage: String?
+	private(set) var reminderPresentationNeedsRetry = false
+	var canRetryReminderDelivery: Bool { reminderPresentationNeedsRetry || reminderBackfillMessage != nil }
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
 
@@ -48,6 +52,8 @@ final class JournalStore {
 	private let reminderSchedulingEnabled: Bool
 	@ObservationIgnored private var reminderScheduleTask: Task<Void, Never>?
 	@ObservationIgnored private var reminderScheduleGeneration = 0
+	@ObservationIgnored private var reminderBackfillTask: Task<Void, Never>?
+	@ObservationIgnored private var reminderBackfillPending = false
 	@ObservationIgnored private var pendingDeletionIDs = Set<UUID>()
 	@ObservationIgnored private var failedNoteSaveIDs = Set<UUID>()
 	@ObservationIgnored private var failedReminderSaveIDs = Set<UUID>()
@@ -101,7 +107,7 @@ final class JournalStore {
 		cloudServices: CloudServices? = nil) {
 		self.cloudServices = cloudServices ?? .live
 		mirroringEnabled = storageRootURL == nil || cloudServices != nil
-		self.reminderActivityManager = reminderActivityManager ?? ReminderActivityManager()
+		self.reminderActivityManager = reminderActivityManager ?? ReminderActivityManager(operations: storageRootURL == nil ? nil : .disabled)
 		self.reminderResolver = reminderResolver ?? { await ReminderEngine.resolve(entries: $0, events: $1, now: $2) }
 		reminderSchedulingEnabled = storageRootURL == nil || reminderResolver != nil || reminderActivityManager != nil
 		self.processingServices = processingServices ?? .live
@@ -146,6 +152,16 @@ final class JournalStore {
 			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") {
 				reminderSchedulingMessage = "Some reminders could not be matched because on-device analysis is unavailable."
 			}
+			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-delivery-failed") {
+				reminderPresentationMessage = "A reminder Live Activity could not be prepared. Try again."
+				reminderPresentationNeedsRetry = true
+			}
+			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-delivery-disabled") {
+				reminderPresentationMessage = "Live Activities are turned off in iOS. Enable them in Settings to show reminders."
+			}
+			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-delivery-deferred") {
+				reminderPresentationMessage = "3 more events are waiting. Open the app to refresh upcoming reminders."
+			}
 			if ProcessInfo.processInfo.arguments.contains("-demo-finalization-failed") {
 				for entry in entries { entryProcessingPhases[entry.id] = .finalizationFailed }
 			}
@@ -174,6 +190,7 @@ final class JournalStore {
 			bootstrapTask = Task { [weak self] in await self?.loadJournal() }
 		}
 		calendarSync.onEventsChanged = { [weak self] in self?.requestReminderSchedule() }
+		self.reminderActivityManager.onChange = { [weak self] in self?.requestReminderSchedule() }
 	}
 
 	func waitUntilLoaded() async throws {
@@ -363,12 +380,20 @@ final class JournalStore {
 
 	func resumeStaleProcessing(now: Date = .now) {
 		backgroundSuspended = false
+		requestReminderBackfill()
 		updateServiceAdmission()
 		scheduleICloudDriveMirror(changed: false, repair: true)
 	}
 
 	func beginCapturePriority(owner: UUID) async {
 		capturePriorityOwners.insert(owner)
+		if reminderBackfillTask != nil { reminderBackfillPending = true; reminderBackfillTask?.cancel() }
+		invalidateReminderSchedule()
+		reminderActivityManager.setCaptureSuspended(true, generation: reminderScheduleGeneration)
+		if settings.eventRemindersEnabled && settings.eventReminderLiveActivitiesEnabled {
+			reminderPresentationMessage = "Reminder Live Activities pause while you record."
+			reminderPresentationNeedsRetry = false
+		}
 		if iCloudWorker != nil { iCloudPending = true; iCloudWorker?.cancel() }
 		cloudRetryTask?.cancel()
 		preemptProcessing()
@@ -378,8 +403,20 @@ final class JournalStore {
 
 	func endCapturePriority(owner: UUID) async {
 		guard capturePriorityOwners.remove(owner) != nil else { return }
+		if !isCapturePriorityActive {
+			invalidateReminderSchedule()
+			reminderActivityManager.setCaptureSuspended(false, generation: reminderScheduleGeneration)
+			reminderPresentationMessage = nil
+			requestReminderBackfill()
+		}
 		let revision = newAdmissionRevision()
 		await synchronizeServiceAdmission(revision: revision)
+	}
+
+	func waitForReminderActivitiesToEnd(owner: UUID) async -> Bool {
+		guard capturePriorityOwners.contains(owner) else { return false }
+		let ended = await reminderActivityManager.waitForCaptureSuspension()
+		return ended && capturePriorityOwners.contains(owner)
 	}
 
 	private func newAdmissionRevision() -> UInt64 {
@@ -737,6 +774,7 @@ final class JournalStore {
 		requestReminderSchedule()
 		defer {
 			pendingDeletionIDs.subtract(ids)
+			requestReminderBackfill()
 			requestReminderSchedule()
 			kickProcessing()
 		}
@@ -831,6 +869,14 @@ final class JournalStore {
 		let scheduleChanged = self.settings.reminderDelivery != settings.reminderDelivery
 		self.settings = settings
 		if reminderSourceChanged, activeLease?.stage == .reminders { activeStage?.cancel() }
+		if reminderSourceChanged {
+			if settings.eventRemindersEnabled { requestReminderBackfill() }
+			else {
+				reminderBackfillPending = false
+				reminderBackfillTask?.cancel()
+				reminderBackfillMessage = nil
+			}
+		}
 		if scheduleChanged { requestReminderSchedule() }
 		return calendarScopeChanged
 	}
@@ -902,16 +948,24 @@ final class JournalStore {
 				&& self.settings.reminderDelivery == delivery && self.calendarSync.revision == calendarRevision
 		}
 		guard isCurrent(), !Task.isCancelled else { return }
-		guard delivery.calendarEnabled, delivery.remindersEnabled else {
+		guard delivery.calendarEnabled, delivery.remindersEnabled, !isCapturePriorityActive else {
 			failedReminderSaveIDs.removeAll()
 			reminderSchedulingMessage = nil
 			updateUnsavedNoteStatus()
-			await reminderActivityManager.endAll(generation: generation, isCurrent: isCurrent)
+			let presentation = await reminderActivityManager.endAll(generation: generation, isCurrent: isCurrent)
+			guard isCurrent(), !Task.isCancelled else { return }
+			publishReminderPresentation(presentation)
+			if isCapturePriorityActive && delivery.remindersEnabled && delivery.activitiesEnabled {
+				reminderPresentationMessage = "Reminder Live Activities pause while you record."
+			}
 			return
 		}
-		if !delivery.activitiesEnabled {
-			await reminderActivityManager.endAll(generation: generation, isCurrent: isCurrent)
-			guard isCurrent(), !Task.isCancelled else { return }
+		let presentation = await reminderActivityManager.retireObsolete(
+			sources: sources.compactMap { record in record.entry.map { ReminderActivitySource(entry: $0, inputRevision: record.inputRevision) } },
+			events: events, settings: snapshotSettings, now: now, generation: generation, isCurrent: isCurrent)
+		guard isCurrent(), !Task.isCancelled else { return }
+		if !delivery.activitiesEnabled || presentation.unavailableReason != nil {
+			publishReminderPresentation(presentation)
 		}
 		let result = await reminderResolver(sources.compactMap(\.entry), events, now)
 		guard isCurrent(), !Task.isCancelled, result.outcome != .cancelled else { return }
@@ -954,11 +1008,57 @@ final class JournalStore {
 		if !failedEntryIDs.isEmpty {
 			storageErrorMessage = "Reminder changes couldn’t be saved. Try saving again before those reminders can be scheduled."
 		}
-		await reminderActivityManager.synchronize(
+		let delivered = await reminderActivityManager.synchronize(
 			occurrences: result.occurrences.filter { savedEntryIDs.contains($0.sourceEntryID) },
-			settings: snapshotSettings, now: now, generation: generation, isCurrent: isCurrent)
+			settings: snapshotSettings, sourceRevisions: Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.inputRevision) }),
+			now: now, generation: generation, isCurrent: isCurrent)
+		guard isCurrent(), !Task.isCancelled else { return }
+		publishReminderPresentation(delivered)
 	}
 
+
+	private func publishReminderPresentation(_ result: ReminderPresentationResult) {
+		reminderPresentationNeedsRetry = !result.failures.isEmpty
+		var messages = result.failures
+		if let reason = result.unavailableReason { messages.insert(reason, at: 0) }
+		if result.deferredCount > 0 {
+			messages.append("\(result.deferredCount) more \(result.deferredCount == 1 ? "event is" : "events are") waiting. Open the app to refresh upcoming reminders.")
+		}
+		reminderPresentationMessage = messages.isEmpty ? nil : messages.joined(separator: "\n")
+	}
+
+	func retryReminderDelivery() async {
+		requestReminderBackfill()
+		await reminderBackfillTask?.value
+		await refreshReminderSchedule()
+	}
+
+	private func requestReminderBackfill() {
+		guard processingEnabled, hasLoadedConfiguration, !isLoading, !isDemoMode,
+			settings.eventRemindersEnabled else { return }
+		reminderBackfillPending = true
+		guard !isCapturePriorityActive, reminderBackfillTask == nil else { return }
+		reminderBackfillTask = Task {
+			defer {
+				reminderBackfillTask = nil
+				if reminderBackfillPending, !isCapturePriorityActive { requestReminderBackfill() }
+			}
+			while reminderBackfillPending, settings.eventRemindersEnabled, !isCapturePriorityActive, !Task.isCancelled {
+				reminderBackfillPending = false
+				do {
+					let result = try await repository.backfillSkippedReminders(excluding: pendingSourceIDs)
+					for record in result.records { publish(record) }
+					if settings.eventRemindersEnabled {
+						reminderBackfillMessage = result.issues.isEmpty ? nil : "Some saved notes could not be queued for reminders. Try again."
+					}
+					if !result.records.isEmpty { scheduleICloudDriveMirror() }
+					kickProcessing()
+				} catch {
+					if settings.eventRemindersEnabled { reminderBackfillMessage = "Saved notes could not be checked for reminders. Try again." }
+				}
+			}
+		}
+	}
 
 	private var currentConfiguration: AppConfiguration {
 		AppConfiguration(settings: settings, locations: namedLocations, elevenLabsAPIKey: elevenLabsAPIKey)
@@ -976,6 +1076,7 @@ final class JournalStore {
 			updateCloudStatus()
 		}
 		hasLoadedConfiguration = true
+		requestReminderBackfill()
 		kickProcessing()
 		requestReminderSchedule()
 		startConfigurationWriter()
@@ -1147,6 +1248,7 @@ final class JournalStore {
 					failedNoteSaveIDs.remove(pending.entryID)
 					publish(record)
 					cancelObsoleteStage()
+					if pending.edit.changesReminderSource { requestReminderBackfill() }
 					scheduleICloudDriveMirror()
 				} catch RepositoryError.unavailableRecord {
 					pendingEdits.removeAll { $0.id == pending.id }

@@ -158,21 +158,22 @@ Manual removals are reapplied deterministically, so reprocessing cannot silently
 
 Full note reprocessing retranscribes the saved audio, regenerates the title and summary, then extracts reminders while reapplying every stored feedback correction and manual removal. Previously completed results remain available until each replacement stage succeeds.
 
+
 ## Live Activity
 
-Active reminder occurrences schedule a standard Live Activity to begin at the configured lead time. It presents the event title and available reminder text, then links to the source note for the full list and feedback controls.
+Activities show the event title and available reminder text, link to the source note for the complete list and feedback, and use the event end as their stale date. Settings provide event-reminder and Live Activity toggles plus a global lead-time picker.
 
-The activity uses the event end as its stale date. The app ends obsolete, removed, or expired activities during its next calendar refresh. Scheduled activities are maintained over a rolling near-term horizon because iOS applies a device-dependent limit and scheduled activities count toward it.
+Delivery uses the next two event groups whose reminder trigger falls within 24 hours, including currently relevant events until they end. This is an app presentation budget, not an extraction limit or a guarantee of the system quota. Opening the app or changing relevant notes, calendars, settings, or system authorization refreshes the schedule; an app that never opens again cannot replenish an indefinite schedule.
 
-The recording Live Activity has higher relevance than an event-reminder activity when both exist.
+Each saved presentation descriptor includes its event details and matching-input fingerprint, intended trigger, alert, primary note, and every contributing note/rule identity and source revision. Contributors are ordered by newest reminder first, then stable identities; that same order selects the deep link. A group starts at the greatest effective lead time across its contributors, including inherited defaults. Presentation lead values are constrained to 0–1440 minutes before date arithmetic; valid custom values such as 37 minutes are preserved, and source metadata is unchanged.
 
-Settings provide:
+One owned reconciliation serializes updates, removals, and requests; obsolete passes cannot act after a newer pass. A changed immutable descriptor ends before replacement. Duplicate and old-format activities are retired, and a scheduled activity becoming active does not itself cause replacement. Removing any contributing source, changing its reminder input, or changing the event retires the affected group before waiting for unrelated model work. Widget hidden counts reflect each surface's actual visible text count.
 
-- a master event-reminders toggle;
-- a Live Activities toggle;
-- a global lead-time picker.
+Native request errors remain visible in Settings and an explicit Retry can repeat the same desired presentation. A request or update does not prove an alert was delivered or seen. System activity observation refreshes relevant changes without immediately retrying failures or recreating user-dismissed presentations.
 
-Rules remain stored when delivery is disabled. One owned reconciliation serializes activity updates, removals, and requests; a canceled or replaced pass cannot publish after a newer pass. Derived pin-save errors retire when reminders are disabled, while unsaved source edits remain retryable.
+Recording closes reminder presentation admission immediately and queues cleanup independently of microphone startup. The app can await the actual cleanup only for optional recording presentation, after audio has started; the final capture owner releases admission and requests a fresh reminder schedule.
+
+Derived pin-save errors retire when reminders are disabled; unsaved source edits remain retryable. Turning event reminders off retains their saved state and skips optional reminder extraction. Enabling them, loading an enabled configuration, or returning to the foreground atomically queues only saved notes with completed transcription, an attached event, and a previously skipped reminder stage. It preserves completed audio/transcription/reflection and retirement history. Successful empty extraction and failed, canceled, or in-progress jobs are not reset; a per-note backfill write failure remains retryable without blocking healthy notes.
 
 ## Evaluation
 
