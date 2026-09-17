@@ -198,6 +198,7 @@ enum RecordingContractChecks {
 		session.present(startsImmediately: true)
 		await session.startupTask?.value
 		try expect(recorder.isRecording, "The capture fixture must actually enter recording")
+		backend.devices[0].currentTime = 12
 		let audioURL = backend.devices[0].url
 		let id = UUID(uuidString: audioURL.deletingPathExtension().lastPathComponent)!
 		let recordURL = root.appendingPathComponent("Records/\(id.uuidString).json")
@@ -220,6 +221,7 @@ enum RecordingContractChecks {
 
 		session.present(startsImmediately: true)
 		await session.startupTask?.value
+		backend.devices[1].currentTime = 12
 		let discardedAudio = backend.devices[1].url
 		let discardedID = UUID(uuidString: discardedAudio.deletingPathExtension().lastPathComponent)!
 		let discardedRecord = root.appendingPathComponent("Records/\(discardedID.uuidString).json")
@@ -305,11 +307,7 @@ enum RecordingContractChecks {
 
 		func prepareToRecord() -> Bool {
 			do {
-				let file = try AVAudioFile(forWriting: url, settings: [
-					AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-					AVSampleRateKey: 44_100,
-					AVNumberOfChannelsKey: 1
-				])
+				let file = try AVAudioFile(forWriting: url, settings: RecordingAudioFormat.captureSettings)
 				let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 44_100)!
 				buffer.frameLength = 44_100
 				for index in 0..<44_100 { buffer.floatChannelData![0][index] = 0 }

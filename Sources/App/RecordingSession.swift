@@ -95,7 +95,7 @@ final class RecordingSession {
 		UIApplication.shared.isIdleTimerDisabled = false
 		do {
 			let entryID = try await store.finishRecording(
-				at: recording.url, duration: recording.duration, calendarEvent: calendarEvent)
+				at: recording.url, calendarEvent: calendarEvent)
 			activeURL = nil
 			finishedRecording = nil
 			context = nil

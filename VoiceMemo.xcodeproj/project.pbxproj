@@ -49,6 +49,8 @@
 		A10000000000000000000029 /* PlaybackContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000029 /* PlaybackContractChecks.swift */; };
 		A1000000000000000000002A /* JournalRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000002A /* JournalRepository.swift */; };
 		A1000000000000000000002B /* StorageContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000002B /* StorageContractChecks.swift */; };
+		A1000000000000000000002C /* AudioFinalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000002C /* AudioFinalizer.swift */; };
+		A1000000000000000000002D /* AudioFinalizationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000002D /* AudioFinalizationContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -120,6 +122,8 @@
 		B10000000000000000000029 /* PlaybackContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackContractChecks.swift; sourceTree = "<group>"; };
 		B1000000000000000000002A /* JournalRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalRepository.swift; sourceTree = "<group>"; };
 		B1000000000000000000002B /* StorageContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageContractChecks.swift; sourceTree = "<group>"; };
+		B1000000000000000000002C /* AudioFinalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFinalizer.swift; sourceTree = "<group>"; };
+		B1000000000000000000002D /* AudioFinalizationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFinalizationContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -161,6 +165,8 @@
 				B10000000000000000000025 /* LocalModelProbe.swift */,
 				B10000000000000000000029 /* PlaybackContractChecks.swift */,
 				B1000000000000000000002B /* StorageContractChecks.swift */,
+				B1000000000000000000002D /* AudioFinalizationContractChecks.swift */,
+				B1000000000000000000002C /* AudioFinalizer.swift */,
 				B1000000000000000000002A /* JournalRepository.swift */,
 				B10000000000000000000028 /* AudioSessionController.swift */,
 				B10000000000000000000027 /* RecordingContractChecks.swift */,
@@ -384,6 +390,8 @@
 				A10000000000000000000025 /* LocalModelProbe.swift in Sources */,
 				A10000000000000000000029 /* PlaybackContractChecks.swift in Sources */,
 				A1000000000000000000002B /* StorageContractChecks.swift in Sources */,
+				A1000000000000000000002D /* AudioFinalizationContractChecks.swift in Sources */,
+				A1000000000000000000002C /* AudioFinalizer.swift in Sources */,
 				A1000000000000000000002A /* JournalRepository.swift in Sources */,
 				A10000000000000000000028 /* AudioSessionController.swift in Sources */,
 				A10000000000000000000027 /* RecordingContractChecks.swift in Sources */,

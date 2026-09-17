@@ -292,7 +292,7 @@ struct EntryView: View {
 			.frame(height: 52)
 			.disabled(
 				!store.canReprocessEntry(id: entry.id)
-					|| store.processingPhase(for: entry.id) != nil
+					|| store.processingPhase(for: entry.id)?.isActive == true
 			)
 
 			Divider()
@@ -1108,7 +1108,9 @@ private struct EntryProcessingStatusView: View {
 	var body: some View {
 		HStack(spacing: 11) {
 			Group {
-				if phase == .complete {
+				if phase == .finalizationFailed {
+					Image(systemName: "exclamationmark.circle")
+				} else if phase == .complete {
 					Image(systemName: "checkmark")
 						.font(.system(size: 13, weight: .bold))
 				} else {

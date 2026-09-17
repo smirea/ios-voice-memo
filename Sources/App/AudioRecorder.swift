@@ -41,12 +41,9 @@ extension AVAudioRecorder: AudioRecordingDevice {}
 @MainActor
 struct RecordingHardware {
 	var makeRecorder: (URL) throws -> any AudioRecordingDevice = { url in
-		try AVAudioRecorder(url: url, settings: [
-			AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-			AVSampleRateKey: 44_100,
-			AVNumberOfChannelsKey: 1,
-			AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-		])
+		let settings = url.pathExtension.lowercased() == "caf"
+			? RecordingAudioFormat.pcmSettings : RecordingAudioFormat.captureSettings
+		return try AVAudioRecorder(url: url, settings: settings)
 	}
 	var activate: (AnyObject) throws -> Void = { owner in
 		try AudioSessionController.shared.activate(
@@ -201,10 +198,9 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		guard hasRecording, let outputURL else { return nil }
 		duration = max(duration, recorder?.currentTime ?? 0)
 		stopCapture()
-		let fileDuration = try? AVAudioFile(forReading: outputURL).duration
 		self.outputURL = nil
 		state = .idle
-		return FinishedRecording(url: outputURL, duration: fileDuration ?? duration)
+		return FinishedRecording(url: outputURL, duration: duration)
 	}
 
 	func cancel() -> URL? {
@@ -730,12 +726,5 @@ private actor TranscriptAccumulator {
 	func append(_ fragment: AttributedString) {
 		transcript += String(fragment.characters)
 		onUpdate(result)
-	}
-}
-
-private extension AVAudioFile {
-	var duration: TimeInterval {
-		guard processingFormat.sampleRate > 0 else { return 0 }
-		return Double(length) / processingFormat.sampleRate
 	}
 }

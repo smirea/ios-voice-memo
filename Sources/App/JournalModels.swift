@@ -196,6 +196,8 @@ struct ReflectionResult: Sendable {
 }
 
 enum EntryProcessingPhase: Equatable, Sendable {
+	case finalizing
+	case finalizationFailed
 	case transcribing
 	case queued
 	case reflecting
@@ -204,6 +206,8 @@ enum EntryProcessingPhase: Equatable, Sendable {
 
 	var title: String {
 		switch self {
+		case .finalizing: "Preparing audio"
+		case .finalizationFailed: "Audio preparation needs retry"
 		case .transcribing: "Transcribing"
 		case .queued: "Waiting"
 		case .reflecting: "Analyzing"
@@ -211,6 +215,8 @@ enum EntryProcessingPhase: Equatable, Sendable {
 		case .complete: "Ready"
 		}
 	}
+
+	var isActive: Bool { self != .finalizationFailed }
 
 }
 

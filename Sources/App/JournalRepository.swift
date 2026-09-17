@@ -46,6 +46,12 @@ actor JournalRepository {
 	private var reservedIDs = Set<UUID>()
 	private var didLoad = false
 	private var loadIssues: [String] = []
+	#if DEBUG
+	var audioPublicationCheckpoint: (@Sendable () -> Void)?
+	func setAudioPublicationCheckpoint(_ checkpoint: @escaping @Sendable () -> Void) {
+		audioPublicationCheckpoint = checkpoint
+	}
+	#endif
 
 	init(rootURL: URL) {
 		self.rootURL = rootURL
@@ -92,9 +98,9 @@ actor JournalRepository {
 		try requireLoaded()
 		let id = UUID()
 		let entry = JournalEntry(id: id, duration: 0, transcript: "", headline: "Processing recording",
-			audioFilename: "\(id.uuidString).m4a", calendarEvent: calendarEvent)
+			audioFilename: "\(id.uuidString).\(RecordingAudioFormat.fileExtension)", calendarEvent: calendarEvent)
 		try write(JournalRecord(entry: entry, state: .recording,
-			ownedAudioFilenames: ["\(id.uuidString).m4a", "\(id.uuidString).caf"]))
+			ownedAudioFilenames: ["\(id.uuidString).m4a", "\(id.uuidString).caf", "\(id.uuidString).aac"]))
 		return entry
 	}
 
@@ -105,12 +111,13 @@ actor JournalRepository {
 		try write(record)
 	}
 
-	func finishRecording(id: UUID, duration: TimeInterval) throws -> JournalEntry {
+	func finishRecording(id: UUID) throws -> JournalEntry {
 		try requireLoaded()
 		guard var record = records[id], record.state != .deleted, var entry = record.entry else {
 			throw RepositoryError.unavailableRecord
 		}
-		entry.duration = duration
+		guard let filename = entry.audioFilename else { throw RepositoryError.invalidAudio }
+		entry.duration = try Self.audioDuration(at: recordingsURL.appendingPathComponent(filename))
 		record.entry = entry
 		record.state = .saved
 		try write(record)
@@ -119,9 +126,14 @@ actor JournalRepository {
 
 	func save(_ entries: [JournalEntry]) throws {
 		try requireLoaded()
-		for entry in entries {
+		for var entry in entries {
 			if records[entry.id]?.state == .deleted { continue }
 			if reservedIDs.contains(entry.id), records[entry.id] == nil { throw RepositoryError.invalidRecord }
+			if let committed = records[entry.id]?.entry {
+				// Media publication owns these fields; an older UI snapshot must not undo it.
+				entry.audioFilename = committed.audioFilename
+				entry.duration = committed.duration
+			}
 			if records[entry.id]?.entry == entry { continue }
 			var record = records[entry.id] ?? JournalRecord(entry: entry)
 			record.entry = entry
@@ -148,6 +160,58 @@ actor JournalRepository {
 	}
 
 	func record(id: UUID) -> JournalRecord? { records[id] }
+
+	func prepareAudioFinalization(id: UUID) throws -> AudioFinalizationRequest {
+		try requireLoaded()
+		guard var record = records[id], record.state == .saved,
+			let filename = record.entry?.audioFilename, RecordingAudioFormat.needsFinalization(filename)
+		else { throw RepositoryError.unavailableRecord }
+		let sourceURL = recordingsURL.appendingPathComponent(filename)
+		let destinationURL = sourceURL.deletingPathExtension().appendingPathExtension("m4a")
+		let stagingURL = recordingsURL.appendingPathComponent(".\(id.uuidString)-\(UUID().uuidString).finalizing.m4a")
+		record.ownedAudioFilenames.formUnion([destinationURL.lastPathComponent, stagingURL.lastPathComponent])
+		try write(record)
+		return AudioFinalizationRequest(entryID: id, sourceURL: sourceURL,
+			destinationURL: destinationURL, stagingURL: stagingURL)
+	}
+
+	func commitFinalizedAudio(_ audio: FinalizedAudio) throws -> JournalEntry {
+		try Task.checkCancellation()
+		let request = audio.request
+		guard var record = records[request.entryID], record.state == .saved,
+			var entry = record.entry, entry.audioFilename == request.sourceURL.lastPathComponent,
+			record.ownedAudioFilenames.contains(request.stagingURL.lastPathComponent),
+			audio.preparedURL == request.stagingURL || audio.preparedURL == request.destinationURL
+		else { throw RepositoryError.unavailableRecord }
+		if audio.preparedURL != request.destinationURL {
+			if fileManager.fileExists(atPath: request.destinationURL.path) {
+				_ = try fileManager.replaceItemAt(request.destinationURL, withItemAt: audio.preparedURL)
+			} else {
+				try fileManager.moveItem(at: audio.preparedURL, to: request.destinationURL)
+			}
+		}
+		#if DEBUG
+		audioPublicationCheckpoint?()
+		#endif
+		entry.audioFilename = request.destinationURL.lastPathComponent
+		entry.duration = audio.duration
+		record.entry = entry
+		try write(record)
+		try? cleanupFinalizedAudio(id: entry.id)
+		return entry
+	}
+
+	func cleanupFinalizedAudio(id: UUID) throws {
+		guard let record = records[id], record.state == .saved,
+			let filename = record.entry?.audioFilename, filename.hasSuffix(".m4a")
+		else { return }
+		guard record.ownedAudioFilenames.contains(where: { $0 != filename }) else { return }
+		_ = try Self.audioDuration(at: recordingsURL.appendingPathComponent(filename))
+		for owned in record.ownedAudioFilenames where owned != filename {
+			do { try fileManager.removeItem(at: recordingsURL.appendingPathComponent(owned)) }
+			catch where Self.isMissing(error) {}
+		}
+	}
 
 	func committedEntries() -> [JournalEntry] {
 		records.values.filter { $0.state == .saved }.compactMap(\.entry).sorted { $0.createdAt > $1.createdAt }
@@ -228,7 +292,7 @@ actor JournalRepository {
 
 	private func recoverRecordings(issues: inout [String]) throws {
 		for record in Array(records.values) where record.state == .recording {
-			guard let entry = record.entry else { continue }
+			guard record.entry != nil else { continue }
 			var readable: (String, TimeInterval)?
 			var hasUnreadableAudio = false
 			let filenames = record.ownedAudioFilenames.sorted {
@@ -247,7 +311,7 @@ actor JournalRepository {
 			}
 			var recovered = record
 			recovered.entry?.audioFilename = filename
-			recovered.entry?.duration = max(entry.duration, duration)
+			recovered.entry?.duration = duration
 			recovered.entry?.headline = "Recovered recording"
 			recovered.state = .saved
 			try write(recovered)
@@ -256,12 +320,24 @@ actor JournalRepository {
 			do { try cleanupDeletedAudio(id: record.id) }
 			catch { issues.append("Deleted audio cleanup is pending and will be retried.") }
 		}
+		for record in records.values where record.state == .saved {
+			do {
+				if record.entry?.audioFilename?.hasSuffix(".m4a") == true {
+					try cleanupFinalizedAudio(id: record.id)
+				} else {
+					for filename in record.ownedAudioFilenames where filename.hasPrefix(".") {
+						do { try fileManager.removeItem(at: recordingsURL.appendingPathComponent(filename)) }
+						catch where Self.isMissing(error) {}
+					}
+				}
+			} catch { issues.append("Recording cleanup is pending. Original files were preserved.") }
+		}
 		guard issues.isEmpty else { return }
 		let urls = try fileManager.contentsOfDirectory(at: recordingsURL,
 			includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles])
 		let owned = records.values.reduce(into: Set<String>()) { $0.formUnion($1.ownedAudioFilenames) }
 		let groups = Dictionary(grouping: urls.filter {
-			["m4a", "caf"].contains($0.pathExtension.lowercased()) && !owned.contains($0.lastPathComponent)
+			["m4a", "caf", "aac"].contains($0.pathExtension.lowercased()) && !owned.contains($0.lastPathComponent)
 		}, by: { $0.deletingPathExtension().lastPathComponent })
 		for (stem, group) in groups {
 			let id = UUID(uuidString: stem) ?? UUID()
@@ -323,6 +399,9 @@ actor JournalRepository {
 		_ = try url.resourceValues(forKeys: [.fileSizeKey])
 		let file = try AVAudioFile(forReading: url)
 		guard file.length > 0, file.processingFormat.sampleRate > 0 else { throw RepositoryError.invalidAudio }
+		guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1) else { throw RepositoryError.invalidAudio }
+		try file.read(into: buffer, frameCount: 1)
+		guard buffer.frameLength == 1 else { throw RepositoryError.invalidAudio }
 		return Double(file.length) / file.processingFormat.sampleRate
 	}
 

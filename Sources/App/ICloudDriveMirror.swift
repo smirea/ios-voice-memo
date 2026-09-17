@@ -81,7 +81,9 @@ actor ICloudDriveMirror {
 	}
 
 	private func export(_ entry: JournalEntry, recordingsURL: URL, documentsURL: URL) {
-		guard let audioFilename = entry.audioFilename else { return }
+		guard let audioFilename = entry.audioFilename,
+			URL(fileURLWithPath: audioFilename).pathExtension.lowercased() == "m4a"
+		else { return }
 		let sourceAudioURL = recordingsURL.appendingPathComponent(audioFilename)
 		guard fileManager.fileExists(atPath: sourceAudioURL.path) else { return }
 

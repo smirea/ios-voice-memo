@@ -42,10 +42,18 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 
 	func load(url: URL, fallbackDuration: TimeInterval) async {
 		guard loadedURL != url || !isReady else { return }
+		let isFinalizedReplacement = ["aac", "caf"].contains(loadedURL?.pathExtension.lowercased() ?? "")
+			&& url.pathExtension.lowercased() == "m4a"
+			&& loadedURL?.deletingPathExtension() == url.deletingPathExtension()
+		let preservesPosition = isFinalizedReplacement || loadedURL == url
+		let position = preservesPosition ? (player?.currentTime ?? currentTime) : 0
+		let resumesPlayback = isFinalizedReplacement && isPlaying && player?.isPlaying == true
 		stop()
 		duration = fallbackDuration
+		currentTime = position
 		loadedURL = url
 		guard rebuildPlayer() else { return }
+		if resumesPlayback { togglePlayback() }
 
 		let waveform = await Task.detached(priority: .utility) {
 			Self.readWaveform(at: url, count: 52)

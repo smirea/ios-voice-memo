@@ -42,7 +42,8 @@
 - Continues with the screen locked or app backgrounded, pauses for audio interruptions, and recovers from route changes when the microphone becomes available.
 - Distinguishes interrupted or unavailable input from a user pause; Pause cancels automatic recovery, and recording failures freeze elapsed time instead of appearing to keep recording.
 - After an audio-system reset or encoder failure, keeps the captured audio available to finish, disables Resume for that recording, and uses a fresh recorder for the next one.
-- Checkpoints audio for crash recovery and captures location without blocking recording.
+- Preserves audio continuously for crash recovery under the same note identity, including after an abrupt app exit; the latest buffered audio may be lost. Captures location without blocking recording.
+- Prepares finished audio in the background for standard M4A playback and export, keeps the original until preparation is safely saved, and retains failed preparation for automatic or manual Reprocess retry.
 
 # Note Screen
 
@@ -52,6 +53,7 @@
 - Tapping an attached event opens that exact event using its provider link when available, otherwise in a native event detail view.
 - Shows the generated title, processing status, and audio controls with waveform progress and remaining time; playback stops on exit.
 - Playback pauses for interruptions or disconnected outputs, waits for an explicit Play afterward, and restores its position without autoplay after an audio-system reset.
+- Keeps playback position when audio preparation finishes, continues only if playback was still active, and shows a retry status instead of a progress spinner when preparation fails.
 - Shows a short generated summary for recordings longer than 20 seconds and attributes the analysis model below the summary or title.
 - Shows event reminders directly below the summary with compact frequency, quoted target, and duration; tapping uses native disclosure to expand its rationale without extra top or leading padding, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
 - **Add Feedback** records and transcribes a short correction, deletes the temporary audio, and reprocesses only the reminders.

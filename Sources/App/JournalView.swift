@@ -198,7 +198,9 @@ private struct EntryCard: View {
 
 			if let processingPhase {
 				HStack(spacing: 6) {
-					if processingPhase == .complete {
+					if processingPhase == .finalizationFailed {
+						Image(systemName: "exclamationmark.circle")
+					} else if processingPhase == .complete {
 						Image(systemName: "checkmark.circle.fill")
 					} else {
 						ProgressView().controlSize(.mini)

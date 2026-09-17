@@ -38,6 +38,7 @@ final class JournalStore {
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var isConfigurationRestorePending = false
 	@ObservationIgnored private let repository: JournalRepository
+	@ObservationIgnored private let audioFinalizer = AudioFinalizer()
 	@ObservationIgnored private var bootstrapTask: Task<Void, Never>?
 	@ObservationIgnored private var persistenceTask: Task<Void, Never>?
 	@ObservationIgnored private var persistenceRevision = 0
@@ -67,6 +68,9 @@ final class JournalStore {
 			isLoading = false
 			#if DEBUG
 			hasUnsavedNoteChanges = ProcessInfo.processInfo.arguments.contains("-demo-unsaved-notes")
+			if ProcessInfo.processInfo.arguments.contains("-demo-finalization-failed") {
+				for entry in entries { entryProcessingPhases[entry.id] = .finalizationFailed }
+			}
 			#endif
 		} else {
 			bootstrapTask = Task { [weak self] in await self?.loadJournal() }
@@ -238,13 +242,13 @@ final class JournalStore {
 	func waitForPendingWrites() async { await persistenceTask?.value }
 
 	@discardableResult
-	func finishRecording(at url: URL, duration: TimeInterval, calendarEvent: JournalCalendarEvent?) async throws -> UUID {
+	func finishRecording(at url: URL, calendarEvent: JournalCalendarEvent?) async throws -> UUID {
 		try await waitUntilLoaded()
 		await persistenceTask?.value
 		guard let entryID = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else {
 			throw RepositoryError.unavailableRecord
 		}
-		let savedEntry = try await repository.finishRecording(id: entryID, duration: duration)
+		let savedEntry = try await repository.finishRecording(id: entryID)
 		entries.removeAll { $0.id == entryID }
 		entries.append(savedEntry)
 		entries.sort { $0.createdAt > $1.createdAt }
@@ -287,6 +291,10 @@ final class JournalStore {
 	}
 
 	func resumeStaleProcessing(now: Date = .now) {
+		for entry in entries where entry.audioFilename.map(RecordingAudioFormat.needsFinalization) == true
+			&& entryProcessingTasks[entry.id] == nil {
+			if let url = audioURL(for: entry) { startProcessing(entryID: entry.id, url: url) }
+		}
 		let staleEntryIDs = entryProcessingStartedAt.compactMap { entryID, startedAt in
 			now.timeIntervalSince(startedAt) >= Self.processingTimeoutSeconds ? entryID : nil
 		}
@@ -315,12 +323,12 @@ final class JournalStore {
 		preserveExistingTranscriptOnFailure: Bool
 	) {
 		guard entryProcessingTokens[entryID] == token,
-			entries.contains(where: { $0.id == entryID }),
-			fileManager.fileExists(atPath: url.path)
+			let current = entry(id: entryID), let currentURL = audioURL(for: current),
+			fileManager.fileExists(atPath: currentURL.path)
 		else { return }
 		startProcessing(
 			entryID: entryID,
-			url: url,
+			url: currentURL,
 			preserveExistingTranscriptOnFailure: preserveExistingTranscriptOnFailure
 		)
 	}
@@ -329,7 +337,11 @@ final class JournalStore {
 		let identifier = UIApplication.shared.beginBackgroundTask(withName: "Process voice memo") { [weak self] in
 			Task { @MainActor [weak self] in
 				guard self?.entryProcessingTokens[entryID] == token else { return }
-				self?.endBackgroundProcessing(entryID)
+				if self?.entryProcessingPhases[entryID] == .finalizing {
+					self?.finishProcessing(entryID, token: token)
+				} else {
+					self?.endBackgroundProcessing(entryID)
+				}
 			}
 		}
 		if identifier != .invalid {
@@ -350,7 +362,8 @@ final class JournalStore {
 	}
 
 	private func resumeInterruptedProcessing() {
-		for entry in entries where entry.headline == "Processing recording"
+		for entry in entries where entry.audioFilename.map(RecordingAudioFormat.needsFinalization) == true
+			|| entry.headline == "Processing recording"
 			|| entry.headline == "Recovered recording"
 		{
 			guard let url = audioURL(for: entry), fileManager.fileExists(atPath: url.path) else { continue }
@@ -382,11 +395,44 @@ final class JournalStore {
 		token: UUID,
 		preserveExistingTranscriptOnFailure: Bool
 	) async {
+		var processingURL = url
+		do {
+			guard let record = await repository.record(id: entryID), record.state == .saved,
+				let source = record.entry, let canonicalURL = audioURL(for: source)
+			else { return }
+			try Task.checkCancellation()
+			guard entryProcessingTokens[entryID] == token else { return }
+			processingURL = canonicalURL
+			if RecordingAudioFormat.needsFinalization(canonicalURL.lastPathComponent) {
+				entryProcessingPhases[entryID] = .finalizing
+				let request = try await repository.prepareAudioFinalization(id: entryID)
+				defer { try? fileManager.removeItem(at: request.stagingURL) }
+				let prepared = try await audioFinalizer.prepare(request)
+				try Task.checkCancellation()
+				guard entryProcessingTokens[entryID] == token else { return }
+				let committed = try await repository.commitFinalizedAudio(prepared)
+				if let index = entries.firstIndex(where: { $0.id == entryID }) {
+					entries[index].audioFilename = committed.audioFilename
+					entries[index].duration = committed.duration
+				}
+				processingURL = request.destinationURL
+				scheduleICloudDriveMirror()
+			}
+			try Task.checkCancellation()
+			guard entryProcessingTokens[entryID] == token else { return }
+			entryProcessingPhases[entryID] = .transcribing
+		} catch {
+			guard !Task.isCancelled, entryProcessingTokens[entryID] == token else { return }
+			entryProcessingPhases[entryID] = .finalizationFailed
+			endBackgroundProcessing(entryID)
+			storageErrorMessage = "Audio preparation failed. It will retry in 15 minutes or when the app next opens; you can also choose Reprocess. " + error.localizedDescription
+			return
+		}
 		let transcription: TranscriptionResult?
 		var transcriptionError: Error?
 		do {
 			let result = try await AudioTranscriber.transcribe(
-				url: url,
+				url: processingURL,
 				preferElevenLabs: settings.preferElevenLabsTranscription,
 				elevenLabsAPIKey: elevenLabsAPIKey
 			) { [weak self] partialResult in
