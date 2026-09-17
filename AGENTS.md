@@ -23,3 +23,8 @@ This is a simple iOS app that's only meant to support the latest iOS and should 
 - Package Manager: Swift Package Manager
 - Minimum targets: iOS 17 and macOS 14
 - Keep dependencies rare and intentional
+
+# Deployment
+
+- After pushing all commits to `master`, verify that the Xcode Cloud `Default` workflow has scheduled an actual build for the exact pushed commit SHA. A successful push or an empty queued GitHub check suite is not enough.
+- If no build appears within five minutes, investigate the trigger and report that deployment has not started. Only report deployment as complete after the archive and TestFlight distribution succeed.
