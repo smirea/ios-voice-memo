@@ -73,6 +73,9 @@
 		A10000000000000000000041 /* CloudFileAccessContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000041 /* CloudFileAccessContractChecks.swift */; };
 		A10000000000000000000042 /* ICloudProviderContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000042 /* ICloudProviderContractChecks.swift */; };
 		A10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift */; };
+		A10000000000000000000044 /* WaveformCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000044 /* WaveformCache.swift */; };
+		A10000000000000000000045 /* WaveformDecoderContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000045 /* WaveformDecoderContractChecks.swift */; };
+		A10000000000000000000046 /* PlaybackWaveformContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000046 /* PlaybackWaveformContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -168,6 +171,9 @@
 		B10000000000000000000041 /* CloudFileAccessContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudFileAccessContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000042 /* ICloudProviderContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudProviderContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudStoreReliabilityContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000044 /* WaveformCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformCache.swift; sourceTree = "<group>"; };
+		B10000000000000000000045 /* WaveformDecoderContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformDecoderContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000046 /* PlaybackWaveformContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackWaveformContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -217,6 +223,9 @@
 				B10000000000000000000038 /* ReminderActivityContractChecks.swift */,
 				B1000000000000000000003A /* ICloudStoreContractChecks.swift */,
 				B10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift */,
+				B10000000000000000000044 /* WaveformCache.swift */,
+				B10000000000000000000045 /* WaveformDecoderContractChecks.swift */,
+				B10000000000000000000046 /* PlaybackWaveformContractChecks.swift */,
 				B10000000000000000000042 /* ICloudProviderContractChecks.swift */,
 				B10000000000000000000041 /* CloudFileAccessContractChecks.swift */,
 				B10000000000000000000040 /* CloudStateContractChecks.swift */,
@@ -464,6 +473,9 @@
 				A10000000000000000000038 /* ReminderActivityContractChecks.swift in Sources */,
 				A1000000000000000000003A /* ICloudStoreContractChecks.swift in Sources */,
 				A10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift in Sources */,
+				A10000000000000000000044 /* WaveformCache.swift in Sources */,
+				A10000000000000000000045 /* WaveformDecoderContractChecks.swift in Sources */,
+				A10000000000000000000046 /* PlaybackWaveformContractChecks.swift in Sources */,
 				A10000000000000000000042 /* ICloudProviderContractChecks.swift in Sources */,
 				A10000000000000000000041 /* CloudFileAccessContractChecks.swift in Sources */,
 				A10000000000000000000040 /* CloudStateContractChecks.swift in Sources */,

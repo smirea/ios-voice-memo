@@ -15,6 +15,10 @@ struct EntryView: View {
 	@State private var showsNoteActions = false
 	@State private var sharedEntry: JournalEntryExport?
 	@Namespace private var noteActionsNamespace
+	private struct AudioLoadKey: Hashable {
+		var url: URL
+		var captureActive: Bool
+	}
 
 	private var currentEntry: JournalEntry {
 		store.entry(id: entry.id) ?? entry
@@ -97,7 +101,8 @@ struct EntryView: View {
 
 					if let audioURL = store.audioURL(for: currentEntry) {
 						EntryAudioPlayer(playback: playback, duration: currentEntry.duration)
-							.task(id: audioURL) {
+							.task(id: AudioLoadKey(url: audioURL, captureActive: store.isCapturePriorityActive)) {
+								guard !store.isCapturePriorityActive else { return }
 								await playback.load(url: audioURL, fallbackDuration: currentEntry.duration)
 							}
 					}

@@ -13,11 +13,18 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 	@ObservationIgnored private var player: AVAudioPlayer?
 	@ObservationIgnored private var timer: Timer?
 	@ObservationIgnored private var loadedURL: URL?
+	@ObservationIgnored private var loadedIdentity: WaveformFileIdentity?
+	@ObservationIgnored private var completedWaveform: WaveformFileIdentity?
+	@ObservationIgnored private var loadGeneration: UUID?
+	@ObservationIgnored private var identityTask: Task<WaveformFileIdentity, Error>?
+	@ObservationIgnored private var waveformTask: Task<[Double], Error>?
 	@ObservationIgnored private var ownsSession = false
 	@ObservationIgnored private let makePlayer: (URL) throws -> AVAudioPlayer
 	@ObservationIgnored private let activateAudioSession: (AnyObject) throws -> Void
 	@ObservationIgnored private let deactivateAudioSession: (AnyObject) -> Void
 	@ObservationIgnored private let invalidateAudioSession: (AnyObject) -> Void
+	@ObservationIgnored private let waveformIdentity: @Sendable (URL) throws -> WaveformFileIdentity
+	@ObservationIgnored private let waveformLoader: @Sendable (WaveformFileIdentity) async throws -> [Double]
 
 	init(
 		makePlayer: @escaping (URL) throws -> AVAudioPlayer = { try AVAudioPlayer(contentsOf: $0) },
@@ -26,12 +33,16 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 		},
 		deactivateAudioSession: @escaping (AnyObject) -> Void = { AudioSessionController.shared.deactivate($0) },
 		invalidateAudioSession: @escaping (AnyObject) -> Void = { AudioSessionController.shared.invalidate($0) },
-		notificationCenter: NotificationCenter = .default
+		notificationCenter: NotificationCenter = .default,
+		waveformIdentity: @escaping @Sendable (URL) throws -> WaveformFileIdentity = { try .read(at: $0) },
+		waveformLoader: @escaping @Sendable (WaveformFileIdentity) async throws -> [Double] = { try await WaveformLoader().levels(for: $0) }
 	) {
 		self.makePlayer = makePlayer
 		self.activateAudioSession = activateAudioSession
 		self.deactivateAudioSession = deactivateAudioSession
 		self.invalidateAudioSession = invalidateAudioSession
+		self.waveformIdentity = waveformIdentity
+		self.waveformLoader = waveformLoader
 		super.init()
 		let session = AVAudioSession.sharedInstance()
 		notificationCenter.addObserver(self, selector: #selector(interruptionChanged), name: AVAudioSession.interruptionNotification, object: session)
@@ -40,26 +51,74 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 		notificationCenter.addObserver(self, selector: #selector(mediaServicesReset), name: AVAudioSession.mediaServicesWereResetNotification, object: session)
 	}
 
-	func load(url: URL, fallbackDuration: TimeInterval) async {
-		guard loadedURL != url || !isReady else { return }
-		let isFinalizedReplacement = ["aac", "caf"].contains(loadedURL?.pathExtension.lowercased() ?? "")
-			&& url.pathExtension.lowercased() == "m4a"
-			&& loadedURL?.deletingPathExtension() == url.deletingPathExtension()
-		let preservesPosition = isFinalizedReplacement || loadedURL == url
-		let position = preservesPosition ? (player?.currentTime ?? currentTime) : 0
-		let resumesPlayback = isFinalizedReplacement && isPlaying && player?.isPlaying == true
-		stop()
-		duration = fallbackDuration
-		currentTime = position
-		loadedURL = url
-		guard rebuildPlayer() else { return }
-		if resumesPlayback { togglePlayback() }
+	deinit {
+		identityTask?.cancel()
+		waveformTask?.cancel()
+	}
 
-		let waveform = await Task.detached(priority: .utility) {
-			Self.readWaveform(at: url, count: 52)
-		}.value
-		guard loadedURL == url else { return }
-		levels = waveform
+	func load(url: URL, fallbackDuration: TimeInterval) async {
+		guard !Task.isCancelled else { return }
+		let generation = UUID()
+		loadGeneration = generation
+		identityTask?.cancel()
+		waveformTask?.cancel()
+		identityTask = nil
+		waveformTask = nil
+		if loadedURL != url && !isFinalizedReplacement(url) {
+			stopPlayer()
+			duration = fallbackDuration
+		}
+		defer {
+			if loadGeneration == generation {
+				identityTask = nil
+				waveformTask = nil
+			}
+		}
+		let identify = waveformIdentity
+		let lookup = Task.detached(priority: .utility) { try identify(url) }
+		identityTask = lookup
+		do {
+			let identity = try await withTaskCancellationHandler { try await lookup.value } onCancel: { lookup.cancel() }
+			try Task.checkCancellation()
+			guard loadGeneration == generation else { return }
+			identityTask = nil
+			if loadedURL != url || loadedIdentity != identity || !isReady {
+				let finalized = isFinalizedReplacement(url)
+				let preservesPosition = finalized || loadedURL == url
+				let position = preservesPosition ? (player?.currentTime ?? currentTime) : 0
+				let resumesPlayback = preservesPosition && isPlaying && player?.isPlaying == true
+				let previousLevels = levels
+				stopPlayer()
+				if finalized { levels = previousLevels }
+				duration = fallbackDuration
+				currentTime = position
+				loadedURL = url
+				loadedIdentity = identity
+				guard rebuildPlayer() else { return }
+				if resumesPlayback { togglePlayback() }
+			}
+			guard completedWaveform != identity else { return }
+			let loader = waveformLoader
+			let work = Task.detached(priority: .utility) {
+				let levels = try await loader(identity)
+				try Task.checkCancellation()
+				guard levels.count == identity.count, levels.allSatisfy({ $0.isFinite && (0.08...1).contains($0) }),
+					try WaveformFileIdentity.read(at: identity.url, count: identity.count, version: identity.version) == identity
+				else { throw WaveformError.changed }
+				return levels
+			}
+			waveformTask = work
+			let waveform = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+			try Task.checkCancellation()
+			guard loadGeneration == generation else { return }
+			levels = waveform
+			completedWaveform = identity
+		} catch {}
+	}
+
+	private func isFinalizedReplacement(_ url: URL) -> Bool {
+		["aac", "caf"].contains(loadedURL?.pathExtension.lowercased() ?? "") && url.pathExtension.lowercased() == "m4a"
+			&& loadedURL?.deletingPathExtension() == url.deletingPathExtension()
 	}
 
 	func togglePlayback() {
@@ -107,10 +166,22 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 	}
 
 	func stop() {
+		loadGeneration = nil
+		identityTask?.cancel()
+		identityTask = nil
+		waveformTask?.cancel()
+		waveformTask = nil
+		stopPlayer()
+	}
+
+	private func stopPlayer() {
 		player?.delegate = nil
 		player?.stop()
 		player = nil
 		loadedURL = nil
+		loadedIdentity = nil
+		completedWaveform = nil
+		levels = Array(repeating: 0.16, count: 52)
 		isPlaying = false
 		isReady = false
 		currentTime = 0
@@ -224,53 +295,4 @@ final class AudioPlayback: NSObject, AVAudioPlayerDelegate {
 		}
 	}
 
-	nonisolated private static func readWaveform(at url: URL, count: Int) -> [Double] {
-		guard let file = try? AVAudioFile(forReading: url),
-			file.length > 0,
-			let buffer = AVAudioPCMBuffer(
-				pcmFormat: file.processingFormat,
-				frameCapacity: 4_096
-			)
-		else {
-			return Array(repeating: 0.16, count: count)
-		}
-
-		let framesPerLevel = max(1, Int64(ceil(Double(file.length) / Double(count))))
-		var rawLevels: [Double] = []
-		rawLevels.reserveCapacity(count)
-
-		for index in 0..<count {
-			let endFrame = min(file.length, Int64(index + 1) * framesPerLevel)
-			var sumOfSquares = 0.0
-			var sampleCount = 0
-
-			while file.framePosition < endFrame {
-				let frameCount = AVAudioFrameCount(min(
-					Int64(buffer.frameCapacity),
-					endFrame - file.framePosition
-				))
-				do {
-					try file.read(into: buffer, frameCount: frameCount)
-				} catch {
-					break
-				}
-				guard buffer.frameLength > 0, let channelData = buffer.floatChannelData else { break }
-
-				for channel in 0..<Int(buffer.format.channelCount) {
-					let samples = channelData[channel]
-					for frame in 0..<Int(buffer.frameLength) {
-						let sample = Double(samples[frame])
-						sumOfSquares += sample * sample
-					}
-					sampleCount += Int(buffer.frameLength)
-				}
-			}
-
-			rawLevels.append(sampleCount > 0 ? sqrt(sumOfSquares / Double(sampleCount)) : 0)
-		}
-
-		let peak = rawLevels.max() ?? 0
-		guard peak > 0 else { return Array(repeating: 0.08, count: count) }
-		return rawLevels.map { max(0.08, min(1, pow($0 / peak, 0.55))) }
-	}
 }

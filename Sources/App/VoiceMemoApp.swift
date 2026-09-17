@@ -27,6 +27,8 @@ struct VoiceMemoApp: App {
 					await LocationContractChecks.runFromLaunchArguments()
 					await RecordingContractChecks.runFromLaunchArguments()
 					await PlaybackContractChecks.runFromLaunchArguments()
+					await WaveformDecoderContractChecks.runFromLaunchArguments()
+					await PlaybackWaveformContractChecks.runFromLaunchArguments()
 					await StorageContractChecks.runFromLaunchArguments()
 					await AudioFinalizationContractChecks.runFromLaunchArguments()
 					await TranscriptionContractChecks.runFromLaunchArguments()

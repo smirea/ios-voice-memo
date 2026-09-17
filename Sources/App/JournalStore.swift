@@ -66,7 +66,7 @@ final class JournalStore {
 	@ObservationIgnored private var backgroundRegistration: UUID?
 	@ObservationIgnored private var storageSuspended = false
 	@ObservationIgnored private var backgroundSuspended = false
-	@ObservationIgnored private var capturePriorityOwners = Set<UUID>()
+	private var capturePriorityOwners = Set<UUID>()
 	@ObservationIgnored private var admissionPolicyRevision: UInt64 = 0
 	private static var nextAdmissionPolicyRevision: UInt64 = 0
 	@ObservationIgnored private var admittedAt: ContinuousClock.Instant?

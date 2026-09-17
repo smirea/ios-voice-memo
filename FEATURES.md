@@ -56,6 +56,7 @@
 - Shows an attached event below the header with a calendar icon.
 - Tapping an attached event opens that exact event using its provider link when available, otherwise in a native event detail view.
 - Shows the generated title, processing status, and audio controls with waveform progress and remaining time; playback stops on exit.
+- Prepares the waveform without delaying playback, reuses recently viewed waveforms, and pauses waveform work while recording or after leaving a note.
 - Playback pauses for interruptions or disconnected outputs, waits for an explicit Play afterward, and restores its position without autoplay after an audio-system reset.
 - Keeps playback position when audio preparation finishes, continues only if playback was still active, and shows a retry status instead of a progress spinner when preparation fails.
 - Shows a short generated summary for recordings longer than 20 seconds and attributes the analysis model below the summary or title.
