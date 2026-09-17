@@ -38,6 +38,8 @@ struct VoiceMemoApp: App {
 					await ReminderSchedulingContractChecks.runFromLaunchArguments()
 					await ReminderSourceRepositoryContractChecks.runFromLaunchArguments()
 					await ReminderActivityContractChecks.runFromLaunchArguments()
+					await ICloudMirrorContractChecks.runFromLaunchArguments()
+					await ICloudStoreContractChecks.runFromLaunchArguments()
 					#endif
 				}
 		}

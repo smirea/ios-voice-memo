@@ -24,7 +24,12 @@ final class JournalStore {
 	private let rootURL: URL
 	private let recordingsURL: URL
 	private let configurationURL: URL
-	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
+	@ObservationIgnored private let iCloudDriveMirror: ICloudDriveMirror
+	private let mirrorSync: @Sendable ([JournalEntry], URL, AppConfiguration, Set<String>, Int) async -> ICloudMirrorResult
+	private let mirroringEnabled: Bool
+	@ObservationIgnored private var iCloudWorker: Task<Void, Never>?
+	@ObservationIgnored private var iCloudPending = false
+	@ObservationIgnored private var hasLoadedJournal = false
 	@ObservationIgnored private let reminderActivityManager: ReminderActivityManager
 	private let reminderResolver: @Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult
 	private let reminderSchedulingEnabled: Bool
@@ -65,6 +70,7 @@ final class JournalStore {
 	var processingIdleCheckpoint: (() async -> Void)?
 	var processingDeadlineOverride: TimeInterval?
 	var deletionIntentCheckpoint: (() async -> Void)?
+	var mirrorSnapshotCheckpoint: (() async -> Void)?
 	#endif
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
@@ -77,7 +83,15 @@ final class JournalStore {
 
 	init(storageRootURL: URL? = nil, processingServices: ProcessingServices? = nil,
 		reminderResolver: (@Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult)? = nil,
-		reminderActivityManager: ReminderActivityManager? = nil) {
+		reminderActivityManager: ReminderActivityManager? = nil,
+		mirrorSync: (@Sendable ([JournalEntry], URL, AppConfiguration, Set<String>, Int) async -> ICloudMirrorResult)? = nil) {
+		let mirror = ICloudDriveMirror()
+		iCloudDriveMirror = mirror
+		self.mirrorSync = mirrorSync ?? { entries, recordingsURL, configuration, deletedReferences, revision in
+			await mirror.sync(entries: entries, recordingsURL: recordingsURL, configuration: configuration,
+				deletedRecordingReferences: deletedReferences, revision: revision)
+		}
+		mirroringEnabled = storageRootURL == nil || mirrorSync != nil
 		self.reminderActivityManager = reminderActivityManager ?? ReminderActivityManager()
 		self.reminderResolver = reminderResolver ?? { await ReminderEngine.resolve(entries: $0, events: $1, now: $2) }
 		reminderSchedulingEnabled = storageRootURL == nil || reminderResolver != nil || reminderActivityManager != nil
@@ -149,8 +163,21 @@ final class JournalStore {
 		defer { isLoading = false }
 		do {
 			let loaded = try await repository.load()
+			var records: [UUID: JournalRecord] = [:]
+			var processing: [UUID: EntryProcessing] = [:]
+			var phases: [UUID: EntryProcessingPhase] = [:]
+			var deleted = Set<UUID>()
+			for record in loaded.records {
+				records[record.id] = record
+				processing[record.id] = record.processing
+				phases[record.id] = record.processing?.phase
+				if record.state == .deleted { deleted.insert(record.id) }
+			}
+			committedRecords = records
+			processingStates = processing
+			entryProcessingPhases = phases
+			deletedEntryIDs = deleted
 			entries = loaded.entries
-			for record in loaded.records { publish(record) }
 			let issues = loaded.issues
 			storageLoadMessage = issues.isEmpty ? nil : issues.joined(separator: "\n")
 			pendingICloudDeletionReferences.formUnion(loaded.deletionReferences)
@@ -162,12 +189,12 @@ final class JournalStore {
 			} else if usesExternalServices {
 				isConfigurationRestorePending = true
 			}
+			hasLoadedJournal = true
 			isLoading = false
 			kickProcessing()
-			if usesExternalServices {
-				if isConfigurationRestorePending { Task { await restoreConfigurationFromICloud() } }
-				else { scheduleICloudDriveMirror() }
-			}
+			requestReminderSchedule()
+			if isConfigurationRestorePending { Task { await restoreConfigurationFromICloud() } }
+			else { scheduleICloudDriveMirror() }
 		} catch {
 			storageLoadMessage = "The journal could not be opened. Original files were preserved. " + error.localizedDescription
 		}
@@ -324,6 +351,7 @@ final class JournalStore {
 	func resumeStaleProcessing(now: Date = .now) {
 		backgroundSuspended = false
 		updateServiceAdmission()
+		scheduleICloudDriveMirror(changed: false)
 	}
 
 	func beginCapturePriority(owner: UUID) async {
@@ -356,6 +384,7 @@ final class JournalStore {
 		await ServiceAdmission.model.setSuspended(suspended, revision: revision)
 		await ServiceAdmission.speech.setSuspended(suspended, revision: revision)
 		guard revision == admissionPolicyRevision else { return }
+		startICloudMirrorWorker()
 		if !processingSuspended {
 			kickProcessing()
 			requestReminderSchedule()
@@ -1034,31 +1063,45 @@ final class JournalStore {
 		}
 	}
 
-	private func scheduleICloudDriveMirror() {
-		guard !isDemoMode, usesExternalServices, !isLoading, !isConfigurationRestorePending else { return }
-		iCloudRevision += 1
-		let revision = iCloudRevision
-		let recordingsURL = recordingsURL
-		let configuration = AppConfiguration(
-			settings: settings,
-			locations: namedLocations,
-			elevenLabsAPIKey: elevenLabsAPIKey
-		)
-		let mirror = iCloudDriveMirror
-		let deletedRecordingReferences = pendingICloudDeletionReferences
-		Task {
-			let entries = await repository.committedEntries()
-			let completedDeletions = await mirror.sync(
-				entries: entries,
-				recordingsURL: recordingsURL,
-				configuration: configuration,
-				deletedRecordingReferences: deletedRecordingReferences,
-				revision: revision
-			)
-			pendingICloudDeletionReferences.subtract(completedDeletions)
-			savePendingICloudDeletions()
+	private var canMirror: Bool {
+		hasLoadedJournal && !isLoading && !isConfigurationRestorePending && !isCapturePriorityActive
+	}
+
+	private func scheduleICloudDriveMirror(changed: Bool = true) {
+		guard !isDemoMode, mirroringEnabled else { return }
+		if changed { iCloudRevision += 1 }
+		iCloudPending = true
+		startICloudMirrorWorker()
+	}
+
+	private func startICloudMirrorWorker() {
+		guard iCloudPending, canMirror, iCloudWorker == nil else { return }
+		iCloudWorker = Task {
+			defer { iCloudWorker = nil }
+			while iCloudPending, canMirror {
+				iCloudPending = false
+				let revision = iCloudRevision
+				let entries = await repository.committedEntries()
+				#if DEBUG
+				await mirrorSnapshotCheckpoint?()
+				#endif
+				guard revision == iCloudRevision, canMirror else {
+					iCloudPending = true
+					continue
+				}
+				let configuration = AppConfiguration(settings: settings, locations: namedLocations,
+					elevenLabsAPIKey: elevenLabsAPIKey)
+				let references = pendingICloudDeletionReferences
+				let result = await mirrorSync(entries, recordingsURL, configuration, references, revision)
+				pendingICloudDeletionReferences.subtract(result.completedDeletions.intersection(references))
+				savePendingICloudDeletions()
+			}
 		}
 	}
+
+	#if DEBUG
+	func waitForICloudMirrorForContract() async { await iCloudWorker?.value }
+	#endif
 
 	private func savePendingICloudDeletions() {
 		guard usesExternalServices else { return }
