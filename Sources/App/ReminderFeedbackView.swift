@@ -2,52 +2,51 @@ import SwiftUI
 
 struct ReminderFeedbackView: View {
 	@Environment(\.dismiss) private var dismiss
-	@Bindable var store: JournalStore
-	let entryID: UUID
+	@State private var session: ReminderFeedbackSession
 
-	@State private var recorder = AudioRecorder()
-	@State private var activeURL: URL?
-	@State private var capturePriorityOwner: UUID?
-	@State private var capturePriorityReleaseTask: Task<Void, Never>?
-	@State private var isSubmitting = false
-	@State private var errorMessage: String?
-
-	private var isVisualDemo: Bool {
-		ProcessInfo.processInfo.arguments.contains("-demo-reminder-feedback")
+	init(store: JournalStore, entryID: UUID) {
+		_session = State(initialValue: ReminderFeedbackSession(store: store, entryID: entryID))
 	}
 
 	var body: some View {
 		NavigationStack {
 			ScrollView {
-				VStack(spacing: 28) {
+				VStack(spacing: 24) {
 					Text("Say what was missed, what should change, or what should be removed.")
 						.font(.system(size: 17, weight: .medium))
 						.foregroundStyle(.secondary)
 						.multilineTextAlignment(.center)
-						.padding(.horizontal, 24)
 
-					WaveformView(levels: isVisualDemo ? demoLevels : recorder.levels)
-						.frame(height: 52)
-						.padding(.horizontal, 28)
-
-					Text((isVisualDemo ? 12 : recorder.duration).clockText)
-						.font(.system(size: 22, weight: .medium, design: .monospaced))
-						.monospacedDigit()
-
-					if let statusMessage = recorder.statusMessage {
-						Text(statusMessage)
-							.font(.footnote)
-							.foregroundStyle(.secondary)
-							.multilineTextAlignment(.center)
-							.padding(.horizontal, 24)
+					if let transcript = session.completedTranscription {
+						Text(transcript.transcript)
+							.font(.body)
+							.frame(maxWidth: .infinity, alignment: .leading)
+							.textSelection(.enabled)
+						if let warning = transcript.warning {
+							Text(warning).font(.footnote).foregroundStyle(.secondary)
+						}
+					} else {
+						WaveformView(levels: session.isVisualDemo ? demoLevels : session.recorder.levels)
+							.frame(height: 52)
+						Text(session.duration.clockText)
+							.font(.system(size: 22, weight: .medium, design: .monospaced))
+							.monospacedDigit()
 					}
 
-					if isSubmitting {
-						ProgressView("Updating reminders")
+					if session.isWorking {
+						ProgressView(session.statusMessage ?? "Processing feedback…")
 							.tint(AppStyle.accent)
 					} else {
-						Button(action: useFeedback) {
-							Label("Use feedback", systemImage: "checkmark")
+						if let status = session.statusMessage {
+							Text(status).font(.footnote).foregroundStyle(.secondary)
+								.multilineTextAlignment(.center)
+						}
+						if let error = session.errorMessage {
+							Text(error).font(.footnote).foregroundStyle(.secondary)
+								.multilineTextAlignment(.center)
+						}
+						Button(action: session.submit) {
+							Label(session.phase == .failed ? "Retry" : "Use feedback", systemImage: "checkmark")
 								.font(.system(size: 17, weight: .semibold))
 								.foregroundStyle(.white)
 								.frame(maxWidth: .infinity)
@@ -55,16 +54,19 @@ struct ReminderFeedbackView: View {
 								.background(AppStyle.accent, in: Capsule())
 						}
 						.buttonStyle(.plain)
-						.disabled(!isVisualDemo && (!recorder.hasRecording || recorder.duration < 0.4))
-						.padding(.horizontal, 24)
+						.disabled(!session.canSubmit)
+						if session.phase == .failed || session.phase == .stopped {
+							Button("Record again", action: session.recordAgain)
+								.tint(AppStyle.accent)
+						}
 					}
 
-					Text("The recording is transcribed for this correction, then deleted.")
+					Text("Audio stays available if submission fails. It is deleted after saving, Cancel, or Record again.")
 						.font(.footnote)
 						.foregroundStyle(.tertiary)
 						.multilineTextAlignment(.center)
-						.padding(.horizontal, 32)
 				}
+				.padding(.horizontal, 24)
 				.padding(.vertical, 20)
 			}
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -73,106 +75,19 @@ struct ReminderFeedbackView: View {
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
-					Button("Cancel") {
-						_ = recorder.cancel()
-						activeURL = nil
-						_ = releaseCapturePriority()
-						dismiss()
-					}
-					.disabled(isSubmitting)
+					Button("Cancel") { session.cancel(); dismiss() }
 				}
 			}
 		}
 		.preferredColorScheme(.dark)
 		.presentationBackground(AppStyle.background)
 		.presentationDetents([.medium, .large])
-		.interactiveDismissDisabled(isSubmitting)
-		.task {
-			guard !isVisualDemo else {
-				#if DEBUG
-				if ProcessInfo.processInfo.arguments.contains("-demo-audio-reset") {
-					recorder.showStoppedDemo(duration: 12)
-				}
-				#endif
-				return
-			}
-			await startRecording()
-		}
-		.onDisappear {
-			guard !isSubmitting else { return }
-			_ = recorder.cancel()
-			activeURL = nil
-			_ = releaseCapturePriority()
-		}
-		.onChange(of: recorder.state) { _, _ in
-			if case .stopped = recorder.state { _ = releaseCapturePriority() }
-		}
-		.alert("Couldn’t update reminders", isPresented: Binding(
-			get: { errorMessage != nil },
-			set: { if !$0 { errorMessage = nil } }
-		)) {
-			Button("Cancel", role: .cancel) {}
-			Button("Record again") {
-				Task { await startRecording() }
-			}
-		} message: {
-			Text(errorMessage ?? "")
-		}
-	}
-
-	private func startRecording() async {
-		guard activeURL == nil else { return }
-		let owner = UUID()
-		capturePriorityOwner = owner
-		let url = store.temporaryReminderFeedbackURL()
-		activeURL = url
-		await store.beginCapturePriority(owner: owner)
-		guard capturePriorityOwner == owner, !Task.isCancelled else {
-			if capturePriorityOwner == owner { capturePriorityOwner = nil; activeURL = nil }
-			await store.endCapturePriority(owner: owner)
-			return
-		}
-		do {
-			try await recorder.start(at: url)
-		} catch {
-			if capturePriorityOwner == owner { capturePriorityOwner = nil }
-			await store.endCapturePriority(owner: owner)
-			guard activeURL == url else { return }
-			activeURL = nil
-			guard !Task.isCancelled else { return }
-			errorMessage = error.localizedDescription
-		}
-	}
-
-	private func useFeedback() {
-		guard !isVisualDemo else { return }
-		guard let finished = recorder.finish() else { return }
-		let release = releaseCapturePriority()
-		activeURL = nil
-		isSubmitting = true
-		Task {
-			await release?.value
-			do {
-				try await store.applyReminderFeedback(entryID: entryID, audioURL: finished.url)
-				dismiss()
-			} catch {
-				errorMessage = error.localizedDescription
-				isSubmitting = false
-			}
-		}
-	}
-
-	private func releaseCapturePriority() -> Task<Void, Never>? {
-		guard let owner = capturePriorityOwner else { return capturePriorityReleaseTask }
-		capturePriorityOwner = nil
-		let task = Task { await store.endCapturePriority(owner: owner) }
-		capturePriorityReleaseTask = task
-		return task
+		.task { session.start() }
+		.onDisappear { session.cancel() }
+		.onChange(of: session.hasCommitted) { _, committed in if committed { dismiss() } }
 	}
 
 	private var demoLevels: [Double] {
-		(0..<46).map { index in
-			0.18 + abs(sin(Double(index) * 0.63)) * 0.68
-		}
+		(0..<46).map { 0.18 + abs(sin(Double($0) * 0.63)) * 0.68 }
 	}
 }

@@ -483,7 +483,19 @@ actor JournalRepository {
 		return records[record.id]!
 	}
 
-	func apply(_ edit: JournalEdit, to id: UUID) throws -> JournalRecord {
+	func appendReminderFeedback(_ feedback: ReminderFeedback, to id: UUID) throws -> JournalRecord {
+		try Task.checkCancellation()
+		guard let record = records[id], record.state == .saved, let entry = record.entry else {
+			throw RepositoryError.unavailableRecord
+		}
+		if let existing = entry.reminderFeedback.first(where: { $0.id == feedback.id }) {
+			guard existing == feedback else { throw RepositoryError.feedbackConflict }
+			return record
+		}
+		return try apply(.feedback(feedback), to: id, checkingCancellation: true)
+	}
+
+	func apply(_ edit: JournalEdit, to id: UUID, checkingCancellation: Bool = false) throws -> JournalRecord {
 		guard var record = records[id], record.state == .saved, var entry = record.entry else {
 			throw RepositoryError.unavailableRecord
 		}
@@ -504,7 +516,7 @@ actor JournalRepository {
 			if record.processing?.status == .running { record.processing?.status = .queued }
 		case .location: break
 		}
-		try write(record)
+		try write(record, checkingCancellation: checkingCancellation)
 		return records[id]!
 	}
 
@@ -725,7 +737,7 @@ actor JournalRepository {
 		return record.ownedAudioFilenames
 	}
 
-	private func write(_ value: JournalRecord) throws {
+	private func write(_ value: JournalRecord, checkingCancellation: Bool = false) throws {
 		var record = value
 		let previous = records[record.id]
 		record.revision = (previous?.revision ?? record.revision) + 1
@@ -742,6 +754,7 @@ actor JournalRepository {
 		guard record.ownedAudioFilenames.allSatisfy(Self.isFilename),
 			record.entry?.audioFilename.map(Self.isFilename) ?? true else { throw RepositoryError.invalidRecord }
 		let data = try JSONEncoder().encode(record)
+		if checkingCancellation { try Task.checkCancellation() }
 		try data.write(to: recordsURL.appendingPathComponent("\(record.id.uuidString).json"),
 			options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
 		records[record.id] = record
@@ -804,9 +817,10 @@ private struct LegacyPendingRecording: Decodable {
 }
 
 enum RepositoryError: LocalizedError {
-	case invalidRecord, invalidAudio, unavailableRecord, notLoaded, staleProcessing, unsavedChanges
+	case invalidRecord, invalidAudio, unavailableRecord, notLoaded, staleProcessing, unsavedChanges, feedbackConflict
 	var errorDescription: String? {
 		switch self {
+		case .feedbackConflict: "This correction was already saved with different content. Record a new correction."
 		case .staleProcessing: "This processing attempt is no longer current."
 		case .unsavedChanges: "Your changes could not be saved. Use Try Again to save them."
 		case .invalidRecord: "The note metadata could not be read safely. Original files were preserved."

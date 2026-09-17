@@ -24,6 +24,7 @@ enum ReminderSchedulingContractChecks {
 			try await resumedScheduling()
 			print("REMINDER SCHEDULING CHECK: disabledActivities"); fflush(nil)
 			try await disabledActivities()
+			try await coalescedScheduling()
 			print("REMINDER SCHEDULING CONTRACT: stale source, removal, deletion, settings, calendar replacement, pin-write failure, and isolated note writes passed")
 			fflush(nil)
 		} catch { fatalError("REMINDER SCHEDULING CONTRACT: \(error)") }
@@ -65,8 +66,12 @@ enum ReminderSchedulingContractChecks {
 				replacement.endDate = event.endDate.addingTimeInterval(86_400)
 				store.calendarSync.setEventsForContract([replacement])
 			}
-			await store.refreshReminderSchedule()
+			let refresh = Task { await store.refreshReminderSchedule() }
+			await Task.yield()
+			await store.waitForReminderRetirementForContract()
+			try expect(await probe.calls == 1, "Obsolete uncooperative resolution must retain ownership until it exits")
 			await probe.release()
+			await refresh.value
 			try await wait { await probe.finished }
 			try await Task.sleep(for: .milliseconds(20))
 			try expect(!activities.items.values.contains { $0.attributes.eventKey == event.focusKey },
@@ -260,11 +265,58 @@ enum ReminderSchedulingContractChecks {
 		var settings = store.settings
 		settings.eventReminderLiveActivitiesEnabled = false
 		store.updateSettings(settings)
-		try await wait { await probe.calls == 2 }
+		await store.waitForReminderRetirementForContract()
+		try expect(await probe.calls == 1, "Disabling activities must not overlap an uncooperative resolver")
 		try expect(activities.items.isEmpty, "Disabling Live Activities must end delivery before awaiting held matching")
 		await probe.release()
 		await store.refreshReminderSchedule()
 		try expect(activities.items.isEmpty, "Late matching must not recreate disabled Live Activities")
+	}
+
+	private static func coalescedScheduling() async throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let (entry, event) = try await seed(root: root)
+		let activities = Activities(), probe = DrainProbe()
+		let store = JournalStore(storageRootURL: root,
+			reminderResolver: { await probe.resolve($0, $1, $2) }, reminderActivityManager: activities.manager())
+		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
+		store.updateSetting(\.calendarSyncEnabled, true)
+		store.calendarSync.setEventsForContract([event])
+		try await wait { await probe.calls == 1 }
+		store.updateSetting(\.hapticsEnabled, false)
+		store.updateSetting(\.showTranscripts, false)
+		await store.waitForConfigurationWritesForContract()
+		await probe.release()
+		try await wait { activities.items.count == 1 }
+		let initialCalls = await probe.calls, initialCanceled = await probe.canceledCalls
+		try expect(initialCalls == 1 && initialCanceled == 0,
+			"Appearance and haptic edits must not cancel or replace a held semantic pass")
+		await probe.holdNext()
+		let refresh = Task { await store.refreshReminderSchedule() }
+		try await wait { await probe.calls == 2 }
+		let bursts = (0..<20).map { _ in Task { await store.refreshReminderSchedule() } }
+		for _ in 0..<20 { await Task.yield() }
+		store.removeReminder(entryID: entry.id, reminderID: entry.reminders[0].id)
+		await store.waitForPendingWrites()
+		await store.waitForReminderRetirementForContract()
+		try expect(activities.items.isEmpty, "Authoritative source removal must retire delivery before held inference exits")
+		let owner = UUID()
+		await store.beginCapturePriority(owner: owner)
+		try expect(store.isCapturePriorityActive && activities.items.isEmpty, "Capture admission must not await obsolete optional inference")
+		let heldCalls = await probe.calls, heldMaximum = await probe.maximumActive
+		try expect(heldCalls == 2 && heldMaximum == 1,
+			"Burst refreshes must coalesce while the actual older resolver remains owned")
+		await store.endCapturePriority(owner: owner)
+		await probe.release()
+		await refresh.value
+		for task in bursts { await task.value }
+		let finalCalls = await probe.calls, finalMaximum = await probe.maximumActive
+		try expect(finalCalls == 3 && finalMaximum == 1,
+			"Only the latest pending schedule may run after old cleanup, with no concurrent replacement resolver")
+		try expect(activities.items.isEmpty && store.entry(id: entry.id)?.reminders.isEmpty == true,
+			"Late obsolete results must not pin or present a removed rule")
 	}
 
 	private static func services(_ probe: ReminderStageProbe) -> ProcessingServices {
@@ -381,10 +433,12 @@ private actor ReminderStageProbe {
 }
 
 private actor ResolverProbe {
+	private(set) var calls = 0
 	private(set) var started = false
 	private(set) var finished = false
 	private var continuation: CheckedContinuation<Void, Never>?
 	func resolve(_ entries: [JournalEntry], _ events: [JournalCalendarEvent], _ now: Date) async -> ReminderResolutionResult {
+		calls += 1
 		if !started {
 			started = true
 			await withCheckedContinuation { continuation = $0 }
@@ -396,4 +450,24 @@ private actor ResolverProbe {
 	}
 	func release() { continuation?.resume(); continuation = nil }
 }
+private actor DrainProbe {
+	private(set) var calls = 0
+	private(set) var canceledCalls = 0
+	private(set) var maximumActive = 0
+	private var active = 0
+	private var held = true
+	private var continuation: CheckedContinuation<Void, Never>?
+	func holdNext() { held = true }
+	func resolve(_ entries: [JournalEntry], _ events: [JournalCalendarEvent], _ now: Date) async -> ReminderResolutionResult {
+		calls += 1; active += 1; maximumActive = max(maximumActive, active)
+		defer { active -= 1 }
+		if held { await withCheckedContinuation { continuation = $0 } }
+		if Task.isCancelled { canceledCalls += 1 }
+		return await Task.detached {
+			await ReminderEngine.resolve(entries: entries, events: events, now: now, modelIsAvailable: { false })
+		}.value
+	}
+	func release() { held = false; continuation?.resume(); continuation = nil }
+}
+
 #endif

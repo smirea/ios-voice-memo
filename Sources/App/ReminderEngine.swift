@@ -215,10 +215,12 @@ enum ReminderEngine {
 		events: [JournalCalendarEvent],
 		now: Date = .now,
 		modelIsAvailable: @Sendable () -> Bool = { SystemLanguageModel.default.availability == .available },
-		services: ReminderModelServices = .live
+		services: ReminderModelServices = .live,
+		cache: ReminderMatchCache? = nil,
+		matchingContext: ReminderMatchContext = ReminderMatchContext()
 	) async -> ReminderResolutionResult {
 		do {
-			return try await resolvedReminders(entries: entries, events: events, now: now, modelIsAvailable: modelIsAvailable, services: services)
+			return try await resolvedReminders(entries: entries, events: events, now: now, modelIsAvailable: modelIsAvailable, services: services, cache: cache, matchingContext: matchingContext)
 		} catch {
 			return ReminderResolutionResult(occurrences: [], examplesByReminderID: [:],
 				resolvedOccurrencesByReminderID: [:], outcome: .failure(error,
@@ -231,8 +233,12 @@ enum ReminderEngine {
 		events: [JournalCalendarEvent],
 		now: Date,
 		modelIsAvailable: @Sendable () -> Bool,
-		services: ReminderModelServices
+		services: ReminderModelServices,
+		cache: ReminderMatchCache?,
+		matchingContext: ReminderMatchContext
 	) async throws -> ReminderResolutionResult {
+		try Task.checkCancellation()
+		await cache?.retain(entries: entries, events: events, now: now, context: matchingContext)
 		try Task.checkCancellation()
 		var occurrences: [EventReminderOccurrence] = []
 		var examplesByReminderID: [UUID: [ReminderMatchExample]] = [:]
@@ -284,8 +290,12 @@ enum ReminderEngine {
 						satisfiesConstraints(selector: selector, event: $0)
 							&& (exactNamedTargetMatch(selector: selector, event: $0) || hasSemanticAnchor(selector: selector, event: $0))
 					}
-					let exampleCandidates = uniqueEvents.filter { $0.endDate < now || reminder.allows($0, at: now) }
-					let result = try await match(selector: selector, candidates: exampleCandidates, modelIsAvailable: modelIsAvailable, services: services)
+					let result = try await match(selector: selector, candidates: eligibleOccurrences,
+						modelIsAvailable: modelIsAvailable, services: services, cache: cache, context: matchingContext,
+						stopAfterFirstMatch: reminder.occurrencePolicy == .nextMatch)
+					let historical = uniqueEvents.filter { $0.endDate < now }
+					let examples = try await match(selector: selector, candidates: historical,
+						modelIsAvailable: { false }, services: services, cache: cache, context: matchingContext, allowModel: false)
 					let decisions = result.decisions
 					if !result.outcome.isComplete {
 						incompleteReminderIDs.insert(reminder.id)
@@ -295,9 +305,9 @@ enum ReminderEngine {
 						decisions[$0.focusKey]?.matches == true
 					}
 					examplesByReminderID[reminder.id] = matchExamples(
-						from: exampleCandidates,
+						from: historical + eligibleOccurrences,
 						selector: selector,
-						decisions: decisions
+						decisions: examples.decisions.merging(decisions) { _, latest in latest }
 					)
 				}
 
@@ -1112,42 +1122,38 @@ enum ReminderEngine {
 		selector: FuzzyEventSelector,
 		candidates: [JournalCalendarEvent],
 		modelIsAvailable: @Sendable () -> Bool,
-		services: ReminderModelServices
+		services: ReminderModelServices,
+		cache: ReminderMatchCache?,
+		context: ReminderMatchContext,
+		stopAfterFirstMatch: Bool = false,
+		allowModel: Bool = true
 	) async throws -> (decisions: [String: EventMatchAssessment], outcome: ModelProcessingOutcome) {
-		try Task.checkCancellation()
-		guard !candidates.isEmpty else { return ([:], .complete) }
-		var decisions = Dictionary(uniqueKeysWithValues: candidates.map {
-			(
-				$0.focusKey,
-				EventMatchAssessment(
-					matches: false,
-					reason: selector.timeBucket.contains($0.startDate)
-						? "The event was not clearly matched."
-						: "The event is outside the selected time of day."
-				)
-			)
-		})
-		let eligibleCandidates = candidates.filter { satisfiesConstraints(selector: selector, event: $0) }
-		let exactMatches = eligibleCandidates.filter {
-			exactNamedTargetMatch(selector: selector, event: $0)
-		}
-		for event in exactMatches {
-			decisions[event.focusKey] = EventMatchAssessment(
-				matches: true,
-				reason: "The event title matches a named target."
-			)
-		}
-
-		let exactMatchKeys = Set(exactMatches.map(\.focusKey))
-		let modelCandidates = eligibleCandidates
-			.filter { !exactMatchKeys.contains($0.focusKey) }
-			.filter { hasSemanticAnchor(selector: selector, event: $0) }
-		guard modelCandidates.isEmpty || modelIsAvailable() else {
-			for event in modelCandidates { decisions.removeValue(forKey: event.focusKey) }
-			return (decisions, .unavailable)
-		}
-		for (index, event) in modelCandidates.enumerated() {
+		var decisions: [String: EventMatchAssessment] = [:]
+		var outcome = ModelProcessingOutcome.complete
+		for event in candidates {
 			try Task.checkCancellation()
+			if !satisfiesConstraints(selector: selector, event: event) {
+				decisions[event.focusKey] = EventMatchAssessment(matches: false, reason: "The event is outside the selected time or location.")
+				continue
+			}
+			if exactNamedTargetMatch(selector: selector, event: event) {
+				decisions[event.focusKey] = EventMatchAssessment(matches: true, reason: "The event title matches a named target.")
+				if stopAfterFirstMatch { break }
+				continue
+			}
+			guard hasSemanticAnchor(selector: selector, event: event) else {
+				decisions[event.focusKey] = EventMatchAssessment(matches: false, reason: "The event was not clearly matched.")
+				continue
+			}
+			let key = ReminderMatchKey(selector: selector, event: event, context: context)
+			if let cached = await cache?.value(for: key) {
+				try Task.checkCancellation()
+				decisions[event.focusKey] = cached
+				if stopAfterFirstMatch && cached.matches { break }
+				continue
+			}
+			guard allowModel else { continue }
+			guard modelIsAvailable() else { outcome = .unavailable; continue }
 			let instructions = """
 			Classify one calendar event against the supplied semantic selector. A match must clearly satisfy the event type and every stated constraint. Prefer false when uncertain. Title, notes, location, and time are evidence; do not invent missing facts. A shared venue or one related word is not enough to establish the event type.
 
@@ -1177,19 +1183,19 @@ enum ReminderEngine {
 					try await budget.requireFits(prompt)
 					return try await services.match(instructions, prompt, budget.outputTokens)
 				}
-				decisions[event.focusKey] = EventMatchAssessment(
-					matches: generated.matches,
-					reason: clean(generated.reason)
-				)
+				try Task.checkCancellation()
+				let assessment = EventMatchAssessment(matches: generated.matches, reason: clean(generated.reason))
+				await cache?.insert(assessment, for: key)
+				try Task.checkCancellation()
+				decisions[event.focusKey] = assessment
+				if stopAfterFirstMatch && assessment.matches { break }
 			} catch {
-				let outcome = ModelProcessingOutcome.failure(error,
+				outcome = ModelProcessingOutcome.failure(error,
 					message: "The on-device model could not finish matching reminders. Try again.")
 				if outcome == .cancelled { throw CancellationError() }
-				for pending in modelCandidates[index...] { decisions.removeValue(forKey: pending.focusKey) }
-				return (decisions, outcome)
 			}
 		}
-		return (decisions, .complete)
+		return (decisions, outcome)
 	}
 
 	private static func satisfiesConstraints(selector: FuzzyEventSelector, event: JournalCalendarEvent) -> Bool {
@@ -1304,7 +1310,7 @@ enum ReminderEngine {
 	}
 }
 
-private struct EventMatchAssessment {
+struct EventMatchAssessment: Sendable {
 	var matches: Bool
 	var reason: String
 }

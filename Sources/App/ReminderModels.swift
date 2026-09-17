@@ -178,11 +178,12 @@ struct ReminderFeedback: Codable, Hashable, Sendable {
 	var focusedReminderID: UUID?
 
 	init(
+		id: UUID = UUID(),
 		kind: ReminderFeedbackKind,
 		text: String,
 		focusedReminderID: UUID? = nil
 	) {
-		id = UUID()
+		self.id = id
 		self.kind = kind
 		self.text = text
 		self.focusedReminderID = focusedReminderID

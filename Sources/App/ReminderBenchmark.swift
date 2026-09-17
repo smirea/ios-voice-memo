@@ -3,10 +3,12 @@ import FoundationModels
 import Darwin
 
 struct ReminderBenchmarkProgress {
-	var completed: Int
-	var total: Int
+	var run: ReminderBenchmarkRun
 	var group: ReminderBenchmarkGroup
 	var result: ReminderBenchmarkCaseResult?
+	var completed: Int { run.assessed }
+	var attempted: Int { run.attempted }
+	var total: Int { run.total }
 }
 
 struct ReminderBenchmarkCaseResult: Identifiable {
@@ -22,9 +24,12 @@ struct ReminderBenchmarkCaseResult: Identifiable {
 	var generated: [String]
 	var issues: [String]
 	var duration: TimeInterval
+	var outcome: ModelProcessingOutcome = .complete
+	var isAssessed: Bool { outcome.isComplete }
 	var id: String { "\(groupID)|\(name)" }
 
 	var consoleReport: String {
+		guard isAssessed else { return "NOT ASSESSED \(name): \(executionMessage)" }
 		let output = generated.isEmpty ? "none" : generated.joined(separator: " | ")
 		let issueText = issues.isEmpty ? "none" : issues.joined(separator: "; ")
 		return """
@@ -35,6 +40,20 @@ struct ReminderBenchmarkCaseResult: Identifiable {
 		  issues: \(issueText)
 		"""
 	}
+
+	var executionMessage: String {
+		switch outcome {
+		case .complete, .skipped: return passed ? "Pass" : "Fail"
+		case .cancelled: return "Cancelled before assessment"
+		case .unavailable: return "On-device model unavailable"
+		case .failed(let message): return message
+		}
+	}
+
+	static func notAssessed(groupID: String, name: String, outcome: ModelProcessingOutcome, duration: TimeInterval) -> Self {
+		Self(groupID: groupID, name: name, passed: false, expectedCount: 0, actualCount: 0, matchedCount: 0,
+			fieldChecks: 0, fieldPasses: 0, groundedCount: 0, generated: [], issues: [], duration: duration, outcome: outcome)
+	}
 }
 
 struct ReminderBenchmarkCheckResult: Identifiable {
@@ -43,12 +62,39 @@ struct ReminderBenchmarkCheckResult: Identifiable {
 	var passed: Bool
 }
 
+enum ReminderBenchmarkStatus: String {
+	case complete, cancelled, unavailable, failed
+	var title: String { rawValue.capitalized }
+}
+
 struct ReminderBenchmarkRun {
 	var results: [ReminderBenchmarkCaseResult]
 	var checks: [ReminderBenchmarkCheckResult]
+	var status: ReminderBenchmarkStatus
+	var total: Int
+	var stopReason: String? = nil
+	var assessed: Int { results.filter(\.isAssessed).count }
+	var attempted = 0
 
 	var summary: ReminderBenchmarkSummary {
 		ReminderBenchmarkSummary(results: results, checks: checks)
+	}
+}
+
+@MainActor
+struct ReminderBenchmarkServices {
+	var isAvailable: () -> Bool
+	var parse: (JournalEntry) async -> ReminderParsingResult
+	var resolve: (JournalEntry, [JournalCalendarEvent]) async -> ReminderResolutionResult
+
+	static var live: Self {
+		Self(isAvailable: { ReminderBenchmark.canRun }, parse: { entry in
+			await ReminderEngine.parse(transcript: entry.transcript, sourceEvent: entry.calendarEvent,
+				createdAt: entry.createdAt, currentReminders: entry.reminders, feedback: entry.reminderFeedback)
+		}, resolve: { entry, events in
+			await ReminderEngine.resolve(entries: [entry], events: events,
+				now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60))
+		})
 	}
 }
 
@@ -67,6 +113,7 @@ struct ReminderBenchmarkSummary {
 	var checks: Int
 
 	init(results: [ReminderBenchmarkCaseResult], checks: [ReminderBenchmarkCheckResult]) {
+		let results = results.filter(\.isAssessed)
 		let parsingResults = results.filter { $0.groupID != "resolution" }
 		casePasses = results.filter(\.passed).count
 		cases = results.count
@@ -82,30 +129,34 @@ struct ReminderBenchmarkSummary {
 		self.checks = checks.count
 	}
 
-	var cuePrecision: Double {
-		actualCues == 0 ? 1 : Double(matchedCues) / Double(actualCues)
+	var cuePrecision: Double? {
+		actualCues == 0 ? nil : Double(matchedCues) / Double(actualCues)
 	}
 
-	var cueRecall: Double {
-		expectedCues == 0 ? 1 : Double(matchedCues) / Double(expectedCues)
+	var cueRecall: Double? {
+		expectedCues == 0 ? nil : Double(matchedCues) / Double(expectedCues)
 	}
 
-	var fieldAccuracy: Double {
-		fieldChecks == 0 ? 1 : Double(fieldPasses) / Double(fieldChecks)
+	var fieldAccuracy: Double? {
+		fieldChecks == 0 ? nil : Double(fieldPasses) / Double(fieldChecks)
 	}
 
-	var evidenceGrounding: Double {
-		actualCues == 0 ? 1 : Double(groundedCues) / Double(actualCues)
+	var evidenceGrounding: Double? {
+		actualCues == 0 ? nil : Double(groundedCues) / Double(actualCues)
+	}
+
+	static func percentage(_ value: Double?) -> String {
+		value?.formatted(.percent.precision(.fractionLength(1))) ?? "Not assessed"
 	}
 
 	var consoleReport: String {
 		"""
-		SUMMARY
+		SUMMARY (assessed cases only)
 		  exact cases: \(casePasses)/\(cases)
-		  cue precision: \(cuePrecision.formatted(.percent.precision(.fractionLength(1))))
-		  cue recall: \(cueRecall.formatted(.percent.precision(.fractionLength(1))))
-		  schema field accuracy: \(fieldAccuracy.formatted(.percent.precision(.fractionLength(1))))
-		  exact evidence grounding: \(evidenceGrounding.formatted(.percent.precision(.fractionLength(1))))
+		  cue precision: \(Self.percentage(cuePrecision))
+		  cue recall: \(Self.percentage(cueRecall))
+		  schema field accuracy: \(Self.percentage(fieldAccuracy))
+		  exact evidence grounding: \(Self.percentage(evidenceGrounding))
 		  fuzzy resolution: \(resolutionPasses)/\(resolutionCases)
 		  deterministic checks: \(checkPasses)/\(checks)
 		"""
@@ -129,37 +180,43 @@ enum ReminderBenchmark {
 
 	static func run(
 		groups: [ReminderBenchmarkGroup] = ReminderBenchmarkCorpus.groups,
+		services: ReminderBenchmarkServices = .live,
 		progress: (ReminderBenchmarkProgress) -> Void = { _ in }
 	) async -> ReminderBenchmarkRun {
 		let total = groups.reduce(0) { $0 + $1.cases.count }
-		var completed = 0
-		var results: [ReminderBenchmarkCaseResult] = []
-		let checks = await deterministicChecks()
-
+		var run = ReminderBenchmarkRun(results: [], checks: [], status: .complete, total: total)
+		run.checks = await deterministicChecks()
+		guard !Task.isCancelled else { run.status = .cancelled; return run }
+		guard total == 0 || services.isAvailable() else {
+			run.status = .unavailable
+			run.stopReason = "The on-device model is unavailable. No model cases were assessed."
+			return run
+		}
 		for group in groups {
-			progress(ReminderBenchmarkProgress(
-				completed: completed,
-				total: total,
-				group: group,
-				result: nil
-			))
+			guard !Task.isCancelled else { run.status = .cancelled; return run }
+			progress(ReminderBenchmarkProgress(run: run, group: group, result: nil))
 			for test in group.cases {
-				let result = await run(test, groupID: group.id)
-				results.append(result)
-				completed += 1
-				progress(ReminderBenchmarkProgress(
-					completed: completed,
-					total: total,
-					group: group,
-					result: result
-				))
+				guard !Task.isCancelled else { run.status = .cancelled; return run }
+				run.attempted += 1
+				progress(ReminderBenchmarkProgress(run: run, group: group, result: nil))
+				var result = await runCase(test, groupID: group.id, services: services)
+				if Task.isCancelled {
+					result = .notAssessed(groupID: group.id, name: test.name, outcome: .cancelled, duration: result.duration)
+				}
+				run.results.append(result)
+				progress(ReminderBenchmarkProgress(run: run, group: group, result: result))
+				if !result.isAssessed {
+					switch result.outcome {
+					case .cancelled: run.status = .cancelled
+					case .unavailable: run.status = .unavailable
+					default: run.status = .failed
+					}
+					run.stopReason = result.executionMessage
+					return run
+				}
 			}
 		}
-
-		return ReminderBenchmarkRun(
-			results: results,
-			checks: checks
-		)
+		return run
 	}
 
 	static func runFromLaunchArguments() async {
@@ -185,16 +242,20 @@ enum ReminderBenchmark {
 		print("REMINDER_BENCHMARK_BEGIN")
 		print(modelStatus)
 		print("\(groups.reduce(0) { $0 + $1.cases.count }) model-backed cases in \(groups.count) groups")
+		var printedGroup: String?
 		let run = await run(groups: groups) { progress in
 			if let result = progress.result {
 				print(result.consoleReport)
-			} else {
+			} else if printedGroup != progress.group.id {
+				printedGroup = progress.group.id
 				print("\nLEVEL \(progress.group.level) · \(progress.group.title)")
 			}
 		}
 		for check in run.checks {
 			print("\(check.passed ? "PASS" : "FAIL") Contract · \(check.name)")
 		}
+		print("REMINDER_BENCHMARK_STATUS \(run.status.rawValue) assessed=\(run.assessed) attempted=\(run.attempted) total=\(run.total)")
+		if let reason = run.stopReason { print("STOP_REASON \(reason)") }
 		print(run.summary.consoleReport)
 		print("REMINDER_BENCHMARK_END")
 		fflush(stdout)
@@ -207,20 +268,21 @@ enum ReminderBenchmark {
 		return arguments[index + 1]
 	}
 
-	private static func run(
+	private static func runCase(
 		_ test: ReminderBenchmarkCase,
-		groupID: String
+		groupID: String,
+		services: ReminderBenchmarkServices
 	) async -> ReminderBenchmarkCaseResult {
 		let startedAt = Date()
 		switch test {
 		case let .parsing(test):
 			let entry = JournalEntry(createdAt: ReminderBenchmarkCorpus.createdAt, duration: 60,
 				transcript: test.transcript, headline: test.name, calendarEvent: test.sourceEvent)
-			let parsed = await ReminderEngine.parse(
-				transcript: test.transcript,
-				sourceEvent: test.sourceEvent,
-				createdAt: ReminderBenchmarkCorpus.createdAt
-			)
+			let parsed = await services.parse(entry)
+			guard parsed.outcome.isComplete, !Task.isCancelled else {
+				return .notAssessed(groupID: groupID, name: test.name, outcome: Task.isCancelled ? .cancelled : parsed.outcome,
+					duration: Date().timeIntervalSince(startedAt))
+			}
 			return assess(
 				groupID: groupID,
 				name: test.name,
@@ -233,13 +295,11 @@ enum ReminderBenchmark {
 			let entry = JournalEntry(createdAt: ReminderBenchmarkCorpus.createdAt, duration: 60,
 				transcript: test.transcript, headline: test.name, calendarEvent: test.sourceEvent,
 				reminders: test.current, reminderFeedback: test.feedback)
-			let parsed = await ReminderEngine.parse(
-				transcript: test.transcript,
-				sourceEvent: test.sourceEvent,
-				createdAt: ReminderBenchmarkCorpus.createdAt,
-				currentReminders: test.current,
-				feedback: test.feedback
-			)
+			let parsed = await services.parse(entry)
+			guard parsed.outcome.isComplete, !Task.isCancelled else {
+				return .notAssessed(groupID: groupID, name: test.name, outcome: Task.isCancelled ? .cancelled : parsed.outcome,
+					duration: Date().timeIntervalSince(startedAt))
+			}
 			let evidenceCorpus = ([test.transcript] + test.feedback.map(\.text))
 				.joined(separator: "\n")
 			return assess(
@@ -259,11 +319,11 @@ enum ReminderBenchmark {
 				calendarEvent: test.sourceEvent,
 				reminders: [test.rule]
 			)
-			let resolved = await ReminderEngine.resolve(
-				entries: [entry],
-				events: test.events,
-				now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60)
-			)
+			let resolved = await services.resolve(entry, test.events)
+			guard resolved.outcome.isComplete, !Task.isCancelled else {
+				return .notAssessed(groupID: groupID, name: test.name, outcome: Task.isCancelled ? .cancelled : resolved.outcome,
+					duration: Date().timeIntervalSince(startedAt))
+			}
 			let actual = Set(resolved.occurrences.map(\.event.id))
 			let passed = actual == test.expectedEventIDs
 			let issues = passed
@@ -436,6 +496,7 @@ enum ReminderBenchmark {
 	}
 
 	private static func deterministicChecks() async -> [ReminderBenchmarkCheckResult] {
+		guard !Task.isCancelled else { return [] }
 		let source = JournalCalendarEvent(
 			id: "contract-source",
 			externalIdentifier: "contract-series",
@@ -513,6 +574,7 @@ enum ReminderBenchmark {
 			events: [first, second],
 			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60)
 		)
+		guard !Task.isCancelled, initial.outcome != .cancelled else { return checks }
 		checks.append(ReminderBenchmarkCheckResult(
 			name: "next match pins first occurrence",
 			passed: initial.occurrences.map(\.event.id) == [first.id]
@@ -526,6 +588,7 @@ enum ReminderBenchmark {
 			events: [first, second],
 			now: first.endDate.addingTimeInterval(1)
 		)
+		guard !Task.isCancelled, retired.outcome != .cancelled else { return checks }
 		checks.append(ReminderBenchmarkCheckResult(
 			name: "next match retires instead of drifting",
 			passed: retired.occurrences.isEmpty
@@ -537,6 +600,7 @@ enum ReminderBenchmark {
 			events: [first, second],
 			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60)
 		)
+		guard !Task.isCancelled, repeated.outcome != .cancelled else { return checks }
 		checks.append(ReminderBenchmarkCheckResult(
 			name: "every match materializes all occurrences",
 			passed: repeated.occurrences.map(\.event.id) == [first.id, second.id]
@@ -547,6 +611,7 @@ enum ReminderBenchmark {
 			events: [source, first],
 			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60)
 		)
+		guard !Task.isCancelled, upcomingSource.outcome != .cancelled else { return checks }
 		checks.append(ReminderBenchmarkCheckResult(
 			name: "upcoming source occurrence remains eligible",
 			passed: upcomingSource.occurrences.map(\.event.id) == [source.id]
@@ -584,6 +649,7 @@ enum ReminderBenchmark {
 			now: ReminderBenchmarkCorpus.createdAt.addingTimeInterval(60),
 			modelIsAvailable: { false }
 		)
+		guard !Task.isCancelled, namedResolution.outcome != .cancelled else { return checks }
 		checks.append(ReminderBenchmarkCheckResult(
 			name: "named fuzzy targets resolve without a model call",
 			passed: namedResolution.occurrences.map(\.event.id)

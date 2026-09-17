@@ -142,7 +142,11 @@ A saved occurrence combines its calendar and series identity with EventKit’s o
 
 Original dates remain absolute instants. Floating and all-day events whose date representation changes with the device time zone can become unavailable rather than matching a neighboring day. The bounded EventKit detail lookup remains synchronous on its native owning context; bounded query size is not a guarantee of platform latency.
 
-Fuzzy evaluation receives only the rule and one supplied candidate event with its title, calendar, start, end, location, and notes. Future occurrences outside the validity window, time constraints, and explicit venue constraints are filtered before the model. Ended historical events remain available as matching examples, but cannot become scheduled occurrences. An out-of-window pin is retained without scheduling a substitute. One candidate per two-value decision avoids the reference mixing observed when the on-device model classified batches.
+Fuzzy evaluation receives only the rule and one supplied candidate event with its title, calendar, start, end, location, and notes. Future occurrences outside the validity window, time constraints, and explicit venue constraints are filtered before the model. Ended historical events can appear as examples using deterministic or previously completed decisions; they do not trigger optional model work or block a safe future match. An out-of-window pin is retained without scheduling a substitute. One candidate per two-value decision avoids the reference mixing observed when the on-device model classified batches.
+
+Eligible one-time candidates are considered in order: a proven earliest match may be pinned when no earlier eligible candidate is unknown. Later unneeded candidates and unavailable historical examples do not block that pin; an unresolved earlier candidate still does. Every-match rules keep independently proven eligible matches while reporting incomplete eligible matching.
+
+One store-owned scheduling worker coalesces current intent, while obsolete presentation retirement can proceed independently of slow optional inference. A bounded in-memory cache retains up to 512 completed native yes/no decisions for current selector/event inputs. Exact matching inputs, original/current event identity, and model/prompt/environment context participate in its key; derived examples do not. Changed or removed inputs are pruned, and canceled, failed, unavailable, or invalid responses are never cached as negative decisions. Deterministic eligibility, expiration, consumption, and presentation policy are reevaluated on every refresh. Benchmarks do not share this cache.
 
 Morning, afternoon, and evening are app-defined local-time buckets. The model chooses a named bucket; it does not generate arbitrary clock ranges.
 
@@ -152,11 +156,13 @@ The source note shows reminders immediately below the summary with no section he
 
 Removing a reminder archives its identity, removes the visible rule, and adds a manual-removal feedback record. This prevents a later reprocessing pass from recreating the same reminder from the original transcript.
 
-“Add feedback” records a short audio correction, transcribes it, deletes the temporary audio, and re-evaluates reminders with:
+“Add feedback” records a short audio correction, transcribes it, and saves its stable correction identity before deleting the temporary audio and re-evaluating reminders with:
 
 - the current reminder set;
 - previous feedback;
 - the new feedback.
+
+The sheet owns recording and submission tasks. A failed transcription retains its stopped audio; a failed save also retains completed text, so Retry never repeats successful speech work. Cancel remains available during admission, transcription, and saving. Explicit Cancel, leaving, or Record again cancels that draft and cleans only its temporary audio. The repository’s atomic append determines whether the correction is saved: cancellation before it prevents append; cancellation afterward cannot undo the committed correction. Repeated acknowledgement/retry of the same identity does not add another correction or reset its processing again. Feedback drafts remain temporary across process death and use the existing abandoned-file cleanup.
 
 Manual removals are reapplied deterministically, so reprocessing cannot silently resurrect a reminder the user removed. Other additions, replacements, and corrections pass through the same complete-source grounded parser; for long inputs a final correction can remove or replace candidates from any earlier passage. Feedback reprocessing changes reminders only; it does not rewrite the note title, summary, or transcript.
 
@@ -181,7 +187,7 @@ Derived pin-save errors retire when reminders are disabled; unsaved source edits
 
 ## Evaluation
 
-The Settings screen includes the repeatable benchmark described in [`reminder-model-evaluation.md`](reminder-model-evaluation.md), using the same deterministic reconciliation as saved reminder results. Model scores are kept separate from this contract because they describe observed quality for one OS/model version, not guaranteed product behavior.
+The Settings screen includes the repeatable benchmark described in [`reminder-model-evaluation.md`](reminder-model-evaluation.md), using the same deterministic reconciliation as saved reminder results. The runner owns a cancelable task; leaving its screen stops the run and old progress cannot replace a newer run. Complete answers are assessed for semantic correctness, while canceled, unavailable, or failed execution is marked not assessed and stops later cases. Partial metrics include only assessed cases and show assessed/attempted/total counts. Missing denominators show Not assessed, never an invented perfect score. Deterministic checks remain separately runnable and reported. Model scores are kept separate from this contract because they describe observed quality for one OS/model version, not guaranteed product behavior.
 
 ## Future manual editing
 

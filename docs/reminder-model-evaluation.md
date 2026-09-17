@@ -25,6 +25,8 @@ The levels progress from literal instructions to filler, indirect intent, negati
 
 ## Metrics
 
+Run status is complete, canceled, unavailable, or failed. Cancel and leaving the benchmark screen stop its owned run; already assessed cases remain visible as partial results. Execution failures are not red semantic failures and are excluded from accuracy denominators. Assessed, attempted, and total counts show coverage; empty denominators display Not assessed. A completed negative case can still pass exact case accuracy, and any unexpected emitted cues count as false positives. Deterministic-only runs have no semantic percentages. Console output includes `REMINDER_BENCHMARK_STATUS` before the existing end marker.
+
 The runner reports:
 
 - exact case passes;

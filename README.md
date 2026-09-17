@@ -26,7 +26,7 @@ An iPhone voice memo app that records, transcribes, organizes, and carries usefu
 - Reminder correction by disposable voice feedback
 - Native note actions for model-label visibility, full reprocessing, and JSON sharing
 - Configurable pre-event reminder Live Activities
-- A permanent 72-case on-device reminder benchmark
+- A cancelable on-device reminder benchmark with explicit partial and unassessed results
 - Exact calendar occurrence details, with current Google Calendar links for nonrecurring events and native details for recurring instances
 - Reverse-chronological timeline, weekly reviews, and recorded locations
 - Swipe-to-delete notes with confirmation
@@ -86,6 +86,8 @@ Use `-demo -recording-activity-contract-tests -recording-presentation-contract-t
 Native recording presentation checks use `-demo -recording-activity-native-smoke`. For visual review, use `-demo -recording-activity-native-preview running` (also `paused`, `interrupted`, `waiting`, or `stale`) and `-recording-activity-native-preview-cleanup` afterward. The fixture leaves only its own activity visible. Use `-recording-activity-native-orphan-seed`, terminate the app, and relaunch with `-recording-activity-native-orphan-verify` to check startup cleanup. These native checks report actual API results separately; they do not establish real microphone capture, device background execution, system update throttling, or alert delivery. iOS can keep an old status visible after its freshness deadline. The running timer is explicitly estimated and has a native upper bound; a stale redraw switches to the exact last-confirmed duration.
 
 Use `-demo -calendar-occurrence-contract-tests -reminder-occurrence-contract-tests -calendar-navigation-contract-tests` for exact recurring-instance lookup, calendar boundaries, legacy pin migration, moved-instance refresh, ambiguous identity, provider fallback, and setup selection using repeated native IDs. These checks use synthetic event snapshots and temporary manifests, without calendar access. `-demo -demo-calendar-occurrences` opens recording setup with two same-day occurrences sharing a raw identifier; add `-demo-calendar-ambiguous` for an unavailable occurrence group. Calendar lookup is restricted to the saved calendar and small windows around its saved current/original dates. A far-moved instance needs provable original-date identity; missing, ambiguous, or changed floating-date identity remains unavailable instead of guessing.
+
+Use `-demo -reminder-feedback-contract-tests -reminder-matching-contract-tests -reminder-benchmark-contract-tests` for owned correction cancellation, retained-audio/text retry, exact durable feedback acknowledgments, completed-only semantic caching, relevant candidate uncertainty, and honest partial benchmark results. Fake benchmark responses test execution ownership and metrics without claiming native model quality. For feedback screens, use `-demo -demo-reminders -demo-reminder-feedback` plus `-demo-feedback-transcribing`, `-demo-feedback-transcription-error`, or `-demo-feedback-save-error`. For synthetic benchmark states, use `-demo -demo-reminder-benchmark` plus `-demo-benchmark-cancelled`, `-demo-benchmark-unavailable`, or `-demo-benchmark-failed`.
 
 ## TestFlight
 

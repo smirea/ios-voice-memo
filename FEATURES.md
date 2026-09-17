@@ -20,7 +20,7 @@
 - Processes long transcripts and reminder feedback in ordered, bounded passages that cover the complete input. A failed passage keeps prior completed results and offers Retry; later corrections apply to all earlier reminder candidates.
 - Gives permanent and feedback recording priority over transcription and on-device analysis, including weekly reviews and reminder matching. Optional work pauses through recording interruptions and user pauses, then resumes after capture stops; timed-out native work cannot overlap its replacement.
 - Generates summaries only for recordings longer than 20 seconds.
-- Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md). Saves resolved occurrences before scheduling them, and discards obsolete results after note, calendar, or delivery-setting changes.
+- Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md). Saves resolved occurrences before scheduling them, coalesces repeated refreshes, and reuses completed matching decisions while their inputs stay unchanged; obsolete results cannot survive note, calendar, or delivery-setting changes.
 - Preserves reminder identity and manual removals through reprocessing. One-time reminders stay pinned through calendar gaps, follow provable moves of the same occurrence within its calendar, and retire after it ends; reprocessing or temporary omission cannot re-arm them, but a distinct new voice instruction can create a fresh cue.
 - Schedules reminders only for occurrences starting within their validity period, including an occurrence exactly at expiration; an out-of-window pin stays saved without moving to another event.
 - Matches named event targets by complete names, ignoring case, accents, and punctuation; approximate titles require on-device semantic confirmation.
@@ -65,8 +65,8 @@
 - Keeps playback position when audio preparation finishes, continues only if playback was still active, and shows a retry status instead of a progress spinner when preparation fails.
 - Shows a short generated summary for recordings longer than 20 seconds and attributes the analysis model below the summary or title.
 - Shows event reminders directly below the summary with compact frequency, quoted target, and duration; tapping uses native disclosure to expand its rationale without extra top or leading padding, swiping left removes it immediately, and an empty list shows only **No reminders: Add feedback**.
-- **Add Feedback** records and transcribes a short correction, saves it before closing, deletes the temporary audio, and queues reminder processing without replacing completed transcript or analysis.
-- Starting feedback pauses note playback; feedback reports recording interruptions or failures and keeps captured audio available to submit in a scrollable, expandable native sheet.
+- **Add Feedback** records and transcribes a short correction, saves that correction once before closing, then deletes its temporary audio and queues reminder processing without replacing completed transcript or analysis. Failed submissions retain audio and completed text for Retry; retrying a save does not repeat transcription.
+- Starting feedback pauses note playback; feedback reports recording interruptions or failures in a scrollable, expandable native sheet. Cancel remains available during submission; Cancel, leaving the sheet, or Record again discards its temporary draft, while an already saved correction remains saved.
 - A bottom-left glass button morphs into note actions that persist **Show Models** app-wide with the whole toggle row tappable, reprocess the saved audio through transcription and all generated analysis even after leaving the note while safely queuing other reprocesses, and share complete metadata as a `.json` file with a separate **Copy JSON Text** action.
 - When enabled in Settings, shows a four-line transcript preview and its transcription model.
 - Tapping the transcript opens a selectable full-screen reader with Copy, Close, and native back-swipe controls.
@@ -89,7 +89,7 @@
 - Calendar sync requests Full Access for read-only event access and lets each calendar be included or excluded.
 - Calendar settings can prefer direct Google Calendar links, with an exact native event view as fallback.
 - Reminder settings control delivery, Live Activities, and the global pre-event lead time. Turning reminders off also pauses new extraction; enabling them backfills eligible saved notes without repeating transcription or completed analysis. Settings reports incomplete matching, deferred delivery, or Live Activity failures and offers Retry when preparation fails.
-- Reminder Benchmark runs the production parser against grouped on-device accuracy, grounding, feedback, and fuzzy-matching cases.
+- Reminder Benchmark runs the production parser against grouped on-device accuracy, grounding, feedback, and fuzzy-matching cases without using the app’s matching cache. Runs can be canceled; partial results distinguish assessed answers from unavailable or failed execution, and deterministic checks run independently when the model is unavailable.
 - Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export; if a deletion fails, reports it in Settings and retains the affected notes for retry.
 
 # Lock Screen and Dynamic Island

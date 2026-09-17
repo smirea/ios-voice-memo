@@ -74,7 +74,7 @@ enum ReminderValidityContractChecks {
 	private static func fuzzyChecks() async throws {
 		var fuzzy = rule(.everyMatch)
 		fuzzy.selector = .fuzzy(.init(semanticDescription: "client consultation", timeBucket: .any, locationDescription: nil, examples: []))
-		let historical = event("Historical discussion", start: -7_200, end: -3_600)
+		let historical = event("Client consultation", start: -7_200, end: -3_600)
 		let upcoming = event("Upcoming discussion", start: 600)
 		let boundary = event("Boundary discussion", start: 3_600)
 		let outside = event("Excluded future discussion", start: 3_601)
@@ -83,13 +83,13 @@ enum ReminderValidityContractChecks {
 		let prompts = await probe.prompts
 		try expect(result.outcome.isComplete && Set(result.occurrences.map(\.event.id)) == [upcoming.id, boundary.id],
 			"Fuzzy decisions must materialize only occurrences within the same validity window")
-		try expect(prompts.count == 3 && prompts.contains(where: { $0.contains(historical.title) })
+		try expect(prompts.count == 2 && !prompts.contains(where: { $0.contains("Title: " + historical.title) })
 			&& !prompts.contains(where: { $0.contains(outside.title) }),
-			"Out-of-window future events must be excluded before native classification while historical examples remain evaluated")
+			"Only eligible occurrences require native classification; historical deterministic examples remain available")
 		let examples = result.examplesByReminderID[fuzzy.id, default: []]
 		try expect(examples.contains(where: { $0.event.id == historical.id && $0.matches })
 			&& !examples.contains(where: { $0.event.id == outside.id }),
-			"Historical fuzzy examples must remain visible and filtered future events must not become false-negative examples")
+			"Historical completed or deterministic examples must remain visible and filtered future events must not become false-negative examples")
 		let excludedProbe = Probe()
 		let excluded = await resolve(fuzzy, events: [outside], services: services(excludedProbe))
 		let excludedCalls = await excludedProbe.prompts.count

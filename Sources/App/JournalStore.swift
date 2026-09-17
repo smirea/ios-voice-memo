@@ -50,15 +50,22 @@ final class JournalStore {
 	@ObservationIgnored private let reminderActivityManager: ReminderActivityManager
 	private let reminderResolver: @Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult
 	private let reminderSchedulingEnabled: Bool
+	private let reminderMatchCache: ReminderMatchCache
 	@ObservationIgnored private var reminderScheduleTask: Task<Void, Never>?
+	@ObservationIgnored private var reminderSchedulePass: Task<Void, Never>?
+	@ObservationIgnored private var reminderSchedulePending = false
+	@ObservationIgnored private var reminderScheduleNow = Date.now
+	@ObservationIgnored private var reminderRetirementTask: Task<Void, Never>?
+	@ObservationIgnored private var reminderRetirementPending = false
 	@ObservationIgnored private var reminderScheduleGeneration = 0
 	@ObservationIgnored private var reminderBackfillTask: Task<Void, Never>?
 	@ObservationIgnored private var reminderBackfillPending = false
 	@ObservationIgnored private var pendingDeletionIDs = Set<UUID>()
+	@ObservationIgnored private var feedbackReservations: [UUID: UUID] = [:]
 	@ObservationIgnored private var failedNoteSaveIDs = Set<UUID>()
 	@ObservationIgnored private var failedReminderSaveIDs = Set<UUID>()
 	private var pendingSourceIDs: Set<UUID> {
-		Set(pendingEdits.filter { $0.edit.changesReminderSource }.map(\.entryID)).union(pendingDeletionIDs)
+		Set(pendingEdits.filter { $0.edit.changesReminderSource }.map(\.entryID)).union(pendingDeletionIDs).union(feedbackReservations.values)
 	}
 	@ObservationIgnored private var iCloudRevision = 0
 	@ObservationIgnored private var pendingICloudDeletionReferences = Set<String>()
@@ -89,6 +96,8 @@ final class JournalStore {
 	var processingIdleCheckpoint: (() async -> Void)?
 	var processingDeadlineOverride: TimeInterval?
 	var deletionIntentCheckpoint: (() async -> Void)?
+	var feedbackAppendCheckpoint: (() async -> Void)?
+	var feedbackReceiptCheckpoint: (() async -> Void)?
 	var mirrorSnapshotCheckpoint: (() async -> Void)?
 	var configurationLoadCheckpoint: (() async -> Void)?
 	private var cloudStoppedForContract = false
@@ -108,7 +117,9 @@ final class JournalStore {
 		self.cloudServices = cloudServices ?? .live
 		mirroringEnabled = storageRootURL == nil || cloudServices != nil
 		self.reminderActivityManager = reminderActivityManager ?? ReminderActivityManager(operations: storageRootURL == nil ? nil : .disabled)
-		self.reminderResolver = reminderResolver ?? { await ReminderEngine.resolve(entries: $0, events: $1, now: $2) }
+		let matchCache = ReminderMatchCache()
+		self.reminderMatchCache = matchCache
+		self.reminderResolver = reminderResolver ?? { await ReminderEngine.resolve(entries: $0, events: $1, now: $2, cache: matchCache) }
 		reminderSchedulingEnabled = storageRootURL == nil || reminderResolver != nil || reminderActivityManager != nil
 		self.processingServices = processingServices ?? .live
 		processingEnabled = storageRootURL == nil || processingServices != nil
@@ -447,6 +458,8 @@ final class JournalStore {
 	}
 
 	private func preemptProcessing() {
+		reminderSchedulePass?.cancel()
+		reminderSchedulePending = true
 		retryWakeTask?.cancel()
 		retryWakeTask = nil
 		processingWatchdog?.cancel()
@@ -817,20 +830,59 @@ final class JournalStore {
 			.appendingPathExtension("m4a")
 	}
 
-	func applyReminderFeedback(entryID: UUID, audioURL: URL) async throws {
-		defer { try? fileManager.removeItem(at: audioURL) }
-		guard entries.contains(where: { $0.id == entryID }) else { throw ReminderFeedbackError.entryUnavailable }
+	func transcribeReminderFeedback(at audioURL: URL) async throws -> TranscriptionResult {
 		await configurationBootstrapTask?.value
-		let transcription = try await processingServices.transcribe(audioURL, settings.preferElevenLabsTranscription, elevenLabsAPIKey, { _ in })
 		try Task.checkCancellation()
-		transcriptionAlertMessage = transcription.warning
-		let text = transcription.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !text.isEmpty else { throw ReminderFeedbackError.emptyTranscript }
-		guard entries.contains(where: { $0.id == entryID }) else { throw ReminderFeedbackError.entryUnavailable }
-		persist(.feedback(ReminderFeedback(kind: .voice, text: text)), entryID: entryID)
+		let result = try await processingServices.transcribe(audioURL, settings.preferElevenLabsTranscription, elevenLabsAPIKey, { _ in })
+		try Task.checkCancellation()
+		return result
+	}
+
+	func appendReminderFeedback(entryID: UUID, feedback: ReminderFeedback) async throws -> ReminderFeedback {
+		try Task.checkCancellation()
+		guard !feedback.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ReminderFeedbackError.emptyTranscript }
+		if !pendingDeletionIDs.contains(entryID), !deletedEntryIDs.contains(entryID),
+			let saved = committedRecords[entryID]?.entry?.reminderFeedback.first(where: { $0.id == feedback.id }) {
+			guard saved == feedback else { throw RepositoryError.feedbackConflict }
+			return saved
+		}
+		let reservation = UUID()
+		feedbackReservations[reservation] = entryID
+		if activeLease?.entryID == entryID { activeStage?.cancel() }
+		requestReminderSchedule()
+		defer {
+			feedbackReservations[reservation] = nil
+			requestReminderBackfill()
+			requestReminderSchedule()
+			kickProcessing()
+		}
+		try await waitUntilLoaded()
+		try Task.checkCancellation()
+		if pendingEdits.contains(where: { $0.entryID == entryID && $0.edit.changesReminderSource }) { queuePendingWrites() }
 		await persistenceTask?.value
-		guard !hasUnsavedChanges(for: entryID) else { throw RepositoryError.unsavedChanges }
-		kickProcessing()
+		try Task.checkCancellation()
+		guard !pendingDeletionIDs.contains(entryID), !deletedEntryIDs.contains(entryID), entry(id: entryID) != nil else {
+			throw ReminderFeedbackError.entryUnavailable
+		}
+		guard !pendingEdits.contains(where: { $0.entryID == entryID && $0.edit.changesReminderSource }) else {
+			throw RepositoryError.unsavedChanges
+		}
+		#if DEBUG
+		await feedbackAppendCheckpoint?()
+		#endif
+		try Task.checkCancellation()
+		guard !pendingDeletionIDs.contains(entryID), !deletedEntryIDs.contains(entryID) else { throw ReminderFeedbackError.entryUnavailable }
+		let record = try await repository.appendReminderFeedback(feedback, to: entryID)
+		#if DEBUG
+		await feedbackReceiptCheckpoint?()
+		#endif
+		guard let saved = record.entry?.reminderFeedback.first(where: { $0.id == feedback.id }), saved == feedback else {
+			throw RepositoryError.feedbackConflict
+		}
+		publish(record)
+		cancelObsoleteStage()
+		scheduleICloudDriveMirror()
+		return saved
 	}
 
 	func removeReminder(entryID: UUID, reminderID: UUID) {
@@ -918,25 +970,95 @@ final class JournalStore {
 
 	func refreshReminderSchedule(now: Date = .now) async {
 		requestReminderSchedule(now: now)
+		await reminderRetirementTask?.value
 		await reminderScheduleTask?.value
+	}
+
+	private var canScheduleReminders: Bool {
+		reminderSchedulingEnabled && hasLoadedConfiguration && !isLoading && !isDemoMode
 	}
 
 	private func invalidateReminderSchedule() {
 		reminderScheduleGeneration += 1
-		reminderScheduleTask?.cancel()
+		reminderSchedulePass?.cancel()
 		reminderActivityManager.invalidate(generation: reminderScheduleGeneration)
+		reminderRetirementPending = true
+		startReminderRetirement()
 	}
 
 	private func requestReminderSchedule(now: Date = .now) {
+		reminderScheduleNow = now
 		invalidateReminderSchedule()
-		let generation = reminderScheduleGeneration
-		guard reminderSchedulingEnabled, hasLoadedConfiguration, !isLoading, !isDemoMode else { return }
-		reminderScheduleTask = Task { [weak self] in
-			await self?.reconcileReminderSchedule(generation: generation, now: now)
+		reminderSchedulePending = true
+		startReminderSchedule()
+	}
+
+	private func startReminderSchedule() {
+		guard canScheduleReminders, !isCapturePriorityActive, !backgroundSuspended,
+			reminderSchedulePending, reminderScheduleTask == nil else { return }
+		reminderScheduleTask = Task {
+			defer { reminderScheduleTask = nil; startReminderSchedule() }
+			while reminderSchedulePending, !isCapturePriorityActive, !backgroundSuspended {
+				reminderSchedulePending = false
+				let generation = reminderScheduleGeneration
+				let now = reminderScheduleNow
+				let pass = Task { await reconcileReminderSchedule(generation: generation, now: now) }
+				reminderSchedulePass = pass
+				await pass.value
+				reminderSchedulePass = nil
+			}
 		}
 	}
 
+	private func startReminderRetirement() {
+		guard canScheduleReminders, reminderRetirementPending, reminderRetirementTask == nil else { return }
+		reminderRetirementTask = Task {
+			defer { reminderRetirementTask = nil; startReminderRetirement() }
+			while reminderRetirementPending {
+				reminderRetirementPending = false
+				await retireReminderPresentations(generation: reminderScheduleGeneration, now: reminderScheduleNow)
+			}
+		}
+	}
+
+	private func retireReminderPresentations(generation: Int, now: Date) async {
+		let delivery = settings.reminderDelivery
+		let snapshotSettings = settings
+		let calendarRevision = calendarSync.revision
+		let events = calendarSync.events.filter { delivery.calendars?.contains($0.calendarIdentifier) ?? true }
+		let sources = committedRecords.values.filter {
+			$0.state == .saved && !pendingSourceIDs.contains($0.id) && !deletedEntryIDs.contains($0.id)
+		}
+		let isCurrent: @MainActor () -> Bool = { [weak self] in
+			guard let self else { return false }
+			return self.reminderScheduleGeneration == generation
+				&& self.settings.reminderDelivery == delivery && self.calendarSync.revision == calendarRevision
+		}
+		await reminderMatchCache.retain(entries: delivery.calendarEnabled && delivery.remindersEnabled ? sources.compactMap(\.entry) : [],
+			events: events, now: now, context: ReminderMatchContext())
+		guard isCurrent() else { return }
+		guard delivery.calendarEnabled, delivery.remindersEnabled, !isCapturePriorityActive else {
+			failedReminderSaveIDs.removeAll()
+			reminderSchedulingMessage = nil
+			updateUnsavedNoteStatus()
+			let presentation = await reminderActivityManager.endAll(generation: generation, isCurrent: isCurrent)
+			guard isCurrent() else { return }
+			publishReminderPresentation(presentation)
+			if isCapturePriorityActive && delivery.remindersEnabled && delivery.activitiesEnabled {
+				reminderPresentationMessage = "Reminder Live Activities pause while you record."
+			}
+			return
+		}
+		let presentation = await reminderActivityManager.retireObsolete(
+			sources: sources.compactMap { record in record.entry.map { ReminderActivitySource(entry: $0, inputRevision: record.inputRevision) } },
+			events: events, settings: snapshotSettings, now: now, generation: generation, isCurrent: isCurrent)
+		guard isCurrent() else { return }
+		if !delivery.activitiesEnabled || presentation.unavailableReason != nil { publishReminderPresentation(presentation) }
+	}
+
 	private func reconcileReminderSchedule(generation: Int, now: Date) async {
+		await reminderRetirementTask?.value
+		guard !Task.isCancelled, generation == reminderScheduleGeneration, !isCapturePriorityActive, !backgroundSuspended else { return }
 		let delivery = settings.reminderDelivery
 		let snapshotSettings = settings
 		let calendarRevision = calendarSync.revision
@@ -950,25 +1072,7 @@ final class JournalStore {
 				&& self.settings.reminderDelivery == delivery && self.calendarSync.revision == calendarRevision
 		}
 		guard isCurrent(), !Task.isCancelled else { return }
-		guard delivery.calendarEnabled, delivery.remindersEnabled, !isCapturePriorityActive else {
-			failedReminderSaveIDs.removeAll()
-			reminderSchedulingMessage = nil
-			updateUnsavedNoteStatus()
-			let presentation = await reminderActivityManager.endAll(generation: generation, isCurrent: isCurrent)
-			guard isCurrent(), !Task.isCancelled else { return }
-			publishReminderPresentation(presentation)
-			if isCapturePriorityActive && delivery.remindersEnabled && delivery.activitiesEnabled {
-				reminderPresentationMessage = "Reminder Live Activities pause while you record."
-			}
-			return
-		}
-		let presentation = await reminderActivityManager.retireObsolete(
-			sources: sources.compactMap { record in record.entry.map { ReminderActivitySource(entry: $0, inputRevision: record.inputRevision) } },
-			events: events, settings: snapshotSettings, now: now, generation: generation, isCurrent: isCurrent)
-		guard isCurrent(), !Task.isCancelled else { return }
-		if !delivery.activitiesEnabled || presentation.unavailableReason != nil {
-			publishReminderPresentation(presentation)
-		}
+		guard delivery.calendarEnabled, delivery.remindersEnabled else { return }
 		let result = await reminderResolver(sources.compactMap(\.entry), events, now)
 		guard isCurrent(), !Task.isCancelled, result.outcome != .cancelled else { return }
 		switch result.outcome {
@@ -1429,6 +1533,8 @@ final class JournalStore {
 		await configurationWriteTask?.value
 		await iCloudWorker?.value
 	}
+	func waitForReminderRetirementForContract() async { await reminderRetirementTask?.value }
+
 	func waitForConfigurationWritesForContract() async {
 		await configurationBootstrapTask?.value
 		await configurationWriteTask?.value
