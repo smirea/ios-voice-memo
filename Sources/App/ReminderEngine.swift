@@ -8,7 +8,7 @@ private struct GeneratedReminderBatch {
 }
 
 @Generable(description: "One complete event-reminder action grounded in the supplied memo")
-private struct GeneratedReminderDraft {
+struct GeneratedReminderDraft {
 	@Guide(description: "A short imperative checklist item")
 	var text: String
 
@@ -20,7 +20,7 @@ private struct GeneratedReminderDraft {
 }
 
 @Generable(description: "The grounded calendar-event target for one reminder")
-private struct GeneratedReminderSchedule {
+struct GeneratedReminderSchedule {
 	@Guide(description: "A short exact contiguous excerpt establishing the target event, frequency, or duration; use the action evidence when it contains this context")
 	var scheduleContext: String
 
@@ -74,7 +74,7 @@ struct ReminderRelativeValidity: Sendable {
 }
 
 @Generable(description: "A conservative decision about one candidate calendar event")
-private struct GeneratedEventMatch {
+struct GeneratedEventMatch {
 	@Guide(description: "Whether the candidate clearly matches every stated selector constraint")
 	var matches: Bool
 
@@ -102,14 +102,59 @@ struct ReminderResolutionResult: Sendable {
 	var outcome: ModelProcessingOutcome = .complete
 }
 
+private struct ReminderResponseIncomplete: Error {}
+
+struct ReminderModelServices: Sendable {
+	var budget: @Sendable (String, GenerationSchema, Int) async throws -> ModelContextBudget
+	var drafts: @Sendable (String, String, Int) async throws -> [GeneratedReminderDraft]
+	var schedule: @Sendable (String, String, Int) async throws -> GeneratedReminderSchedule
+	var match: @Sendable (String, String, Int) async throws -> GeneratedEventMatch
+
+	static let live = Self(budget: { try await ModelContextBudget.make(instructions: $0, schema: $1, outputTokens: $2) },
+		drafts: { instructions, prompt, _ in
+			let response = try await LanguageModelSession(instructions: instructions).respond(to: prompt,
+				generating: GeneratedReminderBatch.self)
+			guard response.rawContent.isComplete else { throw ReminderResponseIncomplete() }
+			return response.content.reminders
+		}, schedule: { instructions, prompt, _ in
+			let response = try await LanguageModelSession(instructions: instructions).respond(to: prompt,
+				generating: GeneratedReminderSchedule.self)
+			guard response.rawContent.isComplete else { throw ReminderResponseIncomplete() }
+			return response.content
+		}, match: { instructions, prompt, _ in
+			let response = try await LanguageModelSession(instructions: instructions).respond(to: prompt,
+				generating: GeneratedEventMatch.self)
+			guard response.rawContent.isComplete else { throw ReminderResponseIncomplete() }
+			return response.content
+		})
+}
+
 enum ReminderEngine {
+	private static let draftInstructions = """
+		Read the complete event-attached memo before extracting anything. Return the final useful reminders after applying every correction in order. A reminder is an action you gave your future self for immediately before or during a calendar event.
+
+		Use context across sentences. Resolve "this event," "the game," "same thing," "today and tomorrow," and similar references before deciding whether an action is useful. If the same action applies to multiple events, create one reminder for that action rather than duplicate phrasings.
+
+		Evidence must be exact contiguous text copied from the original memo or a correction. Preserve every stated name, color, condition, and correction in the action.
+
+		Hard exclusions:
+		- Past observations without a future action.
+		- Negated, canceled, superseded, hypothetical, or rejected ideas.
+		- Another person's intention or obligation.
+		- General errands, habits, or appointments to schedule.
+		- Vague advice that would waste attention.
+
+		Keep related people facts together. Keep distinct actions separate. Do not create duplicate phrasings of the same action. Existing reminders are context, not evidence. Corrections are authoritative: add what was missed, replace what changed, and omit anything removed. Return any useful number of reminders, including zero. Address the note owner as "you," never as user or speaker.
+		"""
+
 	static func parse(
 		transcript: String,
 		sourceEvent: JournalCalendarEvent?,
 		createdAt: Date,
 		currentReminders: [EventReminderRule] = [],
 		feedback: [ReminderFeedback] = [],
-		modelIsAvailable: @Sendable () -> Bool = { SystemLanguageModel.default.availability == .available }
+		modelIsAvailable: @Sendable () -> Bool = { SystemLanguageModel.default.availability == .available },
+		services: ReminderModelServices = .live
 	) async -> ReminderParsingResult {
 		guard !Task.isCancelled else {
 			return ReminderParsingResult(reminders: currentReminders, modelName: nil, outcome: .cancelled)
@@ -127,7 +172,7 @@ enum ReminderEngine {
 				sourceEvent: sourceEvent,
 				currentReminders: currentReminders,
 				feedback: feedback,
-				modelIsAvailable: modelIsAvailable
+				modelIsAvailable: modelIsAvailable, services: services
 			)
 			let rules = generated.reminders.compactMap {
 				rule(
@@ -170,10 +215,11 @@ enum ReminderEngine {
 		entries: [JournalEntry],
 		events: [JournalCalendarEvent],
 		now: Date = .now,
-		modelIsAvailable: @Sendable () -> Bool = { SystemLanguageModel.default.availability == .available }
+		modelIsAvailable: @Sendable () -> Bool = { SystemLanguageModel.default.availability == .available },
+		services: ReminderModelServices = .live
 	) async -> ReminderResolutionResult {
 		do {
-			return try await resolvedReminders(entries: entries, events: events, now: now, modelIsAvailable: modelIsAvailable)
+			return try await resolvedReminders(entries: entries, events: events, now: now, modelIsAvailable: modelIsAvailable, services: services)
 		} catch {
 			return ReminderResolutionResult(occurrences: [], examplesByReminderID: [:],
 				resolvedOccurrencesByReminderID: [:], outcome: .failure(error,
@@ -185,7 +231,8 @@ enum ReminderEngine {
 		entries: [JournalEntry],
 		events: [JournalCalendarEvent],
 		now: Date,
-		modelIsAvailable: @Sendable () -> Bool
+		modelIsAvailable: @Sendable () -> Bool,
+		services: ReminderModelServices
 	) async throws -> ReminderResolutionResult {
 		try Task.checkCancellation()
 		var occurrences: [EventReminderOccurrence] = []
@@ -207,7 +254,7 @@ enum ReminderEngine {
 				case let .series(series):
 					matchedEvents = candidatesAfterCreation.filter { series.matches($0) }
 				case let .fuzzy(selector):
-					let result = try await match(selector: selector, candidates: orderedEvents, modelIsAvailable: modelIsAvailable)
+					let result = try await match(selector: selector, candidates: orderedEvents, modelIsAvailable: modelIsAvailable, services: services)
 					let decisions = result.decisions
 					if !result.outcome.isComplete {
 						incompleteReminderIDs.insert(reminder.id)
@@ -261,7 +308,8 @@ enum ReminderEngine {
 		sourceEvent: JournalCalendarEvent,
 		currentReminders: [EventReminderRule],
 		feedback: [ReminderFeedback],
-		modelIsAvailable: @Sendable () -> Bool
+		modelIsAvailable: @Sendable () -> Bool,
+		services: ReminderModelServices
 	) async throws -> (reminders: [GeneratedReminder], usedModel: Bool) {
 		try Task.checkCancellation()
 		let evidenceCorpus = ([transcript] + feedback.map(\.text)).joined(separator: "\n")
@@ -280,22 +328,7 @@ enum ReminderEngine {
 			: feedback.enumerated().map { index, correction in
 				"\(index + 1). \(correction.kind.rawValue): \(correction.text)"
 			}.joined(separator: "\n")
-		let instructions = """
-		Read the complete event-attached memo before extracting anything. Return the final useful reminders after applying every correction in order. A reminder is an action you gave your future self for immediately before or during a calendar event.
-
-		Use context across sentences. Resolve "this event," "the game," "same thing," "today and tomorrow," and similar references before deciding whether an action is useful. If the same action applies to multiple events, create one reminder for that action rather than duplicate phrasings.
-
-		Evidence must be exact contiguous text copied from the original memo or a correction. Preserve every stated name, color, condition, and correction in the action.
-
-		Hard exclusions:
-		- Past observations without a future action.
-		- Negated, canceled, superseded, hypothetical, or rejected ideas.
-		- Another person's intention or obligation.
-		- General errands, habits, or appointments to schedule.
-		- Vague advice that would waste attention.
-
-		Keep related people facts together. Keep distinct actions separate. Do not create duplicate phrasings of the same action. Existing reminders are context, not evidence. Corrections are authoritative: add what was missed, replace what changed, and omit anything removed. Return any useful number of reminders, including zero. Address the note owner as "you," never as user or speaker.
-		"""
+		let instructions = draftInstructions
 		let prompt = """
 		Attached event:
 		Title: \(sourceEvent.title)
@@ -311,26 +344,207 @@ enum ReminderEngine {
 		Corrections, oldest to newest:
 		\(corrections)
 		"""
-		let drafts = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
-			let session = LanguageModelSession(instructions: instructions)
-			let response = try await session.respond(
-				to: prompt,
-				generating: GeneratedReminderBatch.self
-			)
-			return response.content.reminders
+		let budget = try await services.budget(instructions, GeneratedReminderBatch.generationSchema, 1536)
+		let drafts: [GeneratedReminderDraft]
+		if try await budget.fits(prompt) {
+			do { drafts = try await requestDrafts(instructions: instructions, prompt: prompt, budget: budget, services: services) }
+			catch {
+				guard isRetryableContext(error) else { throw error }
+				drafts = try await boundedDrafts(transcript: transcript, sourceEvent: sourceEvent,
+					feedback: feedback, corpus: evidenceCorpus, budget: budget, services: services)
+			}
+		} else {
+			drafts = try await boundedDrafts(transcript: transcript, sourceEvent: sourceEvent,
+				feedback: feedback, corpus: evidenceCorpus, budget: budget, services: services)
 		}
 		var reminders: [GeneratedReminder] = []
-		for draft in drafts {
+		for draft in uniqueGroundedDrafts(drafts, corpus: evidenceCorpus) {
 			try Task.checkCancellation()
-			reminders.append(try await generatedReminder(from: draft, sourceEvent: sourceEvent, evidenceCorpus: evidenceCorpus))
+			reminders.append(try await generatedReminder(from: draft, sourceEvent: sourceEvent, evidenceCorpus: evidenceCorpus, services: services))
 		}
 		return (reminders, true)
+	}
+
+	private static func requestDrafts(instructions: String, prompt: String, budget: ModelContextBudget,
+		services: ReminderModelServices) async throws -> [GeneratedReminderDraft] {
+		try await budget.requireFits(prompt)
+		return try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+			try await budget.requireFits(prompt)
+			return try await services.drafts(instructions, prompt, budget.outputTokens)
+		}
+	}
+
+	private static func boundedDrafts(transcript: String, sourceEvent: JournalCalendarEvent,
+		feedback: [ReminderFeedback], corpus: String,
+		budget: ModelContextBudget, services: ReminderModelServices) async throws -> [GeneratedReminderDraft] {
+		let references = namedReferences(in: corpus)
+		var drafts: [GeneratedReminderDraft] = []
+		var sourceOffset = 0
+		let sources = [transcript] + feedback.map(\.text)
+		for (sourceIndex, source) in sources.enumerated() {
+			let offset = sourceOffset
+			sourceOffset += source.utf16.count + 1
+			guard !source.isEmpty else { continue }
+			let chunks = try await budget.chunks(source) { chunk in
+				try passagePrompt(chunk, sourceIndex: sourceIndex, event: sourceEvent,
+					references: referenceContext(references, before: offset + chunk.range.lowerBound, query: chunk.text, budget: budget),
+					existing: [], revising: false)
+			}
+			for chunk in chunks {
+				drafts = try await applyPassage(chunk, sourceIndex: sourceIndex, event: sourceEvent,
+					references: references, sourceOffset: offset, drafts: drafts, corpus: corpus, budget: budget, services: services, retries: 3)
+			}
+		}
+		return drafts
+	}
+
+	private static func applyPassage(_ chunk: ModelContextChunk, sourceIndex: Int, event: JournalCalendarEvent,
+		references: [ReminderReferent], sourceOffset: Int, drafts: [GeneratedReminderDraft], corpus: String, budget: ModelContextBudget,
+		services: ReminderModelServices, retries: Int) async throws -> [GeneratedReminderDraft] {
+		try Task.checkCancellation()
+		let context = try referenceContext(references, before: sourceOffset + chunk.range.lowerBound, query: chunk.text, budget: budget)
+		do {
+			var updated: [GeneratedReminderDraft] = []
+			var shard: [GeneratedReminderDraft] = []
+			for draft in drafts {
+				let proposed = shard + [draft]
+				let prompt = passagePrompt(chunk, sourceIndex: sourceIndex, event: event, references: context,
+					existing: proposed, revising: true)
+				if !(try await budget.fits(prompt)), !shard.isEmpty {
+					updated += try await requestDrafts(instructions: draftInstructions,
+						prompt: passagePrompt(chunk, sourceIndex: sourceIndex, event: event, references: context,
+							existing: shard, revising: true), budget: budget, services: services)
+					shard = []
+				}
+				shard.append(draft)
+				try await budget.requireFits(passagePrompt(chunk, sourceIndex: sourceIndex, event: event,
+					references: context, existing: shard, revising: true))
+			}
+			if !shard.isEmpty {
+				updated += try await requestDrafts(instructions: draftInstructions,
+					prompt: passagePrompt(chunk, sourceIndex: sourceIndex, event: event, references: context,
+						existing: shard, revising: true), budget: budget, services: services)
+			}
+			updated += try await requestDrafts(instructions: draftInstructions,
+				prompt: passagePrompt(chunk, sourceIndex: sourceIndex, event: event, references: context,
+					existing: [], revising: false), budget: budget, services: services)
+			return uniqueGroundedDrafts(updated, corpus: corpus)
+		} catch {
+			guard retries > 0, isRetryableContext(error) else { throw error }
+			let halves = try ModelContextBudget.bisect(chunk)
+			var updated = drafts
+			for half in halves {
+				updated = try await applyPassage(half, sourceIndex: sourceIndex, event: event, references: references, sourceOffset: sourceOffset,
+					drafts: updated, corpus: corpus, budget: budget, services: services, retries: retries - 1)
+			}
+			return updated
+		}
+	}
+
+	private static func passagePrompt(_ chunk: ModelContextChunk, sourceIndex: Int, event: JournalCalendarEvent,
+		references: String, existing: [GeneratedReminderDraft], revising: Bool) -> String {
+		let task = revising
+			? "Revise only the supplied candidate shard using this later passage. Return every unchanged candidate, replace corrected candidates, and omit canceled candidates. Do not add unrelated actions. Earlier evidence remains valid."
+			: "Extract additions explicitly supported by this passage. Exclude canceled or negated actions. Candidate revision is handled separately. Use named references only to resolve the event target, never as action evidence."
+		return """
+		Task: \(task)
+		Attached event: \(event.title)
+		Preceding named event references (context only):
+		\(references)
+		Source: \(sourceIndex == 0 ? "original memo" : "correction \(sourceIndex)"); UTF16 range: \(chunk.range.lowerBound)..<\(chunk.range.upperBound)
+		Passage:
+		\(chunk.text)
+		End passage.
+		Candidate shard:
+		\(existing.map { "Action: \($0.text)\nWhy: \($0.motivation)\nEvidence: \($0.evidence)" }.joined(separator: "\n\n"))
+		"""
+	}
+
+	private static func uniqueGroundedDrafts(_ drafts: [GeneratedReminderDraft], corpus: String) -> [GeneratedReminderDraft] {
+		var keys = Set<String>()
+		return drafts.filter { draft in
+			guard groundedExcerpt(draft.evidence, in: corpus) != nil else { return false }
+			return keys.insert(draft.text.reminderNormalized + "\n" + draft.evidence.reminderNormalized).inserted
+		}
+	}
+
+	private struct ReminderReferent: Sendable {
+		var text: String
+		var range: Range<Int>
+		var group: Range<Int>
+	}
+
+	private static func namedReferences(in corpus: String) -> [ReminderReferent] {
+		var references: [ReminderReferent] = []
+		let expression = try! NSRegularExpression(pattern: #"[\p{L}\p{M}\p{N}]+"#)
+		corpus.enumerateSubstrings(in: corpus.startIndex..<corpus.endIndex, options: [.bySentences]) { sentence, range, _, _ in
+			guard let sentence else { return }
+			let ranges = expression.matches(in: sentence, range: NSRange(sentence.startIndex..., in: sentence))
+				.compactMap { Range($0.range, in: sentence) }
+			let words = ranges.map { String(sentence[$0]).reminderNormalized }
+			for name in explicitEventDescriptions(in: sentence) {
+				let target = name.split(separator: " ").map(String.init)
+				guard !target.isEmpty, target.count <= words.count,
+					let start = (0...(words.count - target.count)).first(where: { Array(words[$0..<($0 + target.count)]) == target })
+				else { continue }
+				let local = ranges[start].lowerBound..<ranges[start + target.count - 1].upperBound
+				let lower = range.lowerBound.utf16Offset(in: corpus) + local.lowerBound.utf16Offset(in: sentence)
+				let text = String(sentence[local])
+				references.append(ReminderReferent(text: text, range: lower..<(lower + text.utf16.count),
+					group: range.lowerBound.utf16Offset(in: corpus)..<range.upperBound.utf16Offset(in: corpus)))
+			}
+		}
+		return references
+	}
+
+	private static func referenceContext(_ references: [ReminderReferent], before offset: Int,
+		query: String, budget: ModelContextBudget) throws -> String {
+		var names = Set<String>()
+		let preceding = references.reversed().filter {
+			$0.range.upperBound <= offset && names.insert($0.text.reminderNormalized).inserted
+		}
+		let grouped = Dictionary(grouping: preceding, by: \.group)
+		let normalized = query.reminderNormalized
+		let classes = ["game", "call", "class", "gym", "meeting", "meetup", "practice", "session", "standup", "workshop"]
+		let targets = classes.filter { normalized.split(separator: " ").contains(Substring($0)) }
+		let matching = preceding.filter { reference in targets.contains { reference.text.reminderNormalized.contains($0) } }
+		let shared = ["as well", "same thing", "same goal", "same for", "today and tomorrow", "today or tomorrow"]
+			.contains(where: normalized.contains)
+		var requiredGroups = Set<Range<Int>>()
+		if let nearest = matching.first {
+			requiredGroups.insert(nearest.group)
+			if shared, matching.filter({ $0.group == nearest.group }).count < 2,
+				let previous = matching.first(where: { $0.group != nearest.group }) {
+				requiredGroups.insert(previous.group)
+			}
+		}
+		var selected = preceding.filter { requiredGroups.contains($0.group) }
+		var groups = requiredGroups
+		let limit = max(128, min(1_024, budget.contextSize / 4))
+		var bytes = selected.reduce(0) { $0 + $1.text.utf8.count + 40 }
+		guard bytes <= limit else { throw ModelContextError.fixedOverheadTooLarge }
+		for reference in preceding where !groups.contains(reference.group) {
+			let group = grouped[reference.group, default: []]
+			let size = group.reduce(0) { $0 + $1.text.utf8.count + 40 }
+			groups.insert(reference.group)
+			guard bytes + size <= limit else { continue }
+			selected.append(contentsOf: group)
+			bytes += size
+		}
+		return selected.sorted { $0.range.lowerBound < $1.range.lowerBound }.map {
+			"Original UTF16 \($0.range.lowerBound)..<\($0.range.upperBound): \($0.text)"
+		}.joined(separator: "\n")
+	}
+
+	private static func isRetryableContext(_ error: any Error) -> Bool {
+		ModelContextBudget.isContextError(error) || error is ReminderResponseIncomplete
 	}
 
 	private static func generatedReminder(
 		from draft: GeneratedReminderDraft,
 		sourceEvent: JournalCalendarEvent,
-		evidenceCorpus: String
+		evidenceCorpus: String,
+		services: ReminderModelServices
 	) async throws -> GeneratedReminder {
 		try Task.checkCancellation()
 		let fallback = groundedSchedule(
@@ -361,13 +575,23 @@ enum ReminderEngine {
 			Complete memo and corrections:
 			\(evidenceCorpus)
 			"""
-			generated = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
-				let session = LanguageModelSession(instructions: instructions)
-				let response = try await session.respond(
-					to: prompt,
-					generating: GeneratedReminderSchedule.self
-				)
-				return response.content
+			let budget = try await services.budget(instructions, GeneratedReminderSchedule.generationSchema, 512)
+			let localPrompt = """
+			Attached event: \(sourceEvent.title)
+			Action: \(draft.text)
+			Action evidence: \(draft.evidence)
+			Local original context:
+			\(fallback.context)
+			Preceding named event references (context only):
+			\(try referenceContext(namedReferences(in: evidenceCorpus),
+				before: evidenceCorpus.range(of: draft.evidence)?.lowerBound.utf16Offset(in: evidenceCorpus) ?? 0,
+				query: draft.evidence, budget: budget))
+			"""
+			let chosen = try await budget.fits(prompt) ? prompt : localPrompt
+			do { generated = try await requestSchedule(instructions: instructions, prompt: chosen, budget: budget, services: services) }
+			catch {
+				guard chosen != localPrompt, isRetryableContext(error) else { throw error }
+				generated = try await requestSchedule(instructions: instructions, prompt: localPrompt, budget: budget, services: services)
 			}
 		} else {
 			generated = nil
@@ -401,6 +625,15 @@ enum ReminderEngine {
 				? fallback.validity
 				: relativeValidity(in: scheduleContext)
 		)
+	}
+
+	private static func requestSchedule(instructions: String, prompt: String, budget: ModelContextBudget,
+		services: ReminderModelServices) async throws -> GeneratedReminderSchedule {
+		try await budget.requireFits(prompt)
+		return try await ServiceAdmission.model.run(timeout: .seconds(45)) {
+			try await budget.requireFits(prompt)
+			return try await services.schedule(instructions, prompt, budget.outputTokens)
+		}
 	}
 
 	static func groundedSchedule(
@@ -564,10 +797,8 @@ enum ReminderEngine {
 	}
 
 	private static func groundedExcerpt(_ value: String, in corpus: String) -> String? {
-		let value = clean(value)
-		guard !value.isEmpty,
-			corpus.reminderNormalized.contains(value.reminderNormalized)
-		else { return nil }
+		let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !value.isEmpty, corpus.range(of: value) != nil else { return nil }
 		return value
 	}
 
@@ -846,7 +1077,8 @@ enum ReminderEngine {
 	private static func match(
 		selector: FuzzyEventSelector,
 		candidates: [JournalCalendarEvent],
-		modelIsAvailable: @Sendable () -> Bool
+		modelIsAvailable: @Sendable () -> Bool,
+		services: ReminderModelServices
 	) async throws -> (decisions: [String: EventMatchAssessment], outcome: ModelProcessingOutcome) {
 		try Task.checkCancellation()
 		guard !candidates.isEmpty else { return ([:], .complete) }
@@ -909,9 +1141,11 @@ enum ReminderEngine {
 			Notes: \(event.notes ?? "None")
 			"""
 			do {
+				let budget = try await services.budget(instructions, GeneratedEventMatch.generationSchema, 256)
+				try await budget.requireFits(prompt)
 				let generated = try await ServiceAdmission.model.run(timeout: .seconds(45)) {
-					let session = LanguageModelSession(instructions: instructions)
-					return try await session.respond(to: prompt, generating: GeneratedEventMatch.self).content
+					try await budget.requireFits(prompt)
+					return try await services.match(instructions, prompt, budget.outputTokens)
 				}
 				decisions[event.focusKey] = EventMatchAssessment(
 					matches: generated.matches,

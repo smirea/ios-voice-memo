@@ -88,7 +88,7 @@ Reminder parsing is separate from title and summary generation. The parser recei
 
 The on-device model performs two compact semantic stages instead of producing an entire rule in one large schema:
 
-1. Read the complete transcript, existing reminder set, and ordered corrections once. Return every final action with a motivation and exact supporting excerpt. There is no maximum reminder count.
+1. When the complete transcript, existing reminder set, and ordered corrections fit, read them in one request. Otherwise walk every original passage and correction in order, rebuilding candidates from the source; each later passage revises every accumulated candidate shard before adding new actions. Return every final action with a motivation and exact supporting excerpt. There is no maximum reminder count.
 2. Resolve clear named or attached targets directly from their grounded context. When semantic interpretation is still needed, use a separate compact scheduling request per action; requests share one on-device response permit, and recording preempts both queued and active analysis.
 3. Derive attached-series versus fuzzy targeting, next versus every policy, time of day, and relative validity from the grounded schedule context.
 4. Reject ungrounded actions and venues, apply manual removals deterministically, and deduplicate the assembled rules.
@@ -103,9 +103,11 @@ The parser follows these rules:
 - Treat ambiguous corrections conservatively.
 - Treat corrections as authoritative and apply them in order.
 
-The decomposition is intentional. Simulator evaluation showed that the system model was accurate on compact schemas but mixed fields and opaque references when action, selector, recurrence, duration, and batches of identifiers shared one generated type. A transcript-wide first pass preserves relationships across distant sentences, while the second pass keeps the scheduling schema small. Deterministic fields make corrections such as “evening, not morning” stable across model versions.
+The decomposition is intentional. Simulator evaluation showed that the system model was accurate on compact schemas but mixed fields and opaque references when action, selector, recurrence, duration, and batches of identifiers shared one generated type. The extraction pass preserves chronological corrections, while the second pass keeps the scheduling schema small. Long passages receive bounded preceding event references with their original source positions. Deterministic fields make corrections such as “evening, not morning” stable across model versions.
 
-Guided generation guarantees the shape of a model result, not its semantic correctness. App validation rejects empty action or motivation text, noncontiguous evidence, action text that is not substantially grounded in that evidence, hallucinated venues, invalid durations, and reminders without an event target. Generic references such as “the game” are resolved against the complete memo so earlier named events are retained.
+Every native request budgets its instructions, full prompt, generated schema, and output reserve against the runtime context window. Oversized extraction passages split at safe text boundaries; context failures have finite smaller-passage retries. Scheduling uses the whole memo when it fits and otherwise uses the action's original evidence, local context, and relevant preceding targets. An oversized required context or fuzzy-event candidate fails explicitly instead of silently dropping text. A failed passage preserves the previous completed reminder set rather than publishing a partial set.
+
+Guided generation guarantees the shape of a model result, not its semantic correctness. App validation rejects empty action or motivation text, noncontiguous evidence, action text that is not substantially grounded in that evidence, hallucinated venues, invalid durations, and reminders without an event target. Generic references such as “the game” use the complete memo when it fits, or relevant preceding named-event context with original source positions for long inputs. Covering every source range does not guarantee that the model preserves every relevant fact.
 
 If the system language model is unavailable or parsing fails, the app produces no new reminders rather than using a speculative heuristic.
 
@@ -142,7 +144,7 @@ Removing a reminder deletes the rule and adds a manual-removal feedback record. 
 - previous feedback;
 - the new feedback.
 
-Manual removals are reapplied deterministically, so reprocessing cannot silently resurrect a reminder the user removed. Other additions, replacements, and corrections pass through the same transcript-wide grounded parser. Feedback reprocessing changes reminders only; it does not rewrite the note title, summary, or transcript.
+Manual removals are reapplied deterministically, so reprocessing cannot silently resurrect a reminder the user removed. Other additions, replacements, and corrections pass through the same complete-source grounded parser; for long inputs a final correction can remove or replace candidates from any earlier passage. Feedback reprocessing changes reminders only; it does not rewrite the note title, summary, or transcript.
 
 Full note reprocessing retranscribes the saved audio, regenerates the title and summary, then extracts reminders while reapplying every stored feedback correction and manual removal. Previously completed results remain available until each replacement stage succeeds.
 

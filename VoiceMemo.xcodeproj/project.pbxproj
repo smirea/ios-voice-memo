@@ -76,6 +76,10 @@
 		A10000000000000000000044 /* WaveformCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000044 /* WaveformCache.swift */; };
 		A10000000000000000000045 /* WaveformDecoderContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000045 /* WaveformDecoderContractChecks.swift */; };
 		A10000000000000000000046 /* PlaybackWaveformContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000046 /* PlaybackWaveformContractChecks.swift */; };
+		A10000000000000000000047 /* ModelContextBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000047 /* ModelContextBudget.swift */; };
+		A10000000000000000000048 /* ModelContextContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000048 /* ModelContextContractChecks.swift */; };
+		A10000000000000000000049 /* ReflectionContextContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000049 /* ReflectionContextContractChecks.swift */; };
+		A1000000000000000000004A /* ReminderContextContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004A /* ReminderContextContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -174,6 +178,10 @@
 		B10000000000000000000044 /* WaveformCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformCache.swift; sourceTree = "<group>"; };
 		B10000000000000000000045 /* WaveformDecoderContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformDecoderContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000046 /* PlaybackWaveformContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackWaveformContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000047 /* ModelContextBudget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelContextBudget.swift; sourceTree = "<group>"; };
+		B10000000000000000000048 /* ModelContextContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelContextContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000049 /* ReflectionContextContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionContextContractChecks.swift; sourceTree = "<group>"; };
+		B1000000000000000000004A /* ReminderContextContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderContextContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -255,6 +263,10 @@
 				B10000000000000000000020 /* ReminderBenchmarkView.swift */,
 				B10000000000000000000015 /* ICloudDriveMirror.swift */,
 				B10000000000000000000004 /* ReflectionEngine.swift */,
+				B1000000000000000000004A /* ReminderContextContractChecks.swift */,
+				B10000000000000000000049 /* ReflectionContextContractChecks.swift */,
+				B10000000000000000000048 /* ModelContextContractChecks.swift */,
+				B10000000000000000000047 /* ModelContextBudget.swift */,
 				B10000000000000000000005 /* AudioRecorder.swift */,
 				B10000000000000000000017 /* AudioPlayback.swift */,
 				B10000000000000000000006 /* Components.swift */,
@@ -506,6 +518,10 @@
 				A10000000000000000000015 /* ICloudDriveMirror.swift in Sources */,
 				A10000000000000000000016 /* AudioPlayback.swift in Sources */,
 				A10000000000000000000004 /* ReflectionEngine.swift in Sources */,
+				A1000000000000000000004A /* ReminderContextContractChecks.swift in Sources */,
+				A10000000000000000000049 /* ReflectionContextContractChecks.swift in Sources */,
+				A10000000000000000000048 /* ModelContextContractChecks.swift in Sources */,
+				A10000000000000000000047 /* ModelContextBudget.swift in Sources */,
 				A10000000000000000000005 /* AudioRecorder.swift in Sources */,
 				A10000000000000000000006 /* Components.swift in Sources */,
 				A10000000000000000000007 /* RootView.swift in Sources */,

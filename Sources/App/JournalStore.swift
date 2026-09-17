@@ -489,7 +489,13 @@ final class JournalStore {
 
 	private func serviceActivityChanged(_ active: Bool, lease: ProcessingLease) {
 		guard activeLease == lease, !processingSuspended, activeStage?.isCancelled == false else { return }
-		if let admittedAt {
+		var perResponse = lease.stage == .reflect || lease.stage == .reminders
+		#if DEBUG
+		if processingDeadlineOverride != nil { perResponse = false }
+		#endif
+		if perResponse {
+			remainingStageTime = 90
+		} else if let admittedAt {
 			let elapsed = admittedAt.duration(to: .now).components
 			remainingStageTime -= Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
 		}

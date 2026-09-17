@@ -350,6 +350,7 @@ actor JournalRepository {
 		guard lease.stage == .transcribe else { throw RepositoryError.staleProcessing }
 		record.entry?.transcript = result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 		record.entry?.transcriptModel = result.modelName
+		record.entry?.analysis = nil
 		record.processing?.partialTranscript = nil
 		record.inputRevision += 1
 		advance(&record, after: .transcribe)
@@ -363,6 +364,8 @@ actor JournalRepository {
 		record.entry?.headline = result.headline
 		record.entry?.summary = result.summary
 		record.entry?.summaryModel = result.modelName
+		let analysis = result.analysisContext.map { MemoAnalysis(transcript: record.entry?.transcript ?? "", notes: $0) }
+		record.entry?.analysis = analysis
 		advance(&record, after: .reflect)
 		if result.outcome == .skipped { record.processing?.skippedStages.insert(.reflect) }
 		try write(record)

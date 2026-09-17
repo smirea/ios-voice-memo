@@ -14,6 +14,7 @@ enum ProcessingRepositoryContractChecks {
 			try await editChecks()
 			try await completionChecks()
 			try await migrationChecks()
+			try await analysisChecks()
 			print("PROCESSING REPOSITORY CONTRACT: durable stages, restart/cancellation, stale leases, write failure retry, narrow edits, skipped outcomes, and deletion passed")
 			fflush(stdout)
 		} catch { fatalError("PROCESSING REPOSITORY CONTRACT: \(error)") }
@@ -250,6 +251,30 @@ enum ProcessingRepositoryContractChecks {
 			&& blocked.records.first(where: { $0.id == legacy.id })?.processing == nil,
 			"A real migration write failure must keep readable notes available and leave uncommitted work unclaimed")
 		try expect(try Data(contentsOf: legacyURL) == original, "Failed processing migration must preserve original manifest bytes")
+	}
+
+	private static func analysisChecks() async throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let (repository, entry) = try await seed(root)
+		_ = try await repository.requestProcessing(id: entry.id, startAt: .reflect)
+		let originalLease = try await claim(repository, stage: .reflect)
+		var result = reflectionResult
+		result.analysisContext = "Complete internal analysis from every passage"
+		_ = try await repository.commitReflection(result, lease: originalLease)
+		let restarted = JournalRepository(rootURL: root)
+		_ = try await restarted.load()
+		let saved = await restarted.record(id: entry.id)
+		try expect(saved?.entry?.analysis?.matches(entry.transcript) == true
+			&& saved?.entry?.analysis?.notes == result.analysisContext,
+			"Completed derived notes must be committed with reflection and survive restart")
+		_ = try await restarted.requestProcessing(id: entry.id)
+		let transcription = try await claim(restarted, stage: .transcribe)
+		_ = try await restarted.commitTranscription(.init(transcript: "A new complete source", modelName: "Fixture"), lease: transcription)
+		try await stale { _ = try await restarted.commitReflection(result, lease: originalLease) }
+		let changed = await restarted.record(id: entry.id)
+		try expect(changed?.entry?.analysis == nil && changed?.entry?.summary == result.summary,
+			"New transcription must invalidate derived notes without deleting prior visible analysis; a stale reflection cannot restore them")
 	}
 
 	private static var reflectionResult: ReflectionResult {

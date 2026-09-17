@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct JournalLocation: Codable, Hashable, Sendable {
@@ -105,6 +106,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		case reminders
 		case reminderFeedback
 		case reminderModel
+		case analysis
 	}
 
 	let id: UUID
@@ -121,6 +123,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 	var reminders: [EventReminderRule]
 	var reminderFeedback: [ReminderFeedback]
 	var reminderModel: String?
+	var analysis: MemoAnalysis?
 
 	init(
 		id: UUID = UUID(),
@@ -136,7 +139,8 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		transcriptModel: String? = nil,
 		reminders: [EventReminderRule] = [],
 		reminderFeedback: [ReminderFeedback] = [],
-		reminderModel: String? = nil
+		reminderModel: String? = nil,
+		analysis: MemoAnalysis? = nil
 	) {
 		self.id = id
 		self.createdAt = createdAt
@@ -152,6 +156,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		self.reminders = reminders
 		self.reminderFeedback = reminderFeedback
 		self.reminderModel = reminderModel
+		self.analysis = analysis
 	}
 
 	init(from decoder: Decoder) throws {
@@ -170,6 +175,7 @@ struct JournalEntry: Identifiable, Codable, Hashable, Sendable {
 		reminders = try container.decodeIfPresent([EventReminderRule].self, forKey: .reminders) ?? []
 		reminderFeedback = try container.decodeIfPresent([ReminderFeedback].self, forKey: .reminderFeedback) ?? []
 		reminderModel = try container.decodeIfPresent(String.self, forKey: .reminderModel)
+		analysis = try container.decodeIfPresent(MemoAnalysis.self, forKey: .analysis)
 	}
 }
 
@@ -179,6 +185,22 @@ extension JournalEntry {
 		encoder.dateEncodingStrategy = .iso8601
 		encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
 		return try encoder.encode(self)
+	}
+}
+
+struct MemoAnalysis: Codable, Hashable, Sendable {
+	var sourceFingerprint: String
+	var notes: String
+
+	init(transcript: String, notes: String) {
+		sourceFingerprint = Self.fingerprint(transcript)
+		self.notes = notes
+	}
+
+	func matches(_ transcript: String) -> Bool { sourceFingerprint == Self.fingerprint(transcript) }
+
+	private static func fingerprint(_ transcript: String) -> String {
+		SHA256.hash(data: Data(("memo-analysis-v1\n" + transcript).utf8)).map { String(format: "%02x", $0) }.joined()
 	}
 }
 
@@ -195,6 +217,7 @@ struct ReflectionResult: Sendable {
 	var summary: String?
 	var modelName: String
 	var outcome: ModelProcessingOutcome = .complete
+	var analysisContext: String? = nil
 }
 
 enum EntryProcessingPhase: Equatable, Sendable {

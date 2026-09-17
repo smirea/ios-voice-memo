@@ -17,6 +17,7 @@
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
 - Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback, and alerts when ElevenLabs could not be used; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
 - Saves processing progress per note and resumes the unfinished stage after a restart. Keeps completed transcript and analysis during reprocessing, labels incomplete transcript text, and offers Retry for failed stages without treating partial results as complete.
+- Processes long transcripts and reminder feedback in ordered, bounded passages that cover the complete input. A failed passage keeps prior completed results and offers Retry; later corrections apply to all earlier reminder candidates.
 - Gives permanent and feedback recording priority over transcription and on-device analysis, including weekly reviews and reminder matching. Optional work pauses through recording interruptions and user pauses, then resumes after capture stops; timed-out native work cannot overlap its replacement.
 - Generates summaries only for recordings longer than 20 seconds.
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md). Saves resolved occurrences before scheduling them, and discards obsolete results after note, calendar, or delivery-setting changes.
@@ -74,6 +75,7 @@
 # Review Screen
 
 - Generates the current week's review on open, showing a loading state followed by the week, title, trend, and reflection; interrupted or unavailable analysis shows a retry action instead of a generated review.
+- Builds reviews from dated analysis notes covering each memo, reusing saved notes only when their source transcript still matches, and combines large weeks in bounded stages.
 - Uses the standard back button and native back swipe to return home.
 
 # Settings Screen
