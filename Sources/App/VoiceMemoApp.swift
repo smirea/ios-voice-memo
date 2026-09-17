@@ -37,6 +37,7 @@ struct VoiceMemoApp: App {
 					await ReflectionContextContractChecks.runFromLaunchArguments()
 					await ReminderContextContractChecks.runFromLaunchArguments()
 					await ReminderIdentityContractChecks.runFromLaunchArguments()
+					await ReminderValidityContractChecks.runFromLaunchArguments()
 					await ProcessingRepositoryContractChecks.runFromLaunchArguments()
 					await ProcessingWorkerContractChecks.runFromLaunchArguments()
 					await ServiceAdmissionContractChecks.runFromLaunchArguments()

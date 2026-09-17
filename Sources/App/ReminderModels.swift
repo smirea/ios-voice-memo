@@ -158,6 +158,11 @@ struct EventReminderRule: Codable, Hashable, Identifiable, Sendable {
 	func isActive(at date: Date) -> Bool {
 		consumedAt == nil && (expiresAt.map { $0 >= date } ?? true)
 	}
+
+	func allows(_ event: JournalCalendarEvent, at date: Date) -> Bool {
+		isActive(at: date) && event.startDate > createdAt && event.endDate >= date
+			&& (expiresAt.map { event.startDate <= $0 } ?? true)
+	}
 }
 
 enum ReminderFeedbackKind: String, Codable, Hashable, Sendable {

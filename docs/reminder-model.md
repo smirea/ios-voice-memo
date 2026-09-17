@@ -126,8 +126,8 @@ Only an unambiguous new voice instruction can establish a fresh generation: its 
 Resolution happens after parsing:
 
 1. Load a bounded range of included-calendar events.
-2. Discard canceled events, expired rules, and occurrences that started before the reminder was created. An attached source event remains eligible when the memo was recorded before it.
-3. Apply deterministic validity and time-of-day constraints.
+2. Discard canceled events, expired rules, and occurrences that started at or before the reminder was created. An attached source event remains eligible when the memo was recorded before it.
+3. Require each scheduled occurrence, including a current pin, to start at or before the reminder's expiration. The expiration boundary is inclusive; no expiration means indefinite validity. Retain ongoing eligible occurrences through their end while the rule remains active, and apply time-of-day constraints.
 4. Match series using stored identifiers and cached fallbacks.
 5. Resolve specific multiword event names directly against candidate titles.
 6. Require a lexical event-type anchor, then ask the model to classify each remaining fuzzy candidate independently.
@@ -138,7 +138,7 @@ Resolution reads committed notes and excludes notes with pending source edits. A
 
 Recurring EventKit events prefer their external identifier because it is shared by occurrences. Calendar identifier, normalized title, and approximate start time form the fallback. Separately-created events such as Meetup imports are handled through fuzzy matching.
 
-Fuzzy evaluation receives only the rule and one supplied candidate event with its title, calendar, start, end, location, and notes. Time and explicit venue constraints are applied before the model. One candidate per two-value decision avoids the reference mixing observed when the on-device model classified batches.
+Fuzzy evaluation receives only the rule and one supplied candidate event with its title, calendar, start, end, location, and notes. Future occurrences outside the validity window, time constraints, and explicit venue constraints are filtered before the model. Ended historical events remain available as matching examples, but cannot become scheduled occurrences. An out-of-window pin is retained without scheduling a substitute. One candidate per two-value decision avoids the reference mixing observed when the on-device model classified batches.
 
 Morning, afternoon, and evening are app-defined local-time buckets. The model chooses a named bucket; it does not generate arbitrary clock ranges.
 

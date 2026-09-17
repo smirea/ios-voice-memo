@@ -254,31 +254,30 @@ enum ReminderEngine {
 					let latest = current ?? pinned
 					if latest.endDate < now {
 						consumedAtByReminderID[reminder.id] = latest.endDate
-					} else if let current {
+					} else if let current, reminder.allows(current, at: now) {
 						occurrences.append(EventReminderOccurrence(sourceEntryID: entry.id, reminder: reminder, event: current))
 					}
 					continue
 				}
-				let candidatesAfterCreation = orderedEvents.filter {
-					$0.startDate > reminder.createdAt
-				}
+				let eligibleOccurrences = orderedEvents.filter { reminder.allows($0, at: now) }
 				let matchedEvents: [JournalCalendarEvent]
 
 				switch reminder.selector {
 				case let .series(series):
-					matchedEvents = candidatesAfterCreation.filter { series.matches($0) }
+					matchedEvents = eligibleOccurrences.filter { series.matches($0) }
 				case let .fuzzy(selector):
-					let result = try await match(selector: selector, candidates: orderedEvents, modelIsAvailable: modelIsAvailable, services: services)
+					let exampleCandidates = orderedEvents.filter { $0.endDate < now || reminder.allows($0, at: now) }
+					let result = try await match(selector: selector, candidates: exampleCandidates, modelIsAvailable: modelIsAvailable, services: services)
 					let decisions = result.decisions
 					if !result.outcome.isComplete {
 						incompleteReminderIDs.insert(reminder.id)
 						outcome = result.outcome
 					}
-					matchedEvents = candidatesAfterCreation.filter {
+					matchedEvents = eligibleOccurrences.filter {
 						decisions[$0.focusKey]?.matches == true
 					}
 					examplesByReminderID[reminder.id] = matchExamples(
-						from: events,
+						from: exampleCandidates,
 						selector: selector,
 						decisions: decisions
 					)
@@ -287,14 +286,14 @@ enum ReminderEngine {
 				let selected: [JournalCalendarEvent]
 				if reminder.occurrencePolicy == .nextMatch {
 					if !incompleteReminderIDs.contains(reminder.id),
-						let next = matchedEvents.first(where: { $0.endDate >= now }) {
+						let next = matchedEvents.first {
 						selected = [next]
 						resolvedOccurrencesByReminderID[reminder.id] = next
 					} else {
 						selected = []
 					}
 				} else {
-					selected = matchedEvents.filter { $0.endDate >= now }
+					selected = matchedEvents
 				}
 				occurrences.append(contentsOf: selected.map {
 					EventReminderOccurrence(sourceEntryID: entry.id, reminder: reminder, event: $0)
