@@ -43,6 +43,8 @@
 		A10000000000000000000022 /* MapLocationSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* MapLocationSearch.swift */; };
 		A10000000000000000000023 /* LocationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000023 /* LocationContractChecks.swift */; };
 		A10000000000000000000025 /* LocalModelProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000025 /* LocalModelProbe.swift */; };
+		A10000000000000000000026 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000026 /* RecordingSession.swift */; };
+		A10000000000000000000027 /* RecordingContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000027 /* RecordingContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -108,6 +110,8 @@
 		B10000000000000000000025 /* LocalModelProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelProbe.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* MyVoiceMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyVoiceMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C10000000000000000000002 /* VoiceMemoWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VoiceMemoWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000026 /* RecordingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSession.swift; sourceTree = "<group>"; };
+		B10000000000000000000027 /* RecordingContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -147,6 +151,8 @@
 				B10000000000000000000021 /* LocationModels.swift */,
 				B10000000000000000000023 /* LocationContractChecks.swift */,
 				B10000000000000000000025 /* LocalModelProbe.swift */,
+				B10000000000000000000027 /* RecordingContractChecks.swift */,
+				B10000000000000000000026 /* RecordingSession.swift */,
 				B10000000000000000000003 /* JournalStore.swift */,
 				B10000000000000000000018 /* CalendarSync.swift */,
 				B10000000000000000000019 /* ReminderModels.swift */,
@@ -364,6 +370,8 @@
 				A10000000000000000000021 /* LocationModels.swift in Sources */,
 				A10000000000000000000023 /* LocationContractChecks.swift in Sources */,
 				A10000000000000000000025 /* LocalModelProbe.swift in Sources */,
+				A10000000000000000000027 /* RecordingContractChecks.swift in Sources */,
+				A10000000000000000000026 /* RecordingSession.swift in Sources */,
 				A10000000000000000000003 /* JournalStore.swift in Sources */,
 				A10000000000000000000017 /* CalendarSync.swift in Sources */,
 				A10000000000000000000018 /* ReminderModels.swift in Sources */,

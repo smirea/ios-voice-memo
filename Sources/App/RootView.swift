@@ -6,29 +6,22 @@ private enum AppRoute: Hashable {
 	case review
 }
 
-private struct RecordingContext: Identifiable {
-	let id = UUID()
-	let startsImmediately: Bool
-}
-
 struct RootView: View {
 	@Environment(\.scenePhase) private var scenePhase
 	@Bindable var store: JournalStore
+	@Bindable var recordingSession: RecordingSession
 	@State private var path: [AppRoute] = []
-	@State private var recordingContext: RecordingContext?
 	@State private var showsSettings = false
 
-	init(store: JournalStore) {
+	init(store: JournalStore, recordingSession: RecordingSession) {
 		self.store = store
+		self.recordingSession = recordingSession
 		let arguments = ProcessInfo.processInfo.arguments
 		if arguments.contains("-demo-entry"), let entry = store.entries.first(where: { Calendar.current.component(.day, from: $0.createdAt) == 11 }) {
 			_path = State(initialValue: [.entry(entry.id)])
 		}
 		if arguments.contains("-demo-reminders"), let entry = store.entries.first(where: { !$0.reminders.isEmpty }) {
 			_path = State(initialValue: [.entry(entry.id)])
-		}
-		if arguments.contains("-demo-recording") {
-			_recordingContext = State(initialValue: RecordingContext(startsImmediately: true))
 		}
 		if arguments.contains("-demo-review") {
 			_path = State(initialValue: [.review])
@@ -46,7 +39,7 @@ struct RootView: View {
 			JournalView(
 				store: store,
 				onSelectEntry: { path.append(.entry($0.id)) },
-				onNewRecording: { recordingContext = RecordingContext(startsImmediately: false) },
+				onNewRecording: { recordingSession.present(startsImmediately: false) },
 				onReview: { path.append(.review) },
 				onSettings: { showsSettings = true }
 			)
@@ -65,14 +58,17 @@ struct RootView: View {
 			}
 		}
 		.background(AppStyle.background)
-		.fullScreenCover(item: $recordingContext) { context in
+		.fullScreenCover(item: Binding(
+			get: { recordingSession.context },
+			// Only finishing or explicitly discarding may dismiss an owned recording session.
+			set: { _ in }
+		)) { _ in
 			RecordView(
 				store: store,
-				startsImmediately: context.startsImmediately,
-				onClose: { recordingContext = nil },
+				session: recordingSession,
+				onClose: { path.removeAll() },
 				onFinished: { entryID in
 					path = [.entry(entryID)]
-					recordingContext = nil
 				}
 			)
 		}
@@ -91,10 +87,11 @@ struct RootView: View {
 			guard url.scheme == "myvoicememo" else { return }
 			switch url.host {
 			case "record":
-				guard recordingContext == nil else { return }
+				guard recordingSession.context == nil else { return }
 				path.removeAll()
-				recordingContext = RecordingContext(startsImmediately: true)
+				recordingSession.present(startsImmediately: true)
 			case "entry":
+				guard recordingSession.context == nil else { return }
 				guard let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
 					.queryItems?
 					.first(where: { $0.name == "id" })?
@@ -102,13 +99,15 @@ struct RootView: View {
 					let id = UUID(uuidString: value),
 					store.entry(id: id) != nil
 				else { return }
-				recordingContext = nil
 				path = [.entry(id)]
 			default:
 				return
 			}
 		}
 		.task {
+			if recordingSession.isVisualDemo {
+				recordingSession.present(startsImmediately: true)
+			}
 			await store.refreshCalendar()
 		}
 		.onChange(of: scenePhase) { _, phase in

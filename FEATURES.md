@@ -35,6 +35,7 @@
 - Shows an error and returns home when recording cannot start.
 - Records without a fixed time limit and shows a live waveform, elapsed time, pause/resume, finish, and discard controls.
 - Finishing saves the note and opens its **Note Screen**; discarding deletes the recording and returns Home.
+- Opening a note link while recording keeps the recording on screen; only an explicit discard deletes active audio, and discarding during microphone permission prevents recording from starting later.
 - Recording controls provide haptic feedback when enabled in Settings.
 - Continues with the screen locked or app backgrounded, pauses for audio interruptions, and recovers from route changes when the microphone becomes available.
 - Checkpoints audio for crash recovery and captures location without blocking recording.

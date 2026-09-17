@@ -3,17 +3,11 @@ import UIKit
 
 struct RecordView: View {
 	@Bindable var store: JournalStore
-	let startsImmediately: Bool
+	@Bindable var session: RecordingSession
 	let onClose: () -> Void
 	let onFinished: (UUID) -> Void
 
-	@State private var recorder = AudioRecorder()
-	@State private var liveActivity = RecordingActivityManager()
-	@State private var errorMessage: String?
-	@State private var isFinishing = false
-	@State private var activeRecordingURL: URL?
-	@State private var lastCheckpointSecond = 0
-	@State private var hasStartedRecording = false
+	private var recorder: AudioRecorder { session.recorder }
 	@State private var isAttachedToEvent = false
 	@State private var eventAttachmentWasChanged = false
 	@State private var selectedEventID: String?
@@ -21,7 +15,7 @@ struct RecordView: View {
 	@State private var showsDatePicker = false
 
 	private var isVisualDemo: Bool {
-		ProcessInfo.processInfo.arguments.contains("-demo-recording")
+		session.isVisualDemo
 	}
 
 	private var shownDuration: TimeInterval {
@@ -45,39 +39,21 @@ struct RecordView: View {
 		ZStack {
 			AppStyle.background.ignoresSafeArea()
 
-			if hasStartedRecording || isVisualDemo {
+			if session.hasStartedRecording || isVisualDemo {
 				recordingView
 			} else {
 				setupView
 			}
 		}
 		.presentationBackground(AppStyle.background)
-		.task {
-			if startsImmediately || isVisualDemo {
-				hasStartedRecording = true
-				await beginRecording()
-			}
-		}
+		.interactiveDismissDisabled()
 		.onAppear {
-			guard !startsImmediately, !isVisualDemo, !hasStartedRecording else { return }
+			guard !session.hasStartedRecording else { return }
 			prepareEventSelection()
 		}
 		.onChange(of: selectedDay) { _, _ in
-			guard !startsImmediately, !isVisualDemo, !hasStartedRecording else { return }
+			guard !session.hasStartedRecording else { return }
 			prepareEventSelection()
-		}
-		.onDisappear {
-			liveActivity.end()
-			if !isFinishing {
-				discardActiveRecording()
-				UIApplication.shared.isIdleTimerDisabled = false
-			}
-		}
-		.onChange(of: recorder.duration) { _, duration in
-			checkpointIfNeeded(duration: duration)
-		}
-		.onChange(of: recorder.isPaused) { _, isPaused in
-			liveActivity.setPaused(isPaused, elapsed: recorder.duration)
 		}
 		.onChange(of: isAttachedToEvent) { _, isAttached in
 			if isAttached {
@@ -99,12 +75,15 @@ struct RecordView: View {
 			}
 		}
 		.alert("Recording unavailable", isPresented: Binding(
-			get: { errorMessage != nil },
-			set: { if !$0 { errorMessage = nil } }
+			get: { session.errorMessage != nil },
+			set: { if !$0 { session.errorMessage = nil } }
 		)) {
-			Button("Close") { onClose() }
+			Button("Close") {
+				session.discard()
+				onClose()
+			}
 		} message: {
-			Text(errorMessage ?? "")
+			Text(session.errorMessage ?? "")
 		}
 		.sheet(isPresented: $showsDatePicker) {
 			NavigationStack {
@@ -270,7 +249,7 @@ struct RecordView: View {
 						.shadow(color: AppStyle.accent.opacity(0.38), radius: 18, y: 7)
 				}
 				.buttonStyle(.plain)
-				.disabled(!isVisualDemo && (!recorder.isRecording || isFinishing))
+				.disabled(!isVisualDemo && (!recorder.isRecording || session.isFinishing))
 				.accessibilityLabel("Finish recording")
 			}
 			.padding(.bottom, 63)
@@ -365,86 +344,24 @@ struct RecordView: View {
 	}
 
 	private func startRecording() {
-		hasStartedRecording = true
-		Task { await beginRecording() }
-	}
-
-	private func beginRecording() async {
-		guard !isVisualDemo else {
-			liveActivity.start(elapsed: shownDuration, locationName: "Chicago")
-			return
-		}
-		var destination: URL?
-		do {
-			let url = try store.destinationForNewRecording(calendarEvent: selectedCalendarEvent)
-			destination = url
-			activeRecordingURL = url
-			try await recorder.start(at: url)
-			guard !Task.isCancelled else {
-				discardActiveRecording()
-				return
-			}
-			liveActivity.start()
-			impact(.light)
-			let locationTask = store.beginRecordingLocationCapture()
-			Task { @MainActor in
-				let location = await locationTask.value
-				guard activeRecordingURL == url else { return }
-				liveActivity.setLocation(location.map(store.displayName(for:)))
-			}
-			if store.settings.keepScreenAwakeWhileRecording {
-				UIApplication.shared.isIdleTimerDisabled = true
-			}
-		} catch {
-			discardActiveRecording(fallbackURL: destination)
-			guard !Task.isCancelled else { return }
-			errorMessage = error.localizedDescription
-		}
+		session.start(calendarEvent: selectedCalendarEvent)
 	}
 
 	private func finish() {
-		guard !isVisualDemo else { return }
-		guard !isFinishing, let recording = recorder.finish() else { return }
-		activeRecordingURL = nil
-		liveActivity.end()
-		isFinishing = true
-		UIApplication.shared.isIdleTimerDisabled = false
+		guard let entryID = session.finish() else { return }
 		impact(.medium)
-		let entryID = store.finishRecording(
-			at: recording.url,
-			duration: recording.duration,
-			calendarEvent: selectedCalendarEvent
-		)
 		onFinished(entryID)
 	}
 
 	private func cancel() {
-		discardActiveRecording()
-		liveActivity.end()
-		UIApplication.shared.isIdleTimerDisabled = false
+		session.discard()
 		notification(.warning)
 		onClose()
-	}
-
-	private func discardActiveRecording(fallbackURL: URL? = nil) {
-		let url = recorder.cancel() ?? activeRecordingURL ?? fallbackURL
-		activeRecordingURL = nil
-		guard let url else { return }
-		try? FileManager.default.removeItem(at: url)
-		store.cancelRecording(at: url)
 	}
 
 	private func togglePause() {
 		recorder.togglePause()
 		impact(.soft)
-	}
-
-	private func checkpointIfNeeded(duration: TimeInterval) {
-		guard let activeRecordingURL else { return }
-		let second = Int(duration)
-		guard second >= lastCheckpointSecond + 5 else { return }
-		lastCheckpointSecond = second
-		store.checkpointRecording(at: activeRecordingURL, duration: duration)
 	}
 
 	private func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {

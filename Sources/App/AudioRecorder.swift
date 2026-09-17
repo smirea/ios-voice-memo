@@ -26,10 +26,16 @@ enum RecordingError: LocalizedError {
 @Observable
 final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	private(set) var isRecording = false
-	private(set) var isPaused = false
-	private(set) var duration: TimeInterval = 0
+	private(set) var isPaused = false {
+		didSet { onStateChange?() }
+	}
+	private(set) var duration: TimeInterval = 0 {
+		didSet { onStateChange?() }
+	}
 	private(set) var levels = Array(repeating: 0.08, count: 46)
 	private(set) var statusMessage: String?
+	@ObservationIgnored var onStateChange: (() -> Void)?
+	@ObservationIgnored private let permissionRequest: () async -> Bool
 
 	@ObservationIgnored private var recorder: AVAudioRecorder?
 	@ObservationIgnored private var meterTimer: Timer?
@@ -38,7 +44,8 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	@ObservationIgnored private var routeChangeTask: Task<Void, Never>?
 	@ObservationIgnored private var wasRecordingBeforeInterruption = false
 
-	override init() {
+	init(permissionRequest: @escaping () async -> Bool = { await AVAudioApplication.requestRecordPermission() }) {
+		self.permissionRequest = permissionRequest
 		super.init()
 		observeAudioSession()
 	}
@@ -49,7 +56,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 	}
 
 	func start(at url: URL) async throws {
-		guard await requestMicrophonePermission() else {
+		guard await permissionRequest() else {
 			throw RecordingError.microphonePermissionDenied
 		}
 		try Task.checkCancellation()
@@ -131,10 +138,6 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 		statusMessage = nil
 		deactivateSession()
 		return url
-	}
-
-	private func requestMicrophonePermission() async -> Bool {
-		return await AVAudioApplication.requestRecordPermission()
 	}
 
 	private func startMetering() {

@@ -2,11 +2,18 @@ import SwiftUI
 
 @main
 struct VoiceMemoApp: App {
-	@State private var store = JournalStore()
+	@State private var store: JournalStore
+	@State private var recordingSession: RecordingSession
+
+	init() {
+		let store = JournalStore()
+		_store = State(initialValue: store)
+		_recordingSession = State(initialValue: RecordingSession(store: store))
+	}
 
 	var body: some Scene {
 		WindowGroup {
-			RootView(store: store)
+			RootView(store: store, recordingSession: recordingSession)
 				.preferredColorScheme(.dark)
 				.tint(AppStyle.accent)
 				.task {
@@ -16,6 +23,7 @@ struct VoiceMemoApp: App {
 					await ReminderBenchmark.runFromLaunchArguments()
 					#if DEBUG
 					await LocationContractChecks.runFromLaunchArguments()
+					await RecordingContractChecks.runFromLaunchArguments()
 					#endif
 				}
 		}

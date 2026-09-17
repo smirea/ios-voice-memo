@@ -36,10 +36,10 @@ final class JournalStore {
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
 	@ObservationIgnored private var isConfigurationRestorePending = false
 
-	init() {
+	init(storageRootURL: URL? = nil) {
 		isDemoMode = ProcessInfo.processInfo.arguments.contains("-demo")
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-		rootURL = applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
+		rootURL = storageRootURL ?? applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		entriesURL = rootURL.appendingPathComponent("entries.json")
 		configurationURL = rootURL.appendingPathComponent("config.json")
