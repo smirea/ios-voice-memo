@@ -81,6 +81,10 @@ Scripts/query-local-model.sh "Explain why the sky is blue in one sentence."
 
 See [`docs/reminder-model-evaluation.md`](docs/reminder-model-evaluation.md) for simulator benchmark commands and the current baseline.
 
+Use `-demo -recording-activity-contract-tests -recording-presentation-contract-tests` for held orphan cleanup, serialized recording activity replacement, capture-priority ordering, progress-backed freshness, frozen final durations, legacy state decoding, and capture-specific links. Isolated sessions use disabled native activities unless explicitly injected. Live Activity availability never gates audio startup.
+
+Native recording presentation checks use `-demo -recording-activity-native-smoke`. For visual review, use `-demo -recording-activity-native-preview running` (also `paused`, `interrupted`, `waiting`, or `stale`) and `-recording-activity-native-preview-cleanup` afterward. The fixture leaves only its own activity visible. Use `-recording-activity-native-orphan-seed`, terminate the app, and relaunch with `-recording-activity-native-orphan-verify` to check startup cleanup. These native checks report actual API results separately; they do not establish real microphone capture, device background execution, system update throttling, or alert delivery. iOS can keep an old status visible after its freshness deadline. The running timer is explicitly estimated and has a native upper bound; a stale redraw switches to the exact last-confirmed duration.
+
 ## TestFlight
 
 The Xcode Cloud `Default` workflow archives every push to `master` and distributes successful builds to the internal `me` testing group. Xcode Cloud manages sequential build numbers.

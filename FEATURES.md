@@ -49,7 +49,7 @@
 - Recording controls provide haptic feedback when enabled in Settings.
 - Continues with the screen locked or app backgrounded, pauses for audio interruptions, and recovers from route changes when the microphone becomes available.
 - Distinguishes interrupted or unavailable input from a user pause; Pause cancels automatic recovery, and recording failures freeze elapsed time instead of appearing to keep recording.
-- After an audio-system reset or encoder failure, keeps the captured audio available to finish, disables Resume for that recording, and uses a fresh recorder for the next one.
+- After an audio-system reset or encoder failure, keeps the captured audio available to finish, disables Resume for that recording, allows the screen to sleep, and uses a fresh recorder for the next one.
 - Preserves audio continuously for crash recovery under the same note identity, including after an abrupt app exit; the latest buffered audio may be lost. Captures location without blocking recording.
 - Prepares finished audio in the background for standard M4A playback and export, keeps the original until preparation is safely saved, and retains failed preparation for automatic or manual Reprocess retry.
 
@@ -95,8 +95,9 @@
 # Lock Screen and Dynamic Island
 
 - A Lock Screen circular microphone widget opens the app and starts a recording.
-- Recording starts a Live Activity showing the app icon, location, date, state, and elapsed time on the Lock Screen and Dynamic Island.
-- Pausing freezes the displayed elapsed time; resuming restarts it.
-- Finishing or discarding a recording immediately clears the Live Activity.
+- When permitted, recording shows a Live Activity with the app icon, location, date, capture state, and elapsed time; recording starts independently of Live Activity availability.
+- Paused, interrupted, and unavailable-input states freeze the displayed time. Running time is marked as an estimate and stops at a fixed freshness limit; iOS can delay refreshing an expired activity’s status. When refreshed, stale content shows the last confirmed duration and asks you to open the app.
+- Finishing, discarding, or a recording failure ends its Live Activity with a frozen final duration. Reopening the app clears activities left by a previous process.
+- Tapping a recording Live Activity returns to an active recording or opens its saved or recovered note. An old activity never starts a new recording.
 - Enabled event reminders prepare Live Activities for the next two event groups whose reminder time falls within 24 hours, refresh when the app opens or relevant information changes, and mark them stale when the event ends. Additional groups wait for a later refresh; reminder extraction has no count limit.
 - Grouped reminders use the earliest requested lead time, open a surviving source note, and report reminders hidden on each widget surface. Changes retire obsolete presentations before matching new ones; recording temporarily clears reminder activities and restores them afterward.

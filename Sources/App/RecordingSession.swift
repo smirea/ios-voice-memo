@@ -30,24 +30,35 @@ final class RecordingSession {
 	}
 
 	@ObservationIgnored private let store: JournalStore
-	@ObservationIgnored private let liveActivity = RecordingActivityManager()
+	@ObservationIgnored let activityManager: RecordingActivityManager
+	@ObservationIgnored private let now: () -> Date
+	@ObservationIgnored private let heartbeatInterval: Duration
+	@ObservationIgnored private var heartbeatTask: Task<Void, Never>?
+	@ObservationIgnored private var activityCaptureID: UUID?
+	@ObservationIgnored private var activityState: RecordingActivityAttributes.ContentState?
 	@ObservationIgnored private(set) var startupTask: Task<Void, Never>?
 	@ObservationIgnored private var generation: UUID?
 	@ObservationIgnored private var capturePriorityOwner: UUID?
 	@ObservationIgnored private var activeURL: URL?
 	@ObservationIgnored private var calendarEvent: JournalCalendarEvent?
 	@ObservationIgnored private var lastCheckpointSecond = 0
-	@ObservationIgnored private var lastPausedState = false
 
 	var isVisualDemo: Bool {
 		ProcessInfo.processInfo.arguments.contains("-demo-recording")
 	}
 
-	init(store: JournalStore, recorder: AudioRecorder = AudioRecorder()) {
+	init(store: JournalStore, recorder: AudioRecorder = AudioRecorder(),
+		activityManager: RecordingActivityManager? = nil, now: @escaping () -> Date = Date.init,
+		heartbeatInterval: Duration = .seconds(20)) {
 		self.store = store
 		self.recorder = recorder
+		self.activityManager = activityManager ?? RecordingActivityManager(operations: store.isIsolatedStorage ? .disabled : nil)
+		self.now = now
+		self.heartbeatInterval = heartbeatInterval
 		recorder.onStateChange = { [weak self] in self?.recordingStateChanged() }
 	}
+
+	deinit { heartbeatTask?.cancel() }
 
 	func present(startsImmediately: Bool) {
 		guard context == nil else { return }
@@ -67,15 +78,17 @@ final class RecordingSession {
 		hasStartedRecording = true
 		self.calendarEvent = calendarEvent
 		lastCheckpointSecond = 0
-		lastPausedState = false
 		let generation = UUID()
 		self.generation = generation
 		if isVisualDemo {
-			liveActivity.start(elapsed: 113, locationName: "Chicago")
+			let date = now()
+			activityCaptureID = generation
+			activityState = makeActivityState(status: .recording, elapsed: 113, at: date, location: "Chicago")
+			activityManager.start(captureID: generation, startedAt: date, state: activityState!)
 			#if DEBUG
 			if ProcessInfo.processInfo.arguments.contains("-demo-audio-reset") {
 				recorder.showStoppedDemo(duration: 113)
-				liveActivity.setPaused(true, elapsed: 113)
+				stopActivity(elapsed: 113)
 			}
 			#endif
 			return
@@ -92,7 +105,7 @@ final class RecordingSession {
 		isFinishing = true
 		defer { isFinishing = false }
 		generation = nil
-		liveActivity.end()
+		stopActivity(elapsed: duration)
 		UIApplication.shared.isIdleTimerDisabled = false
 		await releaseCapturePriority()
 		do {
@@ -118,7 +131,7 @@ final class RecordingSession {
 		startupTask = nil
 		if finishedRecording == nil { finishedRecording = recorder.finish() }
 		if recorder.state == .starting { _ = recorder.cancel() }
-		liveActivity.end()
+		stopActivity(elapsed: duration)
 		UIApplication.shared.isIdleTimerDisabled = false
 		await releaseCapturePriority()
 		do {
@@ -159,9 +172,16 @@ final class RecordingSession {
 			try await recorder.start(at: url)
 			guard self.generation == generation, !Task.isCancelled else { return }
 			startupTask = nil
-			liveActivity.start(elapsed: recorder.duration)
-			if recorder.isPaused {
-				liveActivity.setPaused(true, elapsed: recorder.duration)
+			if let captureID = UUID(uuidString: url.deletingPathExtension().lastPathComponent), let status = activityStatus {
+				let date = now()
+				activityCaptureID = captureID
+				activityState = makeActivityState(status: status, elapsed: recorder.duration, at: date)
+				activityManager.start(captureID: captureID, startedAt: date, state: activityState!) { [weak self] in
+					guard let self, self.generation == generation else { return false }
+					let released = await self.store.waitForReminderActivitiesToEnd(owner: generation)
+					return released && self.generation == generation
+				}
+				startHeartbeat(generation: generation)
 			}
 			if store.settings.hapticsEnabled {
 				UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -170,7 +190,7 @@ final class RecordingSession {
 			Task { [weak self] in
 				let location = await locationTask.value
 				guard let self, self.generation == generation else { return }
-				self.liveActivity.setLocation(location.map(self.store.displayName(for:)))
+				self.setActivityLocation(location.map(self.store.displayName(for:)) ?? "Location unavailable")
 			}
 			UIApplication.shared.isIdleTimerDisabled = store.settings.keepScreenAwakeWhileRecording
 		} catch {
@@ -182,9 +202,17 @@ final class RecordingSession {
 	}
 
 	private func recordingStateChanged() {
-		if case .stopped = recorder.state, let owner = capturePriorityOwner {
-			capturePriorityOwner = nil
-			Task { await store.endCapturePriority(owner: owner) }
+		if let status = activityStatus {
+			if activityState?.status != status { refreshActivity() }
+		} else if recorder.state != .starting {
+			stopActivity(elapsed: recorder.duration)
+		}
+		if case .stopped = recorder.state {
+			UIApplication.shared.isIdleTimerDisabled = false
+			if let owner = capturePriorityOwner {
+				capturePriorityOwner = nil
+				Task { await store.endCapturePriority(owner: owner) }
+			}
 		}
 		guard let activeURL, recorder.hasRecording else { return }
 		let second = Int(recorder.duration)
@@ -192,10 +220,67 @@ final class RecordingSession {
 			lastCheckpointSecond = second
 			store.checkpointRecording(at: activeURL, duration: recorder.duration)
 		}
-		if recorder.isPaused != lastPausedState {
-			lastPausedState = recorder.isPaused
-			liveActivity.setPaused(recorder.isPaused, elapsed: recorder.duration)
+	}
+
+	func refreshActivity() {
+		guard generation != nil, let captureID = activityCaptureID, let previous = activityState,
+			let status = activityStatus else { return }
+		let elapsed = recorder.duration.isFinite ? max(0, recorder.duration) : previous.elapsed
+		guard status != .recording || previous.status != status || elapsed > previous.elapsed else { return }
+		let state = makeActivityState(status: status, elapsed: elapsed, at: now(), location: previous.locationName)
+		activityState = state
+		activityManager.update(captureID: captureID, state: state)
+	}
+
+	private var activityStatus: RecordingActivityAttributes.Status? {
+		switch recorder.state {
+		case .recording: .recording
+		case .pausedByUser: .paused
+		case .interrupted: .interrupted
+		case .waitingForInput: .waitingForInput
+		case .idle, .starting, .stopped: nil
 		}
+	}
+
+	private func makeActivityState(status: RecordingActivityAttributes.Status, elapsed: TimeInterval,
+		at date: Date, location: String = "Finding location…") -> RecordingActivityAttributes.ContentState {
+		.init(isPaused: status != .recording, locationName: location, elapsed: elapsed.isFinite ? max(0, elapsed) : 0,
+			resumedAt: status == .recording ? date : nil, status: status, confirmedAt: date,
+			freshUntil: date.addingTimeInterval(90))
+	}
+
+	private func startHeartbeat(generation: UUID) {
+		heartbeatTask?.cancel()
+		let interval = heartbeatInterval
+		heartbeatTask = Task { [weak self] in
+			while !Task.isCancelled {
+				do { try await Task.sleep(for: interval) } catch { return }
+				guard !Task.isCancelled, let self, self.generation == generation else { return }
+				self.refreshActivity()
+			}
+		}
+	}
+
+	private func setActivityLocation(_ location: String) {
+		guard let captureID = activityCaptureID, var state = activityState else { return }
+		state.locationName = location
+		activityState = state
+		activityManager.update(captureID: captureID, state: state)
+	}
+
+	private func stopActivity(elapsed: TimeInterval) {
+		heartbeatTask?.cancel()
+		heartbeatTask = nil
+		guard let captureID = activityCaptureID, var state = activityState else { return }
+		activityCaptureID = nil
+		activityState = nil
+		state.elapsed = elapsed.isFinite ? max(0, elapsed) : state.elapsed
+		state.isPaused = true
+		state.resumedAt = nil
+		state.status = .stopped
+		state.confirmedAt = now()
+		state.freshUntil = state.confirmedAt
+		activityManager.end(captureID: captureID, state: state)
 	}
 
 	private func releaseCapturePriority(owner: UUID? = nil) async {

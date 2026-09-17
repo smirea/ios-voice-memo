@@ -26,6 +26,8 @@ struct VoiceMemoApp: App {
 					#if DEBUG
 					await LocationContractChecks.runFromLaunchArguments()
 					await RecordingContractChecks.runFromLaunchArguments()
+					await RecordingActivityContractChecks.runFromLaunchArguments(session: recordingSession)
+					await RecordingPresentationContractChecks.runFromLaunchArguments()
 					await PlaybackContractChecks.runFromLaunchArguments()
 					await WaveformDecoderContractChecks.runFromLaunchArguments()
 					await PlaybackWaveformContractChecks.runFromLaunchArguments()

@@ -1,5 +1,25 @@
 import SwiftUI
 
+enum AppDeepLink: Equatable, Sendable {
+	case record
+	case entry(UUID)
+	case recording(UUID?)
+
+	init?(url: URL) {
+		guard url.scheme?.lowercased() == "myvoicememo" else { return nil }
+		let ids = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.filter { $0.name == "id" } ?? []
+		let id = ids.count == 1 ? ids.first?.value.flatMap(UUID.init(uuidString:)) : nil
+		switch url.host?.lowercased() {
+		case "record": self = .record
+		case "entry":
+			guard let id else { return nil }
+			self = .entry(id)
+		case "recording": self = .recording(id)
+		default: return nil
+		}
+	}
+}
+
 private enum AppRoute: Hashable {
 	case entry(UUID)
 	case reminderBenchmark
@@ -12,6 +32,7 @@ struct RootView: View {
 	@Bindable var recordingSession: RecordingSession
 	@State private var path: [AppRoute] = []
 	@State private var showsSettings = false
+	@State private var linkGeneration = UUID()
 
 	init(store: JournalStore, recordingSession: RecordingSession) {
 		self.store = store
@@ -98,27 +119,19 @@ struct RootView: View {
 			Text(store.storageErrorMessage ?? "")
 		}
 		.onOpenURL { url in
-			guard url.scheme == "myvoicememo" else { return }
-			switch url.host {
-			case "record":
-				guard recordingSession.context == nil else { return }
+			guard let link = AppDeepLink(url: url), recordingSession.context == nil else { return }
+			let generation = UUID()
+			linkGeneration = generation
+			switch link {
+			case .record:
 				path.removeAll()
 				recordingSession.present(startsImmediately: true)
-			case "entry":
-				guard recordingSession.context == nil else { return }
-				guard let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-					.queryItems?
-					.first(where: { $0.name == "id" })?
-					.value,
-					let id = UUID(uuidString: value)
-				else { return }
-				Task {
-					if !store.isDemoMode { try? await store.waitUntilLoaded() }
-					guard recordingSession.context == nil, store.entry(id: id) != nil else { return }
-					path = [.entry(id)]
-				}
-			default:
-				return
+			case let .entry(id):
+				openSavedEntry(id, generation: generation)
+			case let .recording(id):
+				showsSettings = false
+				path.removeAll()
+				if let id { openSavedEntry(id, generation: generation) }
 			}
 		}
 		.task {
@@ -142,4 +155,12 @@ struct RootView: View {
 			Task { await store.refreshCalendar() }
 		}
 	}
+	private func openSavedEntry(_ id: UUID, generation: UUID) {
+		Task {
+			if !store.isDemoMode { try? await store.waitUntilLoaded() }
+			guard linkGeneration == generation, recordingSession.context == nil, store.entry(id: id) != nil else { return }
+			path = [.entry(id)]
+		}
+	}
+
 }

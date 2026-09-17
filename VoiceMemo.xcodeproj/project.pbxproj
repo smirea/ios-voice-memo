@@ -87,6 +87,8 @@
 		A1000000000000000000004F /* ReminderBackfillContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000004F /* ReminderBackfillContractChecks.swift */; };
 		A10000000000000000000050 /* ReminderDeliveryContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000050 /* ReminderDeliveryContractChecks.swift */; };
 		A10000000000000000000051 /* ReminderPresentationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000051 /* ReminderPresentationContractChecks.swift */; };
+		A10000000000000000000053 /* RecordingPresentationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000053 /* RecordingPresentationContractChecks.swift */; };
+		A10000000000000000000052 /* RecordingActivityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000052 /* RecordingActivityContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -196,6 +198,8 @@
 		B1000000000000000000004F /* ReminderBackfillContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBackfillContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000050 /* ReminderDeliveryContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderDeliveryContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000051 /* ReminderPresentationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderPresentationContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000053 /* RecordingPresentationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPresentationContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000052 /* RecordingActivityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingActivityContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -284,6 +288,8 @@
 				B1000000000000000000004F /* ReminderBackfillContractChecks.swift */,
 				B10000000000000000000050 /* ReminderDeliveryContractChecks.swift */,
 				B10000000000000000000051 /* ReminderPresentationContractChecks.swift */,
+				B10000000000000000000053 /* RecordingPresentationContractChecks.swift */,
+				B10000000000000000000052 /* RecordingActivityContractChecks.swift */,
 				B1000000000000000000004A /* ReminderContextContractChecks.swift */,
 				B10000000000000000000049 /* ReflectionContextContractChecks.swift */,
 				B10000000000000000000048 /* ModelContextContractChecks.swift */,
@@ -546,6 +552,8 @@
 				A1000000000000000000004F /* ReminderBackfillContractChecks.swift in Sources */,
 				A10000000000000000000050 /* ReminderDeliveryContractChecks.swift in Sources */,
 				A10000000000000000000051 /* ReminderPresentationContractChecks.swift in Sources */,
+				A10000000000000000000053 /* RecordingPresentationContractChecks.swift in Sources */,
+				A10000000000000000000052 /* RecordingActivityContractChecks.swift in Sources */,
 				A1000000000000000000004A /* ReminderContextContractChecks.swift in Sources */,
 				A10000000000000000000049 /* ReflectionContextContractChecks.swift in Sources */,
 				A10000000000000000000048 /* ModelContextContractChecks.swift in Sources */,

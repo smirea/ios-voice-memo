@@ -193,6 +193,8 @@ final class JournalStore {
 		self.reminderActivityManager.onChange = { [weak self] in self?.requestReminderSchedule() }
 	}
 
+	var isIsolatedStorage: Bool { !usesExternalServices }
+
 	func waitUntilLoaded() async throws {
 		await bootstrapTask?.value
 		guard await repository.isLoaded else { throw RepositoryError.notLoaded }

@@ -50,28 +50,39 @@ struct RecordingWidgetProvider: TimelineProvider {
 struct RecordingLiveActivity: Widget {
 	var body: some WidgetConfiguration {
 		ActivityConfiguration(for: RecordingActivityAttributes.self) { context in
-			HStack(spacing: 13) {
-				VoiceMemoAppIcon(size: 38)
+			let presentation = context.state.presentation(isStale: context.isStale)
+			Link(destination: context.attributes.recordingURL) {
+				HStack(spacing: 13) {
+					VoiceMemoAppIcon(size: 38)
 
-				VStack(alignment: .leading, spacing: 3) {
-					Text(context.state.locationName)
-						.font(.headline)
+					VStack(alignment: .leading, spacing: 3) {
+						Text(context.state.locationName)
+							.font(.headline)
+							.lineLimit(1)
+						Text(context.attributes.startedAt, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+							.font(.caption)
+							.foregroundStyle(.secondary)
+						Text(presentation.statusText)
+							.font(.caption)
+							.foregroundStyle(.secondary)
+							.lineLimit(2)
+					}
+
+					Spacer(minLength: 0)
+
+					RecordingElapsedTime(presentation: presentation)
+						.font(.title3.weight(.semibold))
 						.lineLimit(1)
-					Text(context.attributes.startedAt, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
-						.font(.caption)
-						.foregroundStyle(.secondary)
+						.minimumScaleFactor(0.7)
 				}
-
-				Spacer()
-
-				RecordingElapsedTime(state: context.state)
-					.font(.title3.weight(.semibold))
+				.padding(.horizontal, 16)
+				.padding(.vertical, 14)
 			}
-			.padding(.horizontal, 5)
 			.activityBackgroundTint(.black)
 			.activitySystemActionForegroundColor(.white)
 		} dynamicIsland: { context in
-			DynamicIsland {
+			let presentation = context.state.presentation(isStale: context.isStale)
+			return DynamicIsland {
 				DynamicIslandExpandedRegion(.leading) {
 					VoiceMemoAppIcon(size: 32)
 				}
@@ -80,25 +91,24 @@ struct RecordingLiveActivity: Widget {
 						Text(context.state.locationName)
 							.font(.headline)
 							.lineLimit(1)
-						Text(context.state.isPaused ? "Paused" : "Recording")
+						Text(presentation.statusText)
 							.font(.caption)
 							.foregroundStyle(.secondary)
+							.lineLimit(2)
 					}
 				}
 				DynamicIslandExpandedRegion(.trailing) {
-					RecordingElapsedTime(state: context.state)
-						.monospacedDigit()
+					RecordingElapsedTime(presentation: presentation)
 				}
 			} compactLeading: {
-				VoiceMemoAppIcon(size: 22)
+				RecordingStatusIcon(presentation: presentation)
 			} compactTrailing: {
-				RecordingElapsedTime(state: context.state)
-					.monospacedDigit()
+				RecordingElapsedTime(presentation: presentation)
 					.frame(width: 52)
 			} minimal: {
-				VoiceMemoAppIcon(size: 22)
+				RecordingStatusIcon(presentation: presentation)
 			}
-			.widgetURL(URL(string: "myvoicememo://record"))
+			.widgetURL(context.attributes.recordingURL)
 		}
 	}
 }
@@ -182,30 +192,33 @@ struct ReminderLiveActivity: Widget {
 }
 
 private struct RecordingElapsedTime: View {
-	let state: RecordingActivityAttributes.ContentState
+	let presentation: RecordingActivityAttributes.Presentation
 
 	var body: some View {
 		Group {
-			if let resumedAt = state.resumedAt {
-				Text(
-					.currentDate,
-					format: .stopwatch(
-						startingAt: resumedAt.addingTimeInterval(-state.elapsed),
-						showsHours: false,
-						maxFieldCount: 2,
-						maxPrecision: .seconds(1)
-					)
-				)
+			if let interval = presentation.timerInterval {
+				HStack(spacing: 0) {
+					Text("~")
+					Text(timerInterval: interval, countsDown: false, showsHours: false)
+				}
 			} else {
-				Text(pausedElapsedText)
+				Text(presentation.elapsedText)
 			}
 		}
 		.monospacedDigit()
 	}
+}
 
-	private var pausedElapsedText: String {
-		let seconds = max(0, Int(state.elapsed))
-		return String(format: "%d:%02d", seconds / 60, seconds % 60)
+private struct RecordingStatusIcon: View {
+	let presentation: RecordingActivityAttributes.Presentation
+
+	var body: some View {
+		if presentation.timerInterval != nil {
+			VoiceMemoAppIcon(size: 22)
+		} else {
+			Image(systemName: presentation.symbolName)
+				.foregroundStyle(.white)
+		}
 	}
 }
 
