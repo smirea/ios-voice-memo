@@ -171,8 +171,9 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 
 	init(from decoder: Decoder) throws {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
-		schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-		settings = try container.decodeIfPresent(JournalSettings.self, forKey: .settings) ?? JournalSettings()
+		schemaVersion = container.contains(.schemaVersion) ? try container.decode(Int.self, forKey: .schemaVersion) : 1
+		guard (1...Self.currentSchemaVersion).contains(schemaVersion) else { throw ConfigurationSchemaError.unsupported(schemaVersion) }
+		settings = try container.decode(JournalSettings.self, forKey: .settings)
 		locations = try container.decodeIfPresent([NamedJournalLocation].self, forKey: .locations) ?? []
 		elevenLabsAPIKey = try container.decodeIfPresent(String.self, forKey: .elevenLabsAPIKey) ?? ""
 	}

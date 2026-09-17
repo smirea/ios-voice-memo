@@ -64,6 +64,15 @@
 		A10000000000000000000038 /* ReminderActivityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000038 /* ReminderActivityContractChecks.swift */; };
 		A10000000000000000000039 /* ICloudMirrorContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000039 /* ICloudMirrorContractChecks.swift */; };
 		A1000000000000000000003A /* ICloudStoreContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000003A /* ICloudStoreContractChecks.swift */; };
+		A1000000000000000000003B /* CloudState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000003B /* CloudState.swift */; };
+		A1000000000000000000003C /* ConfigurationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000003C /* ConfigurationRepository.swift */; };
+		A1000000000000000000003D /* CloudServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000003D /* CloudServices.swift */; };
+		A1000000000000000000003E /* CloudFileAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000003E /* CloudFileAccess.swift */; };
+		A1000000000000000000003F /* CloudProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000003F /* CloudProvider.swift */; };
+		A10000000000000000000040 /* CloudStateContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000040 /* CloudStateContractChecks.swift */; };
+		A10000000000000000000041 /* CloudFileAccessContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000041 /* CloudFileAccessContractChecks.swift */; };
+		A10000000000000000000042 /* ICloudProviderContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000042 /* ICloudProviderContractChecks.swift */; };
+		A10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -150,6 +159,15 @@
 		B10000000000000000000038 /* ReminderActivityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderActivityContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000039 /* ICloudMirrorContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudMirrorContractChecks.swift; sourceTree = "<group>"; };
 		B1000000000000000000003A /* ICloudStoreContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudStoreContractChecks.swift; sourceTree = "<group>"; };
+		B1000000000000000000003B /* CloudState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudState.swift; sourceTree = "<group>"; };
+		B1000000000000000000003C /* ConfigurationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationRepository.swift; sourceTree = "<group>"; };
+		B1000000000000000000003D /* CloudServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudServices.swift; sourceTree = "<group>"; };
+		B1000000000000000000003E /* CloudFileAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudFileAccess.swift; sourceTree = "<group>"; };
+		B1000000000000000000003F /* CloudProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProvider.swift; sourceTree = "<group>"; };
+		B10000000000000000000040 /* CloudStateContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudStateContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000041 /* CloudFileAccessContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudFileAccessContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000042 /* ICloudProviderContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudProviderContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudStoreReliabilityContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -198,6 +216,15 @@
 				B10000000000000000000037 /* ReminderSourceRepositoryContractChecks.swift */,
 				B10000000000000000000038 /* ReminderActivityContractChecks.swift */,
 				B1000000000000000000003A /* ICloudStoreContractChecks.swift */,
+				B10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift */,
+				B10000000000000000000042 /* ICloudProviderContractChecks.swift */,
+				B10000000000000000000041 /* CloudFileAccessContractChecks.swift */,
+				B10000000000000000000040 /* CloudStateContractChecks.swift */,
+				B1000000000000000000003F /* CloudProvider.swift */,
+				B1000000000000000000003E /* CloudFileAccess.swift */,
+				B1000000000000000000003D /* CloudServices.swift */,
+				B1000000000000000000003C /* ConfigurationRepository.swift */,
+				B1000000000000000000003B /* CloudState.swift */,
 				B10000000000000000000039 /* ICloudMirrorContractChecks.swift */,
 				B10000000000000000000035 /* ProcessingReliabilityContractChecks.swift */,
 				B10000000000000000000032 /* ProcessingRepositoryContractChecks.swift */,
@@ -436,6 +463,15 @@
 				A10000000000000000000037 /* ReminderSourceRepositoryContractChecks.swift in Sources */,
 				A10000000000000000000038 /* ReminderActivityContractChecks.swift in Sources */,
 				A1000000000000000000003A /* ICloudStoreContractChecks.swift in Sources */,
+				A10000000000000000000043 /* CloudStoreReliabilityContractChecks.swift in Sources */,
+				A10000000000000000000042 /* ICloudProviderContractChecks.swift in Sources */,
+				A10000000000000000000041 /* CloudFileAccessContractChecks.swift in Sources */,
+				A10000000000000000000040 /* CloudStateContractChecks.swift in Sources */,
+				A1000000000000000000003F /* CloudProvider.swift in Sources */,
+				A1000000000000000000003E /* CloudFileAccess.swift in Sources */,
+				A1000000000000000000003D /* CloudServices.swift in Sources */,
+				A1000000000000000000003C /* ConfigurationRepository.swift in Sources */,
+				A1000000000000000000003B /* CloudState.swift in Sources */,
 				A10000000000000000000039 /* ICloudMirrorContractChecks.swift in Sources */,
 				A10000000000000000000035 /* ProcessingReliabilityContractChecks.swift in Sources */,
 				A10000000000000000000032 /* ProcessingRepositoryContractChecks.swift in Sources */,

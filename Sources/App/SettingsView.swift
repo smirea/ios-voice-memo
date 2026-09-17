@@ -5,14 +5,12 @@ struct SettingsView: View {
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openURL) private var openURL
 	@Bindable var store: JournalStore
-	@State private var draft: JournalSettings
 	@State private var showsClearConfirmation = false
 	@State private var showsCalendarAccessAlert = false
 	@State private var isRequestingCalendarAccess = false
 
 	init(store: JournalStore) {
 		self.store = store
-		_draft = State(initialValue: store.settings)
 	}
 
 	var body: some View {
@@ -20,20 +18,20 @@ struct SettingsView: View {
 			ScrollViewReader { proxy in
 				List {
 					Section("Recording") {
-						Toggle("Keep screen awake", isOn: $draft.keepScreenAwakeWhileRecording)
-						Toggle("Haptics", isOn: $draft.hapticsEnabled)
+						Toggle("Keep screen awake", isOn: settingBinding(\.keepScreenAwakeWhileRecording))
+						Toggle("Haptics", isOn: settingBinding(\.hapticsEnabled))
 					}
 					.listRowBackground(AppStyle.background)
 
 					Section("Journal") {
-						Toggle("Show transcripts", isOn: $draft.showTranscripts)
+						Toggle("Show transcripts", isOn: settingBinding(\.showTranscripts))
 					}
 					.listRowBackground(AppStyle.background)
 
 					Section {
 						Toggle(
 							"Prefer ElevenLabs transcription",
-							isOn: $draft.preferElevenLabsTranscription
+							isOn: settingBinding(\.preferElevenLabsTranscription)
 						)
 						LabeledContent("API key") {
 							SecureField("Optional", text: elevenLabsAPIKeyBinding)
@@ -50,7 +48,7 @@ struct SettingsView: View {
 
 					calendarSection
 
-					if draft.calendarSyncEnabled {
+					if store.settings.calendarSyncEnabled {
 						reminderSection.id("reminder-settings")
 					}
 
@@ -63,12 +61,21 @@ struct SettingsView: View {
 					}
 					.listRowBackground(AppStyle.background)
 
-					Section("Data") {
+					Section {
+						if store.cloudStatusMessage != nil {
+							Button("Try Again") { store.retryCloudSync() }
+								.disabled(store.isCloudSyncing || store.isCapturePriorityActive)
+						}
 						Button("Delete all entries", role: .destructive) {
 							showsClearConfirmation = true
 						}
 						.disabled(store.entries.isEmpty || store.isDemoMode)
+					} header: {
+						Text("Data")
+					} footer: {
+						if let message = store.cloudStatusMessage { Text(message) }
 					}
+					.id("cloud-settings")
 					.listRowBackground(AppStyle.background)
 				}
 				.listStyle(.plain)
@@ -85,6 +92,10 @@ struct SettingsView: View {
 					if ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") {
 						await Task.yield()
 						proxy.scrollTo("reminder-settings", anchor: .center)
+					} else if ProcessInfo.processInfo.arguments.contains("-demo-cloud-pending")
+						|| ProcessInfo.processInfo.arguments.contains("-demo-configuration-damaged") {
+						await Task.yield()
+						proxy.scrollTo("cloud-settings", anchor: .center)
 					}
 					#endif
 				}
@@ -92,7 +103,6 @@ struct SettingsView: View {
 		}
 		.preferredColorScheme(.dark)
 		.presentationBackground(AppStyle.background)
-		.onChange(of: draft) { _, newValue in store.updateSettings(newValue) }
 		.alert("Delete the journal?", isPresented: $showsClearConfirmation) {
 			Button("Cancel", role: .cancel) {}
 			Button("Delete all", role: .destructive) { Task { await store.clearJournal() } }
@@ -130,8 +140,8 @@ struct SettingsView: View {
 			Toggle("Calendar sync", isOn: calendarSyncBinding)
 				.disabled(isRequestingCalendarAccess)
 
-			if draft.calendarSyncEnabled {
-				Picker("Preferred calendar", selection: $draft.preferredCalendarApp) {
+			if store.settings.calendarSyncEnabled {
+				Picker("Preferred calendar", selection: settingBinding(\.preferredCalendarApp)) {
 					ForEach(PreferredCalendarApp.allCases) { app in
 						Text(app.title).tag(app)
 					}
@@ -152,11 +162,11 @@ struct SettingsView: View {
 
 	private var reminderSection: some View {
 		Section {
-			Toggle("Event reminders", isOn: $draft.eventRemindersEnabled)
+			Toggle("Event reminders", isOn: settingBinding(\.eventRemindersEnabled))
 
-			if draft.eventRemindersEnabled {
-				Toggle("Live Activities", isOn: $draft.eventReminderLiveActivitiesEnabled)
-				Picker("Start before event", selection: $draft.eventReminderLeadMinutes) {
+			if store.settings.eventRemindersEnabled {
+				Toggle("Live Activities", isOn: settingBinding(\.eventReminderLiveActivitiesEnabled))
+				Picker("Start before event", selection: settingBinding(\.eventReminderLeadMinutes)) {
 					Text("15 minutes").tag(15)
 					Text("30 minutes").tag(30)
 					Text("1 hour").tag(60)
@@ -172,18 +182,22 @@ struct SettingsView: View {
 		.listRowBackground(AppStyle.background)
 	}
 
+	private func settingBinding<Value>(_ keyPath: WritableKeyPath<JournalSettings, Value>) -> Binding<Value> {
+		Binding(get: { store.settings[keyPath: keyPath] }, set: { store.updateSetting(keyPath, $0) })
+	}
+
 	private var calendarSyncBinding: Binding<Bool> {
 		Binding(
-			get: { draft.calendarSyncEnabled },
+			get: { store.settings.calendarSyncEnabled },
 			set: { enabled in
 				if !enabled {
-					draft.calendarSyncEnabled = false
+					store.updateSetting(\.calendarSyncEnabled, false)
 					return
 				}
 				isRequestingCalendarAccess = true
 				Task {
 					let granted = await store.requestCalendarAccess()
-					draft.calendarSyncEnabled = granted
+					store.updateSetting(\.calendarSyncEnabled, granted)
 					isRequestingCalendarAccess = false
 					if !granted {
 						showsCalendarAccessAlert = true
@@ -203,17 +217,17 @@ struct SettingsView: View {
 	private func calendarBinding(for calendar: CalendarSource) -> Binding<Bool> {
 		Binding(
 			get: {
-				draft.includedCalendarIdentifiers?.contains(calendar.id) ?? true
+				store.settings.includedCalendarIdentifiers?.contains(calendar.id) ?? true
 			},
 			set: { isIncluded in
-				var identifiers = draft.includedCalendarIdentifiers
+				var identifiers = store.settings.includedCalendarIdentifiers
 					?? Set(store.calendarSync.calendars.map(\.id))
 				if isIncluded {
 					identifiers.insert(calendar.id)
 				} else {
 					identifiers.remove(calendar.id)
 				}
-				draft.includedCalendarIdentifiers = identifiers
+				store.updateSetting(\.includedCalendarIdentifiers, identifiers)
 			}
 		)
 	}

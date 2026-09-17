@@ -143,7 +143,11 @@ enum LocationContractChecks {
 			revision: 1
 		)
 		let restoredConfiguration = await mirror.loadConfiguration()
-		try expect(restoredConfiguration == configuration, "The iCloud mirror must restore config.json without any notes")
+		if case .available(let restored) = restoredConfiguration {
+			try expect(restored == configuration, "The iCloud mirror must restore config.json without any notes")
+		} else {
+			throw Failure(message: "The iCloud mirror must return a readable configuration without any notes")
+		}
 	}
 
 	private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {

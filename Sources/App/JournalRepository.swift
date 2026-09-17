@@ -5,6 +5,7 @@ struct JournalRecord: Codable, Sendable {
 	enum State: String, Codable { case recording, saved, deleted }
 	private enum CodingKeys: String, CodingKey {
 		case schemaVersion, id, entry, state, ownedAudioFilenames, inputRevision, revision, processing
+		case contentRevision, exportedRevision, cloudRetry, cloudAudioReceipt, cloudDeletionReferences, cloudMetadataReceipt
 	}
 	var schemaVersion = 1
 	let id: UUID
@@ -14,6 +15,12 @@ struct JournalRecord: Codable, Sendable {
 	var inputRevision: Int = 0
 	var revision: Int = 0
 	var processing: EntryProcessing?
+	var contentRevision = 0
+	var exportedRevision = 0
+	var cloudRetry: CloudRetryState?
+	var cloudAudioReceipt: CloudAudioReceipt?
+	var cloudMetadataReceipt: CloudMetadataReceipt?
+	var cloudDeletionReferences: Set<String> = []
 
 	init(entry: JournalEntry, state: State = .saved, ownedAudioFilenames: Set<String> = []) {
 		id = entry.id
@@ -32,6 +39,13 @@ struct JournalRecord: Codable, Sendable {
 		inputRevision = try values.decodeIfPresent(Int.self, forKey: .inputRevision) ?? 0
 		revision = try values.decodeIfPresent(Int.self, forKey: .revision) ?? 0
 		processing = try values.decodeIfPresent(EntryProcessing.self, forKey: .processing)
+		contentRevision = try values.decodeIfPresent(Int.self, forKey: .contentRevision) ?? 1
+		exportedRevision = try values.decodeIfPresent(Int.self, forKey: .exportedRevision) ?? 0
+		cloudRetry = try values.decodeIfPresent(CloudRetryState.self, forKey: .cloudRetry)
+		cloudAudioReceipt = try values.decodeIfPresent(CloudAudioReceipt.self, forKey: .cloudAudioReceipt)
+		cloudMetadataReceipt = try values.decodeIfPresent(CloudMetadataReceipt.self, forKey: .cloudMetadataReceipt)
+		cloudDeletionReferences = try values.decodeIfPresent(Set<String>.self, forKey: .cloudDeletionReferences)
+			?? (state == .deleted ? ownedAudioFilenames.union([id.uuidString]) : [])
 	}
 }
 
@@ -83,6 +97,8 @@ actor JournalRepository {
 				guard record.id == id, record.schemaVersion == 1,
 					(record.state == .deleted ? record.entry == nil : record.entry?.id == id),
 					record.ownedAudioFilenames.allSatisfy(Self.isFilename),
+					record.cloudDeletionReferences.allSatisfy(Self.isFilename), record.contentRevision >= 1,
+					record.exportedRevision >= 0, record.exportedRevision <= record.contentRevision,
 					record.entry?.audioFilename.map(Self.isFilename) ?? true
 				else { throw RepositoryError.invalidRecord }
 				records[id] = record
@@ -155,7 +171,7 @@ actor JournalRepository {
 		record.entry = nil
 		record.processing = nil
 		try write(record)
-		return record.ownedAudioFilenames.union([id.uuidString])
+		return records[id]!.cloudDeletionReferences
 	}
 
 	func cleanupDeletedAudio(id: UUID) throws {
@@ -227,6 +243,53 @@ actor JournalRepository {
 
 	func committedEntries() -> [JournalEntry] {
 		records.values.filter { $0.state == .saved }.compactMap(\.entry).sorted { $0.createdAt > $1.createdAt }
+	}
+
+	func cloudJobs(repair: Bool = false, now: Date = .now) -> [CloudNoteJob] {
+		records.values.filter { record in
+			guard record.state == .deleted || (record.state == .saved && record.entry?.audioFilename?.hasSuffix(".m4a") == true) else { return false }
+			return repair || (record.contentRevision > record.exportedRevision && (record.cloudRetry?.isDue(at: now) ?? true))
+		}.map { CloudNoteJob(id: $0.id, contentRevision: $0.contentRevision, entry: $0.entry,
+			deletionReferences: $0.cloudDeletionReferences, audioReceipt: $0.cloudAudioReceipt, metadataReceipt: $0.cloudMetadataReceipt) }
+		.sorted { $0.id.uuidString < $1.id.uuidString }
+	}
+
+	func acknowledgeCloud(job: CloudNoteJob, audioReceipt: CloudAudioReceipt? = nil, metadataReceipt: CloudMetadataReceipt? = nil) throws -> JournalRecord? {
+		guard var record = currentCloudRecord(job) else { return nil }
+		guard record.exportedRevision != job.contentRevision || record.cloudRetry != nil
+			|| (audioReceipt != nil && record.cloudAudioReceipt != audioReceipt)
+			|| (metadataReceipt != nil && record.cloudMetadataReceipt != metadataReceipt) else { return record }
+		record.exportedRevision = job.contentRevision
+		record.cloudRetry = nil
+		if let audioReceipt { record.cloudAudioReceipt = audioReceipt }
+		if let metadataReceipt { record.cloudMetadataReceipt = metadataReceipt }
+		try write(record)
+		return records[record.id]
+	}
+
+	func failCloud(job: CloudNoteJob, message: String, now: Date = .now) throws -> JournalRecord? {
+		guard var record = currentCloudRecord(job) else { return nil }
+		record.exportedRevision = min(record.exportedRevision, max(0, record.contentRevision - 1))
+		record.cloudRetry = .failed(previous: record.cloudRetry, message: message, now: now)
+		try write(record)
+		return records[record.id]
+	}
+
+	func nextCloudRetry() -> Date? {
+		records.values.compactMap { record -> Date? in
+			guard record.contentRevision > record.exportedRevision,
+				record.state == .deleted || (record.state == .saved && record.entry?.audioFilename?.hasSuffix(".m4a") == true)
+			else { return nil }
+			if let retry = record.cloudRetry { return retry.retryAfter }
+			return .distantPast
+		}.min()
+	}
+
+	private func currentCloudRecord(_ job: CloudNoteJob) -> JournalRecord? {
+		guard let record = records[job.id], record.contentRevision == job.contentRevision,
+			record.entry == job.entry, record.state == (job.entry == nil ? .deleted : .saved),
+			job.entry != nil || record.cloudDeletionReferences == job.deletionReferences else { return nil }
+		return record
 	}
 
 	func requestProcessing(id: UUID, startAt stage: ProcessingStage? = nil) throws -> JournalRecord {
@@ -478,7 +541,7 @@ actor JournalRepository {
 			records: Array(records.values),
 			issues: issues,
 			deletionReferences: records.values.filter { $0.state == .deleted }.reduce(into: []) {
-				$0.formUnion($1.ownedAudioFilenames)
+				$0.formUnion($1.cloudDeletionReferences)
 				$0.insert($1.id.uuidString)
 			})
 	}
@@ -625,7 +688,18 @@ actor JournalRepository {
 
 	private func write(_ value: JournalRecord) throws {
 		var record = value
-		record.revision = (records[record.id]?.revision ?? record.revision) + 1
+		let previous = records[record.id]
+		record.revision = (previous?.revision ?? record.revision) + 1
+		let contentChanged = previous == nil || previous?.entry != record.entry || previous?.state != record.state
+		record.contentRevision = (previous?.contentRevision ?? 0) + (contentChanged ? 1 : 0)
+		if contentChanged {
+			record.cloudRetry = nil
+			if previous?.entry?.audioFilename != record.entry?.audioFilename { record.cloudAudioReceipt = nil }
+		}
+		if record.state == .deleted {
+			record.cloudDeletionReferences.formUnion(record.ownedAudioFilenames)
+			record.cloudDeletionReferences.insert(record.id.uuidString)
+		}
 		guard record.ownedAudioFilenames.allSatisfy(Self.isFilename),
 			record.entry?.audioFilename.map(Self.isFilename) ?? true else { throw RepositoryError.invalidRecord }
 		let data = try JSONEncoder().encode(record)

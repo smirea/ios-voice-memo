@@ -23,12 +23,25 @@ final class JournalStore {
 	private let fileManager = FileManager.default
 	private let rootURL: URL
 	private let recordingsURL: URL
-	private let configurationURL: URL
-	@ObservationIgnored private let iCloudDriveMirror: ICloudDriveMirror
-	private let mirrorSync: @Sendable ([JournalEntry], URL, AppConfiguration, Set<String>, Int) async -> ICloudMirrorResult
+	private let cloudServices: CloudServices
+	@ObservationIgnored private let configurationRepository: ConfigurationRepository
+	@ObservationIgnored private var configurationBootstrapTask: Task<Void, Never>?
+	@ObservationIgnored private var configurationWriteTask: Task<Void, Never>?
+	@ObservationIgnored private var configurationSnapshot: ConfigurationSnapshot?
+	@ObservationIgnored private var configurationIntents: [PendingConfigurationEdit] = []
+	@ObservationIgnored private var configurationIntentValue: AppConfiguration
+	private let configurationInitialValue: AppConfiguration
+	@ObservationIgnored private var hasLoadedConfiguration = false
+	@ObservationIgnored private var configurationSaveMessage: String?
+	@ObservationIgnored private var cloudSaveFailed = false
+	@ObservationIgnored private var cloudRetryTask: Task<Void, Never>?
+	@ObservationIgnored private var legacyCloudRetry: CloudRetryState?
+	private(set) var cloudStatusMessage: String?
+	private(set) var isCloudSyncing = false
 	private let mirroringEnabled: Bool
 	@ObservationIgnored private var iCloudWorker: Task<Void, Never>?
 	@ObservationIgnored private var iCloudPending = false
+	@ObservationIgnored private var iCloudRepairPending = false
 	@ObservationIgnored private var hasLoadedJournal = false
 	@ObservationIgnored private let reminderActivityManager: ReminderActivityManager
 	private let reminderResolver: @Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult
@@ -71,10 +84,11 @@ final class JournalStore {
 	var processingDeadlineOverride: TimeInterval?
 	var deletionIntentCheckpoint: (() async -> Void)?
 	var mirrorSnapshotCheckpoint: (() async -> Void)?
+	var configurationLoadCheckpoint: (() async -> Void)?
+	private var cloudStoppedForContract = false
 	#endif
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
-	@ObservationIgnored private var isConfigurationRestorePending = false
 	@ObservationIgnored private let repository: JournalRepository
 	@ObservationIgnored private let audioFinalizer = AudioFinalizer()
 	@ObservationIgnored private var bootstrapTask: Task<Void, Never>?
@@ -84,14 +98,9 @@ final class JournalStore {
 	init(storageRootURL: URL? = nil, processingServices: ProcessingServices? = nil,
 		reminderResolver: (@Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult)? = nil,
 		reminderActivityManager: ReminderActivityManager? = nil,
-		mirrorSync: (@Sendable ([JournalEntry], URL, AppConfiguration, Set<String>, Int) async -> ICloudMirrorResult)? = nil) {
-		let mirror = ICloudDriveMirror()
-		iCloudDriveMirror = mirror
-		self.mirrorSync = mirrorSync ?? { entries, recordingsURL, configuration, deletedReferences, revision in
-			await mirror.sync(entries: entries, recordingsURL: recordingsURL, configuration: configuration,
-				deletedRecordingReferences: deletedReferences, revision: revision)
-		}
-		mirroringEnabled = storageRootURL == nil || mirrorSync != nil
+		cloudServices: CloudServices? = nil) {
+		self.cloudServices = cloudServices ?? .live
+		mirroringEnabled = storageRootURL == nil || cloudServices != nil
 		self.reminderActivityManager = reminderActivityManager ?? ReminderActivityManager()
 		self.reminderResolver = reminderResolver ?? { await ReminderEngine.resolve(entries: $0, events: $1, now: $2) }
 		reminderSchedulingEnabled = storageRootURL == nil || reminderResolver != nil || reminderActivityManager != nil
@@ -99,12 +108,16 @@ final class JournalStore {
 		processingEnabled = storageRootURL == nil || processingServices != nil
 		isDemoMode = storageRootURL == nil && ProcessInfo.processInfo.arguments.contains("-demo")
 		usesExternalServices = storageRootURL == nil
-		if storageRootURL != nil { settings = JournalSettings() }
+		let initialSettings = storageRootURL == nil ? JournalSettings.load() : JournalSettings()
+		settings = initialSettings
+		let initialConfiguration = AppConfiguration(settings: initialSettings)
+		configurationInitialValue = initialConfiguration
+		configurationIntentValue = initialConfiguration
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 		rootURL = storageRootURL ?? applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
 		repository = JournalRepository(rootURL: rootURL)
-		configurationURL = rootURL.appendingPathComponent("config.json")
+		configurationRepository = ConfigurationRepository(rootURL: rootURL)
 		calendarSync = CalendarSync(
 			isDemoMode: isDemoMode,
 			cacheURL: rootURL.appendingPathComponent("calendar-events.json")
@@ -113,6 +126,9 @@ final class JournalStore {
 			usesExternalServices ? (UserDefaults.standard.stringArray(forKey: Self.iCloudDeletionKey) ?? []) : []
 		)
 
+		if usesExternalServices, let data = UserDefaults.standard.data(forKey: Self.iCloudRetryKey) {
+			legacyCloudRetry = try? JSONDecoder().decode(CloudRetryState.self, from: data)
+		}
 		entries = []
 		if isDemoMode {
 			entries = JournalEntry.demo
@@ -121,6 +137,12 @@ final class JournalStore {
 			isLoading = false
 			#if DEBUG
 			hasUnsavedNoteChanges = ProcessInfo.processInfo.arguments.contains("-demo-unsaved-notes")
+			if ProcessInfo.processInfo.arguments.contains("-demo-cloud-pending") {
+				cloudStatusMessage = "iCloud Drive is unavailable. Recordings and your settings changes remain on this device."
+			}
+			if ProcessInfo.processInfo.arguments.contains("-demo-configuration-damaged") {
+				cloudStatusMessage = "The saved configuration is damaged. Its original file was preserved. Settings changes could not be saved."
+			}
 			if ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") {
 				reminderSchedulingMessage = "Some reminders could not be matched because on-device analysis is unavailable."
 			}
@@ -180,21 +202,12 @@ final class JournalStore {
 			entries = loaded.entries
 			let issues = loaded.issues
 			storageLoadMessage = issues.isEmpty ? nil : issues.joined(separator: "\n")
-			pendingICloudDeletionReferences.formUnion(loaded.deletionReferences)
-			if let configuration = loadConfiguration() {
-				settings = configuration.settings
-				namedLocations = configuration.locations
-				elevenLabsAPIKey = configuration.elevenLabsAPIKey
-				if usesExternalServices { settings.save() }
-			} else if usesExternalServices {
-				isConfigurationRestorePending = true
-			}
 			hasLoadedJournal = true
 			isLoading = false
 			kickProcessing()
 			requestReminderSchedule()
-			if isConfigurationRestorePending { Task { await restoreConfigurationFromICloud() } }
-			else { scheduleICloudDriveMirror() }
+			configurationBootstrapTask = Task { await loadConfiguration() }
+
 		} catch {
 			storageLoadMessage = "The journal could not be opened. Original files were preserved. " + error.localizedDescription
 		}
@@ -351,11 +364,13 @@ final class JournalStore {
 	func resumeStaleProcessing(now: Date = .now) {
 		backgroundSuspended = false
 		updateServiceAdmission()
-		scheduleICloudDriveMirror(changed: false)
+		scheduleICloudDriveMirror(changed: false, repair: true)
 	}
 
 	func beginCapturePriority(owner: UUID) async {
 		capturePriorityOwners.insert(owner)
+		if iCloudWorker != nil { iCloudPending = true; iCloudWorker?.cancel() }
+		cloudRetryTask?.cancel()
 		preemptProcessing()
 		let revision = newAdmissionRevision()
 		await synchronizeServiceAdmission(revision: revision)
@@ -385,6 +400,7 @@ final class JournalStore {
 		await ServiceAdmission.speech.setSuspended(suspended, revision: revision)
 		guard revision == admissionPolicyRevision else { return }
 		startICloudMirrorWorker()
+		if iCloudWorker == nil { scheduleCloudRetry() }
 		if !processingSuspended {
 			kickProcessing()
 			requestReminderSchedule()
@@ -407,7 +423,7 @@ final class JournalStore {
 	}
 
 	private func kickProcessing() {
-		guard processingEnabled, !isDemoMode, !isLoading, !processingSuspended, processingWorker == nil else { return }
+		guard processingEnabled, hasLoadedConfiguration, !isDemoMode, !isLoading, !processingSuspended, processingWorker == nil else { return }
 		retryWakeTask?.cancel()
 		processingWorker = Task { [weak self] in await self?.drainProcessing() }
 	}
@@ -659,7 +675,10 @@ final class JournalStore {
 
 	func publish(_ record: JournalRecord) {
 		let previous = committedRecords[record.id]
-		if record.state == .deleted { deletedEntryIDs.insert(record.id); entries.removeAll { $0.id == record.id } }
+		if record.state == .deleted, previous?.state != .deleted {
+			deletedEntryIDs.insert(record.id)
+			entries.removeAll { $0.id == record.id }
+		}
 		if record.state != .deleted, deletedEntryIDs.contains(record.id) { return }
 		guard record.revision >= (committedRecords[record.id]?.revision ?? -1) else { return }
 		committedRecords[record.id] = record
@@ -668,8 +687,9 @@ final class JournalStore {
 				requestReminderSchedule()
 			}
 		}
-		processingStates[record.id] = record.processing
-		entryProcessingPhases[record.id] = record.processing?.phase
+		if processingStates[record.id] != record.processing { processingStates[record.id] = record.processing }
+		if entryProcessingPhases[record.id] != record.processing?.phase { entryProcessingPhases[record.id] = record.processing?.phase }
+		if previous?.entry == record.entry, previous?.state == record.state { return }
 		guard record.state == .saved, var entry = record.entry else { return }
 		for pending in pendingEdits where pending.entryID == record.id { pending.edit.apply(to: &entry) }
 		if let index = entries.firstIndex(where: { $0.id == entry.id }) { entries[index] = entry }
@@ -722,7 +742,7 @@ final class JournalStore {
 		for entryID in ids {
 			guard entries.contains(where: { $0.id == entryID }) else { continue }
 			do {
-				let references = try await repository.delete(id: entryID)
+				_ = try await repository.delete(id: entryID)
 				if activeLease?.entryID == entryID { activeStage?.cancel() }
 				pendingEdits.removeAll { $0.entryID == entryID }
 				deletedEntryIDs.insert(entryID)
@@ -733,8 +753,7 @@ final class JournalStore {
 				entryProcessingPhases.removeValue(forKey: entryID)
 				entryLocationTasks.removeValue(forKey: entryID)?.cancel()
 				entries.removeAll { $0.id == entryID }
-				pendingICloudDeletionReferences.formUnion(references)
-				savePendingICloudDeletions()
+				if let record = await repository.record(id: entryID) { publish(record) }
 				scheduleICloudDriveMirror()
 				await cleanupDeletedAudio(id: entryID)
 			} catch { failedCount += 1 }
@@ -755,6 +774,7 @@ final class JournalStore {
 	func applyReminderFeedback(entryID: UUID, audioURL: URL) async throws {
 		defer { try? fileManager.removeItem(at: audioURL) }
 		guard entries.contains(where: { $0.id == entryID }) else { throw ReminderFeedbackError.entryUnavailable }
+		await configurationBootstrapTask?.value
 		let transcription = try await processingServices.transcribe(audioURL, settings.preferElevenLabsTranscription, elevenLabsAPIKey, { _ in })
 		try Task.checkCancellation()
 		transcriptionAlertMessage = transcription.warning
@@ -785,6 +805,12 @@ final class JournalStore {
 		return await ReflectionEngine.weeklyReview(entries: entries(inWeekContaining: date), weekStart: date.startOfWeek())
 	}
 
+	func updateSetting<Value>(_ keyPath: WritableKeyPath<JournalSettings, Value>, _ value: Value) {
+		var current = settings
+		current[keyPath: keyPath] = value
+		updateSettings(current)
+	}
+
 	func updateSettings(_ settings: JournalSettings) {
 		let calendarScopeChanged = applySettings(settings)
 		commitConfiguration()
@@ -810,7 +836,7 @@ final class JournalStore {
 
 	func setElevenLabsAPIKey(_ apiKey: String) {
 		elevenLabsAPIKey = apiKey
-		commitConfiguration()
+		commitConfiguration(keyEdited: true)
 	}
 
 	func clearTranscriptionAlert() {
@@ -823,6 +849,7 @@ final class JournalStore {
 
 	func refreshCalendar(force: Bool = false) async {
 		await bootstrapTask?.value
+		await configurationBootstrapTask?.value
 		guard settings.calendarSyncEnabled else {
 			calendarSync.clear()
 			await refreshReminderSchedule()
@@ -849,7 +876,7 @@ final class JournalStore {
 	private func requestReminderSchedule(now: Date = .now) {
 		invalidateReminderSchedule()
 		let generation = reminderScheduleGeneration
-		guard reminderSchedulingEnabled, !isLoading, !isDemoMode else { return }
+		guard reminderSchedulingEnabled, hasLoadedConfiguration, !isLoading, !isDemoMode else { return }
 		reminderScheduleTask = Task { [weak self] in
 			await self?.reconcileReminderSchedule(generation: generation, now: now)
 		}
@@ -925,48 +952,113 @@ final class JournalStore {
 	}
 
 
-	private func loadConfiguration() -> AppConfiguration? {
-		guard let data = try? Data(contentsOf: configurationURL) else { return nil }
-		return try? JSONDecoder().decode(AppConfiguration.self, from: data)
+	private var currentConfiguration: AppConfiguration {
+		AppConfiguration(settings: settings, locations: namedLocations, elevenLabsAPIKey: elevenLabsAPIKey)
 	}
 
-	private func restoreConfigurationFromICloud() async {
-		guard isConfigurationRestorePending else { return }
-		let configuration = await iCloudDriveMirror.loadConfiguration()
-		guard isConfigurationRestorePending else { return }
-		if let configuration { applyRestoredConfiguration(configuration) }
-		isConfigurationRestorePending = false
-		commitConfiguration()
-		Task { await refreshCalendar(force: true) }
+	private func loadConfiguration() async {
+		#if DEBUG
+		await configurationLoadCheckpoint?()
+		#endif
+		do {
+			let snapshot = try await configurationRepository.load(baseline: configurationInitialValue)
+			publishConfiguration(snapshot)
+		} catch {
+			configurationSaveMessage = "Settings could not be opened. Original files were preserved."
+			updateCloudStatus()
+		}
+		hasLoadedConfiguration = true
+		kickProcessing()
+		requestReminderSchedule()
+		startConfigurationWriter()
+		scheduleICloudDriveMirror(repair: true)
 	}
 
 	func applyRestoredConfiguration(_ configuration: AppConfiguration) {
-		applySettings(configuration.settings)
+		let scopeChanged = applySettings(configuration.settings)
 		namedLocations = configuration.locations
 		elevenLabsAPIKey = configuration.elevenLabsAPIKey
+		configurationIntentValue = configuration
+		if usesExternalServices, scopeChanged { Task { await refreshCalendar(force: true) } }
 	}
 
-	private func commitConfiguration() {
-		isConfigurationRestorePending = false
-		if usesExternalServices { settings.save() }
-		guard !isDemoMode else { return }
-		let configuration = AppConfiguration(
-			settings: settings,
-			locations: namedLocations,
-			elevenLabsAPIKey: elevenLabsAPIKey
-		)
-		guard let data = try? configuration.jsonData() else { return }
-		do {
-			try data.write(to: configurationURL, options: [.atomic])
-			try fileManager.setAttributes(
-				[.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-				ofItemAtPath: configurationURL.path
-			)
-			try includeInBackup(configurationURL)
-			scheduleICloudDriveMirror()
-		} catch {
-			assertionFailure("Could not save the app configuration: \(error)")
+	private func publishConfiguration(_ snapshot: ConfigurationSnapshot) {
+		guard snapshot.revision >= (configurationSnapshot?.revision ?? -1) else { return }
+		configurationSnapshot = snapshot
+		var value = snapshot.value
+		for intent in configurationIntents {
+			value = value.applying(value: intent.value, baseline: intent.baseline, keyEdited: intent.keyEdited)
 		}
+		applyRestoredConfiguration(value)
+		if usesExternalServices, configurationIntents.isEmpty { value.settings.save() }
+		updateCloudStatus()
+	}
+
+	private func commitConfiguration(keyEdited: Bool = false) {
+		let value = currentConfiguration
+		let baseline = configurationIntentValue
+		configurationIntentValue = value
+		guard !isDemoMode else { return }
+		configurationIntents.append(PendingConfigurationEdit(baseline: baseline, value: value, keyEdited: keyEdited))
+		startConfigurationWriter()
+	}
+
+	private func startConfigurationWriter() {
+		guard configurationWriteTask == nil, !configurationIntents.isEmpty else { return }
+		configurationWriteTask = Task {
+			await configurationBootstrapTask?.value
+			defer { configurationWriteTask = nil; updateCloudStatus() }
+			while let intent = configurationIntents.first {
+				do {
+					let snapshot = try await configurationRepository.saveLocal(intent.value, baseline: intent.baseline, keyEdited: intent.keyEdited)
+					configurationIntents.removeAll { $0.id == intent.id }
+					configurationSaveMessage = nil
+					publishConfiguration(snapshot)
+					scheduleICloudDriveMirror()
+				} catch {
+					configurationSaveMessage = "Settings changes haven’t been saved. Original files were preserved. Try again."
+					break
+				}
+			}
+		}
+	}
+
+	func retryCloudSync() {
+		guard !isDemoMode else { return }
+		cloudSaveFailed = false
+		Task {
+			if configurationSnapshot == nil || configurationSnapshot?.status == .blocked || !hasLoadedConfiguration {
+				do {
+					let snapshot = try await configurationRepository.load(baseline: configurationInitialValue)
+					configurationSaveMessage = nil
+					hasLoadedConfiguration = true
+					publishConfiguration(snapshot)
+				} catch { configurationSaveMessage = "Settings could not be opened. Original files were preserved." }
+			}
+			startConfigurationWriter()
+			await configurationWriteTask?.value
+			scheduleICloudDriveMirror(changed: false, repair: true)
+		}
+	}
+
+	private func updateCloudStatus() {
+		if let configurationSaveMessage { cloudStatusMessage = configurationSaveMessage; return }
+		if cloudSaveFailed { cloudStatusMessage = "iCloud export progress could not be saved locally. Your recordings are preserved. Try again."; return }
+		if let issue = configurationSnapshot?.issue { cloudStatusMessage = issue; return }
+		if let failure = committedRecords.values.compactMap({ $0.cloudRetry?.message }).first {
+			cloudStatusMessage = failure
+			return
+		}
+		if let message = legacyCloudRetry?.message { cloudStatusMessage = message; return }
+		if configurationSnapshot?.status == .provisional {
+			cloudStatusMessage = "Settings changes are saved on this device while iCloud configuration is checked."
+			return
+		}
+		let hasPendingNotes = committedRecords.values.contains {
+			$0.contentRevision > $0.exportedRevision && ($0.state == .deleted || $0.entry?.audioFilename?.hasSuffix(".m4a") == true)
+		}
+		cloudStatusMessage = hasPendingNotes || configurationSnapshot?.export != nil
+			? "iCloud Drive exports are pending. Your recordings remain saved on this device." : nil
 	}
 
 	private func removeExactAlias(_ coordinate: LocationCoordinate, excluding locationID: UUID) {
@@ -1064,47 +1156,178 @@ final class JournalStore {
 	}
 
 	private var canMirror: Bool {
-		hasLoadedJournal && !isLoading && !isConfigurationRestorePending && !isCapturePriorityActive
+		#if DEBUG
+		if cloudStoppedForContract { return false }
+		#endif
+		return hasLoadedJournal && hasLoadedConfiguration && !isLoading && !isCapturePriorityActive
 	}
 
-	private func scheduleICloudDriveMirror(changed: Bool = true) {
+	private func scheduleICloudDriveMirror(changed: Bool = true, repair: Bool = false) {
 		guard !isDemoMode, mirroringEnabled else { return }
 		if changed { iCloudRevision += 1 }
+		if repair { cloudSaveFailed = false }
 		iCloudPending = true
+		iCloudRepairPending = iCloudRepairPending || repair
+		cloudRetryTask?.cancel()
 		startICloudMirrorWorker()
 	}
 
 	private func startICloudMirrorWorker() {
 		guard iCloudPending, canMirror, iCloudWorker == nil else { return }
 		iCloudWorker = Task {
-			defer { iCloudWorker = nil }
-			while iCloudPending, canMirror {
+			var activeRepair = false
+			isCloudSyncing = true
+			defer {
+				if Task.isCancelled {
+					iCloudPending = true
+					iCloudRepairPending = iCloudRepairPending || activeRepair
+				}
+				iCloudWorker = nil
+				isCloudSyncing = false
+				updateCloudStatus()
+				if iCloudPending, canMirror { startICloudMirrorWorker() }
+				else { scheduleCloudRetry() }
+			}
+			while iCloudPending, canMirror, !Task.isCancelled {
 				iCloudPending = false
+				let repair = iCloudRepairPending
+				activeRepair = repair
+				iCloudRepairPending = false
 				let revision = iCloudRevision
-				let entries = await repository.committedEntries()
+				let jobs = await repository.cloudJobs(repair: repair)
+				let configuration = await configurationRepository.snapshot(repair: repair)
 				#if DEBUG
 				await mirrorSnapshotCheckpoint?()
 				#endif
-				guard revision == iCloudRevision, canMirror else {
+				guard revision == iCloudRevision, canMirror, !Task.isCancelled else {
 					iCloudPending = true
+					iCloudRepairPending = iCloudRepairPending || repair
 					continue
 				}
-				let configuration = AppConfiguration(settings: settings, locations: namedLocations,
-					elevenLabsAPIKey: elevenLabsAPIKey)
-				let references = pendingICloudDeletionReferences
-				let result = await mirrorSync(entries, recordingsURL, configuration, references, revision)
-				pendingICloudDeletionReferences.subtract(result.completedDeletions.intersection(references))
-				savePendingICloudDeletions()
+				publishConfiguration(configuration)
+				let references = repair || (legacyCloudRetry?.isDue(at: .now) ?? true) ? pendingICloudDeletionReferences : []
+				if !jobs.isEmpty || configuration.export != nil || !references.isEmpty {
+					let result = await cloudServices.sync(jobs, recordingsURL, configuration.export, references, revision)
+					await acceptCloudResult(result, jobs: jobs, configuration: configuration, references: references)
+				}
+				guard canMirror, !Task.isCancelled else { return }
+				if configuration.needsRestore {
+					let result = await cloudServices.loadConfiguration()
+					guard !Task.isCancelled else { return }
+					await applyRemoteConfiguration(result, revision: configuration.revision)
+				}
 			}
 		}
 	}
 
+	private func acceptCloudResult(_ result: ICloudMirrorResult, jobs: [CloudNoteJob],
+		configuration: ConfigurationSnapshot, references: Set<String>) async {
+		let submitted = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0) })
+		var completed = Set<UUID>()
+		for receipt in result.completedJobs {
+			guard let job = submitted[receipt.job.id], job.contentRevision == receipt.job.contentRevision,
+				job.entry == receipt.job.entry, job.deletionReferences == receipt.job.deletionReferences else { continue }
+			completed.insert(job.id)
+			do {
+				if let record = try await repository.acknowledgeCloud(job: job, audioReceipt: receipt.audioReceipt,
+					metadataReceipt: receipt.metadataReceipt) { publish(record) }
+			} catch is CancellationError {} catch { cloudSaveFailed = true }
+		}
+		let acknowledged = result.completedDeletions.intersection(references)
+		pendingICloudDeletionReferences.subtract(acknowledged)
+		if pendingICloudDeletionReferences.isEmpty { legacyCloudRetry = nil }
+		guard !Task.isCancelled else { savePendingICloudDeletions(); return }
+		if !references.subtracting(acknowledged).isEmpty {
+			legacyCloudRetry = .failed(previous: legacyCloudRetry,
+				message: "Some iCloud Drive deletions remain pending. Local deletion is preserved.", now: .now)
+		}
+		savePendingICloudDeletions()
+		for job in jobs where !completed.contains(job.id) {
+			do {
+				if let record = try await repository.failCloud(job: job,
+					message: "Some iCloud Drive exports remain pending. Your recordings are saved on this device.") { publish(record) }
+			} catch is CancellationError {} catch { cloudSaveFailed = true }
+		}
+		guard let export = configuration.export, !Task.isCancelled else { return }
+		if export.mode == .createIfMissing, let read = result.configurationRead {
+			await applyRemoteConfiguration(read, revision: configuration.revision)
+		}
+		do {
+			if result.configurationExported {
+				publishConfiguration(try await configurationRepository.acknowledgeCloud(fingerprint: export.fingerprint))
+			} else if export.mode == .replace || result.configurationRead == nil {
+				publishConfiguration(try await configurationRepository.failCloud(fingerprint: export.fingerprint,
+					revision: configuration.revision, message: cloudConfigurationMessage(result.configurationRead)))
+			}
+		} catch is CancellationError {} catch { cloudSaveFailed = true }
+	}
+
+	private func applyRemoteConfiguration(_ read: ConfigurationRead, revision: Int) async {
+		do {
+			let snapshot = try await configurationRepository.applyRemote(read, expectedRevision: revision)
+			publishConfiguration(snapshot)
+			switch read {
+			case .available, .missing:
+				if snapshot.export != nil { scheduleICloudDriveMirror() }
+			default: break
+			}
+		} catch is CancellationError {} catch { cloudSaveFailed = true }
+	}
+
+	private func cloudConfigurationMessage(_ read: ConfigurationRead?) -> String {
+		switch read {
+		case .unavailable(let message), .damaged(let message): message
+		case .unsupported: "The iCloud configuration needs a newer app. Its original file was preserved."
+		case .conflict: "iCloud has conflicting configuration versions. They were preserved for resolution."
+		default: "Configuration export remains pending. Your saved settings are preserved on this device."
+		}
+	}
+
+	private func scheduleCloudRetry() {
+		cloudRetryTask?.cancel()
+		guard mirroringEnabled, !isDemoMode, canMirror, !cloudSaveFailed else { return }
+		cloudRetryTask = Task {
+			let notes = await repository.nextCloudRetry()
+			let configuration = await configurationRepository.snapshot()
+			guard !Task.isCancelled else { return }
+			let retry = [notes, configuration.nextRetry, pendingICloudDeletionReferences.isEmpty ? nil : legacyCloudRetry?.retryAfter]
+				.compactMap { $0 }.min()
+			guard let retry else { return }
+			do { try await Task.sleep(for: .seconds(max(0.05, retry.timeIntervalSinceNow))) }
+			catch { return }
+			guard !Task.isCancelled else { return }
+			scheduleICloudDriveMirror(changed: false)
+		}
+	}
+
 	#if DEBUG
-	func waitForICloudMirrorForContract() async { await iCloudWorker?.value }
+	func stopCloudForContract() async {
+		cloudStoppedForContract = true
+		cloudRetryTask?.cancel()
+		iCloudWorker?.cancel()
+		await cloudRetryTask?.value
+		await iCloudWorker?.value
+		await configurationBootstrapTask?.value
+		await configurationWriteTask?.value
+		iCloudPending = false
+		iCloudRepairPending = false
+	}
+	func waitForICloudMirrorForContract() async {
+		await configurationBootstrapTask?.value
+		await configurationWriteTask?.value
+		await iCloudWorker?.value
+	}
+	func waitForConfigurationWritesForContract() async {
+		await configurationBootstrapTask?.value
+		await configurationWriteTask?.value
+	}
 	#endif
 
 	private func savePendingICloudDeletions() {
 		guard usesExternalServices else { return }
+		if let legacyCloudRetry, let data = try? JSONEncoder().encode(legacyCloudRetry) {
+			UserDefaults.standard.set(data, forKey: Self.iCloudRetryKey)
+		} else { UserDefaults.standard.removeObject(forKey: Self.iCloudRetryKey) }
 		if pendingICloudDeletionReferences.isEmpty {
 			UserDefaults.standard.removeObject(forKey: Self.iCloudDeletionKey)
 		} else {
@@ -1116,14 +1339,8 @@ final class JournalStore {
 	}
 
 
-	private func includeInBackup(_ url: URL) throws {
-		var url = url
-		var values = URLResourceValues()
-		values.isExcludedFromBackup = false
-		try url.setResourceValues(values)
-	}
-
 	private static let iCloudDeletionKey = "pending-icloud-drive-deletions"
+	private static let iCloudRetryKey = "pending-icloud-drive-deletion-retry"
 }
 
 enum ReminderFeedbackError: LocalizedError {
@@ -1138,6 +1355,13 @@ enum ReminderFeedbackError: LocalizedError {
 			"No feedback could be heard. Try recording it again."
 		}
 	}
+}
+
+private struct PendingConfigurationEdit {
+	let id = UUID()
+	var baseline: AppConfiguration
+	var value: AppConfiguration
+	var keyEdited: Bool
 }
 
 private struct PendingJournalEdit {

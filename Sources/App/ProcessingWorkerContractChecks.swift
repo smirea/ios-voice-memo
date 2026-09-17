@@ -20,10 +20,12 @@ enum ProcessingWorkerContractChecks {
 		let entry = try seed(root: root)
 		let probe = Probe()
 		let store = JournalStore(storageRootURL: root, processingServices: services(probe))
+		store.updateSetting(\.eventRemindersEnabled, false)
 		defer { try? FileManager.default.removeItem(at: root) }
 		do {
 			try await store.waitUntilLoaded()
-			store.settings.eventRemindersEnabled = false
+			await store.waitForConfigurationWritesForContract()
+
 			store.reprocessEntry(id: entry.id)
 			try await wait { await probe.starts == 1 }
 			try await wait { store.partialTranscript(for: entry.id) != nil }
@@ -57,10 +59,12 @@ enum ProcessingWorkerContractChecks {
 		let entry = try seed(root: root)
 		let probe = Probe()
 		let store = JournalStore(storageRootURL: root, processingServices: services(probe))
+		store.updateSetting(\.eventRemindersEnabled, false)
 		defer { try? FileManager.default.removeItem(at: root) }
 		do {
 			try await store.waitUntilLoaded()
-			store.settings.eventRemindersEnabled = false
+			await store.waitForConfigurationWritesForContract()
+
 			store.reprocessEntry(id: entry.id)
 			try await wait { await probe.starts == 1 }
 			let held = try block(entry.id, root)
@@ -89,10 +93,12 @@ enum ProcessingWorkerContractChecks {
 		let second = try seed(root: root, append: true)
 		let probe = Probe()
 		let store = JournalStore(storageRootURL: root, processingServices: services(probe))
+		store.updateSetting(\.eventRemindersEnabled, false)
 		defer { try? FileManager.default.removeItem(at: root) }
 		do {
 			try await store.waitUntilLoaded()
-			store.settings.eventRemindersEnabled = false
+			await store.waitForConfigurationWritesForContract()
+
 			store.processingIdleCheckpoint = { [weak store] in
 				guard let store, await probe.starts == 1 else { return }
 				store.processingIdleCheckpoint = nil

@@ -40,7 +40,8 @@ enum ReminderSchedulingContractChecks {
 			let store = JournalStore(storageRootURL: root,
 				reminderResolver: { await probe.resolve($0, $1, $2) }, reminderActivityManager: activities.manager())
 			try await store.waitUntilLoaded()
-			store.settings.calendarSyncEnabled = true
+			await store.waitForConfigurationWritesForContract()
+			store.updateSetting(\.calendarSyncEnabled, true)
 			store.calendarSync.setEventsForContract([event])
 			try await wait { await probe.started }
 			switch mutation {
@@ -89,8 +90,9 @@ enum ReminderSchedulingContractChecks {
 			reminderResolver: { await ReminderEngine.resolve(entries: $0, events: $1, now: $2, modelIsAvailable: { false }) },
 			reminderActivityManager: activities.manager())
 		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
 		let held = try block(entry.id, root)
-		store.settings.calendarSyncEnabled = true
+		store.updateSetting(\.calendarSyncEnabled, true)
 		store.calendarSync.setEventsForContract([event])
 		await store.refreshReminderSchedule()
 		try expect(store.hasUnsavedChanges(for: entry.id) && activities.items.isEmpty,
@@ -120,6 +122,7 @@ enum ReminderSchedulingContractChecks {
 		let (second, _) = try await seed(root: root)
 		let store = JournalStore(storageRootURL: root)
 		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
 		let held = try block(first.id, root)
 		store.removeReminder(entryID: first.id, reminderID: first.reminders[0].id)
 		let feedback = ReminderFeedback(kind: .voice, text: "Bring another notebook")
@@ -151,8 +154,9 @@ enum ReminderSchedulingContractChecks {
 		_ = try await repository.requestProcessing(id: second.id, startAt: .reminders)
 		let probe = ReminderStageProbe(heldID: first.id)
 		let store = JournalStore(storageRootURL: root, processingServices: services(probe))
-		store.settings.eventRemindersEnabled = true
+		store.updateSetting(\.eventRemindersEnabled, true)
 		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
 		try await wait { await probe.starts[first.id] == 1 }
 		let held = try block(first.id, root)
 		store.removeReminder(entryID: first.id, reminderID: first.reminders[0].id)
@@ -179,8 +183,9 @@ enum ReminderSchedulingContractChecks {
 		_ = try await repository.requestProcessing(id: entry.id, startAt: .reminders)
 		let probe = ReminderStageProbe(heldID: entry.id)
 		let store = JournalStore(storageRootURL: root, processingServices: services(probe))
-		store.settings.eventRemindersEnabled = true
+		store.updateSetting(\.eventRemindersEnabled, true)
 		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
 		try await wait { await probe.starts[entry.id] == 1 }
 		var settings = store.settings
 		settings.eventRemindersEnabled = false
@@ -199,6 +204,7 @@ enum ReminderSchedulingContractChecks {
 		let (entry, _) = try await seed(root: root)
 		let store = JournalStore(storageRootURL: root)
 		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
 		let hold = DeletionHold()
 		store.deletionIntentCheckpoint = { await hold.wait() }
 		let deletion = Task { await store.deleteEntry(id: entry.id) }
@@ -221,9 +227,10 @@ enum ReminderSchedulingContractChecks {
 		let store = JournalStore(storageRootURL: root,
 			reminderResolver: { await probe.resolve($0, $1, $2) }, reminderActivityManager: activities.manager())
 		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
 		let owner = UUID()
 		await store.beginCapturePriority(owner: owner)
-		store.settings.calendarSyncEnabled = true
+		store.updateSetting(\.calendarSyncEnabled, true)
 		store.calendarSync.setEventsForContract([event])
 		try await wait { await probe.calls == 1 }
 		await store.endCapturePriority(owner: owner)
@@ -245,7 +252,8 @@ enum ReminderSchedulingContractChecks {
 		let store = JournalStore(storageRootURL: root,
 			reminderResolver: { await probe.resolve($0, $1, $2) }, reminderActivityManager: activities.manager())
 		try await store.waitUntilLoaded()
-		store.settings.calendarSyncEnabled = true
+		await store.waitForConfigurationWritesForContract()
+		store.updateSetting(\.calendarSyncEnabled, true)
 		store.calendarSync.setEventsForContract([event])
 		try await wait { await probe.calls == 1 }
 		var settings = store.settings

@@ -93,8 +93,10 @@ enum ProcessingReliabilityContractChecks {
 		}, reflect: { _, _ in ReflectionResult(headline: "Finished", modelName: "Fixture") },
 			reminders: { _ in ReminderParsingResult(reminders: [], modelName: "Fixture") })
 		let store = JournalStore(storageRootURL: root, processingServices: services)
+		store.updateSetting(\.eventRemindersEnabled, false)
 		try await store.waitUntilLoaded()
-		store.settings.eventRemindersEnabled = false
+		await store.waitForConfigurationWritesForContract()
+
 		store.reprocessEntry(id: entry.id)
 		let owner = UUID(), otherOwner = UUID()
 		do {
@@ -154,10 +156,12 @@ enum ProcessingReliabilityContractChecks {
 		}, reflect: { _, _ in ReflectionResult(headline: "Retried successfully", modelName: "Fixture") },
 			reminders: { _ in ReminderParsingResult(reminders: [], modelName: "Fixture") })
 		let store = JournalStore(storageRootURL: root, processingServices: services)
+		store.updateSetting(\.eventRemindersEnabled, false)
 		do {
 			try await wait { await blocker.starts == 1 }
 			try await store.waitUntilLoaded()
-			store.settings.eventRemindersEnabled = false
+			await store.waitForConfigurationWritesForContract()
+
 			store.processingDeadlineOverride = 0.04
 			store.reprocessEntry(id: entry.id)
 			try await wait { store.processingStates[entry.id]?.status == .running }

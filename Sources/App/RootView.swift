@@ -133,6 +133,9 @@ struct RootView: View {
 			#endif
 			await store.refreshCalendar()
 		}
+		.onReceive(NotificationCenter.default.publisher(for: .NSUbiquityIdentityDidChange)) { _ in
+			store.retryCloudSync()
+		}
 		.onChange(of: scenePhase) { _, phase in
 			guard phase == .active else { return }
 			store.resumeStaleProcessing()

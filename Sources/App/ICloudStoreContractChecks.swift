@@ -38,7 +38,7 @@ enum ICloudStoreContractChecks {
 			try await wait { await probe.count == 2 }
 			let latest = await probe.call(1)
 			try expect(latest.entries.count == 1 && latest.entries.first?.id == entries[0].id
-				&& latest.entries.first?.location?.city == "Fixture city 19" && !latest.configuration.settings.hapticsEnabled,
+				&& latest.entries.first?.location?.city == "Fixture city 19" && latest.configuration?.settings.hapticsEnabled == false,
 				"The next pass must capture only the latest committed note and configuration")
 			try expect(latest.references.contains(entries[1].id.uuidString)
 				&& latest.references.contains(entries[1].audioFilename!),
@@ -193,13 +193,14 @@ enum ICloudStoreContractChecks {
 	}
 
 	private static func makeStore(_ root: URL, _ probe: Probe) -> JournalStore {
-		JournalStore(storageRootURL: root, mirrorSync: { entries, _, configuration, references, revision in
-			await probe.sync(entries, configuration, references, revision)
-		})
+		JournalStore(storageRootURL: root, cloudServices: CloudServices(sync: { jobs, _, configuration, references, revision in
+			await probe.sync(jobs, configuration, references, revision)
+		}, loadConfiguration: { .unavailable("Unexpected fixture restore") }))
 	}
 	private struct Call: Sendable {
-		var entries: [JournalEntry]
-		var configuration: AppConfiguration
+		var jobs: [CloudNoteJob]
+		var entries: [JournalEntry] { jobs.compactMap(\.entry) }
+		var configuration: AppConfiguration?
 		var references: Set<String>
 		var revision: Int
 	}
@@ -212,17 +213,19 @@ enum ICloudStoreContractChecks {
 		init(held: Bool = true) { self.held = held }
 		var count: Int { calls.count }
 		func call(_ index: Int) -> Call { calls[index] }
-		func sync(_ entries: [JournalEntry], _ configuration: AppConfiguration, _ references: Set<String>, _ revision: Int) async -> ICloudMirrorResult {
-			calls.append(Call(entries: entries, configuration: configuration, references: references, revision: revision))
+		func sync(_ jobs: [CloudNoteJob], _ configuration: CloudConfigurationJob?, _ references: Set<String>, _ revision: Int) async -> ICloudMirrorResult {
+			let allReferences = jobs.reduce(into: references) { $0.formUnion($1.deletionReferences) }
+			calls.append(Call(jobs: jobs, configuration: configuration?.value, references: allReferences, revision: revision))
 			active += 1
 			maximumActive = max(maximumActive, active)
 			defer { active -= 1 }
-			if !held { return ICloudMirrorResult(completedDeletions: references, exportedEntries: entries, configurationExported: true) }
+			if !held { return ICloudMirrorResult(completedJobs: jobs.map { CloudNoteReceipt(job: $0) }, completedDeletions: references, configurationExported: configuration != nil) }
 			return await withCheckedContinuation { continuation = $0 }
 		}
 		func release(completed: Set<String>? = nil, fail: Bool = false) {
 			let last = calls.last
-			continuation?.resume(returning: ICloudMirrorResult(completedDeletions: completed ?? (fail ? [] : last?.references ?? []),
+			continuation?.resume(returning: ICloudMirrorResult(completedJobs: fail ? [] : (last?.jobs ?? []).map { CloudNoteReceipt(job: $0) },
+				completedDeletions: completed ?? (fail ? [] : last?.references ?? []),
 				exportedEntries: fail ? [] : last?.entries ?? [], configurationExported: !fail,
 				failures: fail ? ["Fixture cloud unavailable"] : []))
 			continuation = nil
@@ -241,6 +244,7 @@ enum ICloudStoreContractChecks {
 		func release() { released = true; continuation?.resume(); continuation = nil }
 	}
 	private static func seed(_ root: URL, count: Int = 1) async throws -> [JournalEntry] {
+		try AppConfiguration(settings: JournalSettings()).jsonData().write(to: root.appendingPathComponent("config.json"))
 		let repository = JournalRepository(rootURL: root)
 		_ = try await repository.load()
 		let entries = (0..<count).map { _ in makeEntry() }

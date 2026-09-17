@@ -247,8 +247,10 @@ enum StorageContractChecks {
 		}
 		let store = JournalStore(storageRootURL: root)
 		try await store.waitUntilLoaded()
-		store.settings.calendarSyncEnabled = false
-		store.settings.eventRemindersEnabled = false
+		await store.waitForConfigurationWritesForContract()
+		store.updateSetting(\.calendarSyncEnabled, false)
+		store.updateSetting(\.eventRemindersEnabled, false)
+		await store.waitForConfigurationWritesForContract()
 		return store
 	}
 

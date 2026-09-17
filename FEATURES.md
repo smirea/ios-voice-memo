@@ -9,7 +9,9 @@
 - Loads local note metadata without blocking the interface, preserves damaged originals, and keeps readable notes available while reporting storage problems.
 - Stores notes and audio locally for offline use, includes them in device backups, continues processing briefly in the background, and resumes interrupted processing when the app is active. Transient stage failures retry after 1, 5, and 15 minutes, then wait for manual Retry; unavailable services and unreadable audio wait for manual Retry immediately.
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names only after the new pair is complete. Skips unchanged exports, checks missing or failed exports again on foreground, and defers new export passes during recording.
-- Stores app settings, named locations, and API keys in a versioned, backed-up `config.json`, mirrors it beside iCloud Drive exports, and restores it when no local config exists.
+- Stores app settings, named locations, and API keys in a versioned, backed-up `config.json` and mirrors it beside iCloud Drive exports. A readable local configuration stays authoritative; first-install edits remain saved locally while restoration is pending and are retained when remote configuration arrives, including an explicitly cleared API key.
+- Preserves unreadable local configuration and leaves damaged, unsupported, or conflicting remote configuration unresolved during first-install restoration, instead of replacing it with defaults. Notes and recording remain available independently; Settings reports pending exports or configuration problems with a retry action.
+- Remembers completed exports and pending deletions across restarts, retries transient iCloud failures after 5 seconds, 30 seconds, and 3 minutes, then waits for a change, foreground visit, account change, or manual retry. A local iCloud export does not claim upload to other devices.
 - Treats local data as authoritative: iCloud note exports are not imported, and deleting a note removes its local audio and exports. A failed deletion keeps the note available to retry; pending audio cleanup retries on launch without restoring deliberately deleted notes.
 - Reports unsaved note changes with a persistent retry action. A failed note save does not block saving or sharing other notes. iCloud exports use saved metadata, and sharing waits for that note’s changes to save.
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
@@ -75,7 +77,7 @@
 
 # Settings Screen
 
-- Opens as a sheet, saves changes immediately, and dismisses with Done.
+- Opens as a sheet, applies and saves changes immediately, reads current settings after restoration, reports save failures with a retry action, and dismisses with Done.
 - Controls screen wake while recording, recording haptics, transcript visibility, and the default-on ElevenLabs transcription preference.
 - Stores an optional ElevenLabs API key in `config.json` and prefers it over the bundled fallback.
 - Calendar sync requests Full Access for read-only event access and lets each calendar be included or excluded.
