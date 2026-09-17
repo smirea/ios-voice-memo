@@ -84,9 +84,15 @@ struct RootView: View {
 			Text(store.transcriptionAlertMessage ?? "")
 		}
 		.alert("Journal storage", isPresented: Binding(
-			get: { store.storageErrorMessage != nil },
+			get: { !showsSettings && recordingSession.context == nil && store.storageErrorMessage != nil },
 			set: { if !$0 { store.storageErrorMessage = nil } }
 		)) {
+			if store.hasUnsavedNoteChanges {
+				Button("Try Saving Again") {
+					store.storageErrorMessage = nil
+					Task { await store.retrySavingChanges() }
+				}
+			}
 			Button("OK", role: .cancel) { store.storageErrorMessage = nil }
 		} message: {
 			Text(store.storageErrorMessage ?? "")
@@ -119,6 +125,12 @@ struct RootView: View {
 			if recordingSession.isVisualDemo {
 				recordingSession.present(startsImmediately: true)
 			}
+			#if DEBUG
+			if store.isDemoMode, ProcessInfo.processInfo.arguments.contains("-demo-storage-error") {
+				try? await Task.sleep(for: .milliseconds(600))
+				store.storageErrorMessage = "Couldn’t delete one note. Its audio is still on this device. Try deleting it again."
+			}
+			#endif
 			await store.refreshCalendar()
 		}
 		.onChange(of: scenePhase) { _, phase in

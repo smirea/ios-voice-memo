@@ -149,9 +149,13 @@ actor JournalRepository {
 
 	func record(id: UUID) -> JournalRecord? { records[id] }
 
+	func committedEntries() -> [JournalEntry] {
+		records.values.filter { $0.state == .saved }.compactMap(\.entry).sorted { $0.createdAt > $1.createdAt }
+	}
+
 	private func snapshot(issues: [String]) -> JournalLoad {
 		JournalLoad(
-			entries: records.values.filter { $0.state == .saved }.compactMap(\.entry).sorted { $0.createdAt > $1.createdAt },
+			entries: committedEntries(),
 			issues: issues,
 			deletionReferences: records.values.filter { $0.state == .deleted }.reduce(into: []) {
 				$0.formUnion($1.ownedAudioFilenames)

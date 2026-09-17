@@ -13,7 +13,7 @@ struct EntryView: View {
 	@State private var isMissingCalendarEventAlertPresented = false
 	@State private var showsReminderFeedback = false
 	@State private var showsNoteActions = false
-	@State private var sharedEntry: JournalEntry?
+	@State private var sharedEntry: JournalEntryExport?
 	@Namespace private var noteActionsNamespace
 
 	private var currentEntry: JournalEntry {
@@ -63,6 +63,15 @@ struct EntryView: View {
 				}
 				.padding(.top, 10)
 				.entryListRow()
+
+				if store.hasUnsavedNoteChanges {
+					Button("Note changes not saved. Try Again") {
+						Task { await store.retrySavingChanges() }
+					}
+					.font(.footnote)
+					.foregroundStyle(AppStyle.accent)
+					.entryListRow()
+				}
 
 				if let phase = store.processingPhase(for: entry.id) {
 					EntryProcessingStatusView(phase: phase)
@@ -221,7 +230,7 @@ struct EntryView: View {
 			ReminderFeedbackView(store: store, entryID: entry.id)
 		}
 		.sheet(item: $sharedEntry) { entry in
-			JournalEntryShareSheet(entry: entry)
+			JournalEntryShareSheet(export: entry)
 		}
 		.alert("Event unavailable", isPresented: $isMissingCalendarEventAlertPresented) {
 			Button("OK", role: .cancel) {}
@@ -289,11 +298,17 @@ struct EntryView: View {
 			Divider()
 
 			Button {
-				let entryToShare = currentEntry
 				setNoteActionsPresented(false)
 				Task { @MainActor in
 					try? await Task.sleep(for: .milliseconds(250))
-					sharedEntry = entryToShare
+					let savedEntries = await store.committedEntriesForExport()
+					guard !store.hasUnsavedNoteChanges else {
+						store.storageErrorMessage = "Save your note changes before sharing. Try saving again."
+						return
+					}
+					guard let savedEntry = savedEntries.first(where: { $0.id == entry.id }) else { return }
+					do { sharedEntry = try JournalEntryExport(entry: savedEntry) }
+					catch { store.storageErrorMessage = "Couldn’t prepare the note for sharing. " + error.localizedDescription }
 				}
 			} label: {
 				Label("Share", systemImage: "square.and.arrow.up")
@@ -357,16 +372,11 @@ struct EntryView: View {
 }
 
 private struct JournalEntryShareSheet: UIViewControllerRepresentable {
-	let entry: JournalEntry
+	let export: JournalEntryExport
 
 	func makeUIViewController(context: Context) -> UIActivityViewController {
-		let export = try? JournalEntryExport(entry: entry)
-		return UIActivityViewController(
-			activityItems: export.map { [$0.fileURL] } ?? [],
-			applicationActivities: export.map {
-				[CopyJSONTextActivity(jsonText: $0.jsonText)]
-			}
-		)
+		UIActivityViewController(activityItems: [export.fileURL],
+			applicationActivities: [CopyJSONTextActivity(jsonText: export.jsonText)])
 	}
 
 	func updateUIViewController(
@@ -375,11 +385,13 @@ private struct JournalEntryShareSheet: UIViewControllerRepresentable {
 	) {}
 }
 
-private struct JournalEntryExport {
+private struct JournalEntryExport: Identifiable {
+	let id: UUID
 	let fileURL: URL
 	let jsonText: String
 
 	init(entry: JournalEntry) throws {
+		id = entry.id
 		let data = try entry.jsonData()
 		fileURL = FileManager.default.temporaryDirectory
 			.appendingPathComponent("MyVoiceMemo_\(entry.id.uuidString).json")

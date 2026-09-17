@@ -10,7 +10,11 @@ enum StorageContractChecks {
 			try await migrationChecks()
 			try await recoveryChecks()
 			try await failureChecks()
-			print("STORAGE CONTRACT: isolated corruption, preserved originals, idempotent migration, reserved IDs, stable recovery, incremental saves, and tombstones passed")
+			try await storeDeletionChecks()
+			try await storeCleanupChecks()
+			try await storeBulkDeletionChecks()
+			try await storeMutationChecks()
+			print("STORAGE CONTRACT: isolated corruption, preserved originals, idempotent migration, reserved IDs, stable recovery, incremental saves, committed exports, retryable writes/deletions, and tombstones passed")
 			fflush(stdout)
 		} catch { fatalError("STORAGE CONTRACT: \(error)") }
 	}
@@ -119,6 +123,146 @@ enum StorageContractChecks {
 		try FileManager.default.moveItem(at: preservedURL, to: firstURL)
 		let reloaded = try await JournalRepository(rootURL: root).load()
 		try expect(reloaded.entries.first(where: { $0.id == first.id })?.transcript == "Only the first note changed", "Incremental edits must survive relaunch after a later save fails")
+	}
+
+	private static func storeDeletionChecks() async throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let entry = audioEntry(title: "Keep until deletion commits")
+		let store = try await makeStore(entries: [entry], root: root)
+		let audioURL = root.appendingPathComponent("Recordings/\(entry.audioFilename!)")
+		let audioBefore = try Data(contentsOf: audioURL)
+		let preservedURL = try blockManifest(entry.id, root: root)
+		let deleted = await store.deleteEntry(id: entry.id)
+		try expect(!deleted && store.entry(id: entry.id) == entry, "A failed deletion commit must keep its note visible and report failure")
+		try expect(store.storageErrorMessage != nil, "A deletion write failure must be surfaced")
+		try expect(try Data(contentsOf: audioURL) == audioBefore, "Failed deletion must leave the original audio untouched")
+		let exported = await store.committedEntriesForExport()
+		try expect(exported == [entry], "Failed deletion must not disappear from the committed export snapshot")
+		try restoreManifest(entry.id, root: root, preservedURL: preservedURL)
+		let retried = await store.deleteEntry(id: entry.id)
+		try expect(retried && store.entries.isEmpty, "Retry must remove the note only after committing its tombstone")
+		try expect(!FileManager.default.fileExists(atPath: audioURL.path), "Successful deletion retry must clean owned audio")
+		let reloaded = try await JournalRepository(rootURL: root).load()
+		try expect(reloaded.entries.isEmpty && reloaded.deletionReferences.contains(entry.id.uuidString), "Deletion retry must survive relaunch and remain queued for cloud cleanup")
+	}
+
+	private static func storeCleanupChecks() async throws {
+		let root = try temporaryRoot()
+		let recordings = root.appendingPathComponent("Recordings", isDirectory: true)
+		defer {
+			try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: recordings.path)
+			try? FileManager.default.removeItem(at: root)
+		}
+		let entry = audioEntry(title: "Cleanup can be retried")
+		let store = try await makeStore(entries: [entry], root: root)
+		let audioURL = recordings.appendingPathComponent(entry.audioFilename!)
+		try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: recordings.path)
+		_ = await store.deleteEntry(id: entry.id)
+		try expect(store.entries.isEmpty, "A committed tombstone must hide the note even when audio cleanup fails")
+		try expect(store.storageErrorMessage != nil && FileManager.default.fileExists(atPath: audioURL.path), "Cleanup failure must preserve the audio and surface that work remains")
+		let manifest = try JSONDecoder().decode(JournalRecord.self, from: Data(contentsOf: recordURL(entry.id, root: root)))
+		try expect(manifest.state == .deleted && manifest.entry == nil && manifest.ownedAudioFilenames.contains(entry.audioFilename!), "Cleanup failure must leave durable deletion intent and audio ownership")
+		let exported = await store.committedEntriesForExport()
+		try expect(exported.isEmpty, "A deleted note awaiting cleanup must never be exported as live")
+		try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: recordings.path)
+		let reloaded = try await JournalRepository(rootURL: root).load()
+		try expect(reloaded.entries.isEmpty && !FileManager.default.fileExists(atPath: audioURL.path), "Relaunch must retry cleanup without recovering deliberately deleted audio")
+	}
+
+	private static func storeBulkDeletionChecks() async throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let first = audioEntry(title: "First")
+		let blocked = audioEntry(title: "Retry this note")
+		let last = audioEntry(title: "Last")
+		let store = try await makeStore(entries: [first, blocked, last], root: root)
+		let preservedURL = try blockManifest(blocked.id, root: root)
+		let deleted = await store.clearJournal()
+		try expect(!deleted && store.entries.map(\.id) == [blocked.id], "Bulk deletion must report partial failure, retaining only notes whose tombstone failed")
+		try expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("Recordings/\(blocked.audioFilename!)").path), "A partial bulk deletion must preserve failed note audio")
+		for entry in [first, last] {
+			try expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("Recordings/\(entry.audioFilename!)").path), "A blocked note must not prevent unrelated deletions from finishing")
+		}
+		let exported = await store.committedEntriesForExport()
+		try expect(exported.map(\.id) == [blocked.id], "Bulk export must agree with the individual deletion commit outcomes")
+		try restoreManifest(blocked.id, root: root, preservedURL: preservedURL)
+		let retried = await store.clearJournal()
+		try expect(retried && store.entries.isEmpty, "Retrying bulk deletion must finish the remaining note")
+	}
+
+	private static func storeMutationChecks() async throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let reminder = EventReminderRule(text: "Bring your notebook", motivation: "Capture meeting notes", evidence: "Bring my notebook",
+			selector: .fuzzy(FuzzyEventSelector(semanticDescription: "Team meeting", timeBucket: .any, locationDescription: nil, examples: [])),
+			occurrencePolicy: .everyMatch)
+		var entry = audioEntry(title: "Committed reminder")
+		entry.reminders = [reminder]
+		let store = try await makeStore(entries: [entry], root: root)
+		let preservedURL = try blockManifest(entry.id, root: root)
+		store.removeReminder(entryID: entry.id, reminderID: reminder.id)
+		await store.waitForPendingWrites()
+		try expect(store.entry(id: entry.id)?.reminders.isEmpty == true, "A failed edit must remain available in the UI for retry")
+		try expect(store.hasUnsavedNoteChanges && store.storageErrorMessage != nil, "A failed edit must remain explicitly unsaved")
+		let committed = await store.committedEntriesForExport()
+		try expect(committed == [entry], "Export must use the last committed note, excluding failed optimistic edits")
+		let cloudRoot = root.appendingPathComponent("Cloud", isDirectory: true)
+		let mirror = ICloudDriveMirror(containerURL: cloudRoot)
+		_ = await mirror.sync(entries: committed, recordingsURL: root.appendingPathComponent("Recordings"),
+			configuration: AppConfiguration(settings: store.settings, locations: [], elevenLabsAPIKey: ""),
+			deletedRecordingReferences: [], revision: 1)
+		let exportedFiles = try FileManager.default.contentsOfDirectory(at: cloudRoot.appendingPathComponent("Documents"), includingPropertiesForKeys: nil)
+		guard let exportedURL = exportedFiles.first(where: { $0.pathExtension == "json" && $0.lastPathComponent != "config.json" }) else {
+			throw Failure(message: "The committed snapshot did not produce an iCloud metadata export")
+		}
+		let decoder = JSONDecoder()
+		decoder.dateDecodingStrategy = .iso8601
+		let cloudEntry = try decoder.decode(JournalEntry.self, from: Data(contentsOf: exportedURL))
+		try expect(cloudEntry.reminders.map(\.id) == [reminder.id] && cloudEntry.reminderFeedback.isEmpty, "iCloud metadata must exclude an uncommitted reminder removal and its feedback")
+		let sharedEntry = try decoder.decode(JournalEntry.self, from: committed[0].jsonData())
+		try expect(sharedEntry.reminders.map(\.id) == [reminder.id], "Share JSON built from the committed snapshot must retain the durable reminder")
+
+		try restoreManifest(entry.id, root: root, preservedURL: preservedURL)
+		await store.retrySavingChanges()
+		await store.waitForPendingWrites()
+		try expect(!store.hasUnsavedNoteChanges, "A successful retry must clear the unsaved state")
+		let retried = await store.committedEntriesForExport()
+		try expect(retried.count == 1 && retried[0].reminders.isEmpty && retried[0].reminderFeedback.count == 1, "Retry must commit the retained edit exactly once")
+		await store.retrySavingChanges()
+		let reloaded = try await JournalRepository(rootURL: root).load()
+		try expect(reloaded.entries == retried, "Committed retry results must survive relaunch without duplicate feedback")
+	}
+
+	private static func audioEntry(title: String) -> JournalEntry {
+		let id = UUID()
+		return JournalEntry(id: id, duration: 0.1, transcript: "Existing transcript", headline: title, audioFilename: "\(id.uuidString).m4a")
+	}
+
+	private static func makeStore(entries: [JournalEntry], root: URL) async throws -> JournalStore {
+		try JSONEncoder().encode(entries).write(to: root.appendingPathComponent("entries.json"))
+		for entry in entries {
+			if let filename = entry.audioFilename { try writeAudio(at: root.appendingPathComponent("Recordings/\(filename)")) }
+		}
+		let store = JournalStore(storageRootURL: root)
+		try await store.waitUntilLoaded()
+		store.settings.calendarSyncEnabled = false
+		store.settings.eventRemindersEnabled = false
+		return store
+	}
+
+	private static func blockManifest(_ id: UUID, root: URL) throws -> URL {
+		let manifest = recordURL(id, root: root)
+		let preserved = root.appendingPathComponent("preserved-\(id.uuidString).json")
+		try FileManager.default.moveItem(at: manifest, to: preserved)
+		try FileManager.default.createDirectory(at: manifest, withIntermediateDirectories: true)
+		return preserved
+	}
+
+	private static func restoreManifest(_ id: UUID, root: URL, preservedURL: URL) throws {
+		let manifest = recordURL(id, root: root)
+		try FileManager.default.removeItem(at: manifest)
+		try FileManager.default.moveItem(at: preservedURL, to: manifest)
 	}
 
 	private static func temporaryRoot() throws -> URL {

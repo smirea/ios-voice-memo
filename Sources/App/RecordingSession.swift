@@ -13,11 +13,21 @@ final class RecordingSession {
 	private(set) var context: RecordingContext?
 	private(set) var hasStartedRecording = false
 	private(set) var isFinishing = false
+	private(set) var isDiscarding = false
 	var errorMessage: String?
 	var saveErrorMessage: String?
+	var discardErrorMessage: String?
 	@ObservationIgnored private var finishedRecording: FinishedRecording?
 
 	var canFinish: Bool { recorder.hasRecording || finishedRecording != nil }
+	var duration: TimeInterval { finishedRecording?.duration ?? recorder.duration }
+	var isCommitting: Bool { isFinishing || isDiscarding }
+	var statusMessage: String? {
+		if isFinishing { return "Saving recording…" }
+		if isDiscarding { return "Discarding recording…" }
+		if finishedRecording != nil { return "Recording stopped. Finish to save or discard it." }
+		return recorder.statusMessage
+	}
 
 	@ObservationIgnored private let store: JournalStore
 	@ObservationIgnored private let liveActivity = RecordingActivityManager()
@@ -43,6 +53,8 @@ final class RecordingSession {
 		context = RecordingContext()
 		hasStartedRecording = false
 		isFinishing = false
+		isDiscarding = false
+		discardErrorMessage = nil
 		errorMessage = nil
 		saveErrorMessage = nil
 		finishedRecording = nil
@@ -73,7 +85,7 @@ final class RecordingSession {
 	}
 
 	func finish() async -> UUID? {
-		guard !isVisualDemo, !isFinishing else { return nil }
+		guard !isVisualDemo, !isCommitting else { return nil }
 		if finishedRecording == nil { finishedRecording = recorder.finish() }
 		guard let recording = finishedRecording else { return nil }
 		isFinishing = true
@@ -94,16 +106,34 @@ final class RecordingSession {
 		}
 	}
 
-	func discard() {
-		guard !isFinishing else { return }
+	@discardableResult
+	func discard() async -> Bool {
+		guard !isCommitting else { return false }
+		isDiscarding = true
+		defer { isDiscarding = false }
 		generation = nil
 		startupTask?.cancel()
 		startupTask = nil
-		discardAudio()
+		if finishedRecording == nil { finishedRecording = recorder.finish() }
+		if recorder.state == .starting { _ = recorder.cancel() }
 		liveActivity.end()
 		UIApplication.shared.isIdleTimerDisabled = false
-		context = nil
-		errorMessage = nil
+		do {
+			if let url = finishedRecording?.url ?? activeURL {
+				try await store.cancelRecording(at: url)
+			}
+			store.cancelRecordingLocationCapture()
+			finishedRecording = nil
+			activeURL = nil
+			context = nil
+			errorMessage = nil
+			discardErrorMessage = nil
+			return true
+		} catch {
+			let retained = canFinish ? "Its audio is still on this device. Try discarding again, or Finish to save it." : "Recording will not start. Try discarding again."
+			discardErrorMessage = "The recording hasn’t been discarded. " + retained + " " + error.localizedDescription
+			return false
+		}
 	}
 
 	private func beginRecording(generation: UUID) async {
@@ -111,7 +141,8 @@ final class RecordingSession {
 		do {
 			let url = try await store.destinationForNewRecording(calendarEvent: calendarEvent)
 			guard self.generation == generation, !Task.isCancelled else {
-				store.cancelRecording(at: url)
+				do { try await store.cancelRecording(at: url) }
+				catch { store.storageErrorMessage = "Cancelled recording cleanup is pending. " + error.localizedDescription }
 				return
 			}
 			activeURL = url
@@ -135,17 +166,8 @@ final class RecordingSession {
 		} catch {
 			guard self.generation == generation else { return }
 			startupTask = nil
-			discardAudio()
 			errorMessage = error.localizedDescription
 		}
-	}
-
-	private func discardAudio() {
-		let url = finishedRecording?.url ?? recorder.finish()?.url ?? recorder.cancel() ?? activeURL
-		finishedRecording = nil
-		activeURL = nil
-		guard let url else { return }
-		store.cancelRecording(at: url)
 	}
 
 	private func recordingStateChanged() {

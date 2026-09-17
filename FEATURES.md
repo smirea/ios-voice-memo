@@ -10,7 +10,8 @@
 - Stores notes and audio locally for offline use, includes them in device backups, continues processing briefly in the background, and retries interrupted or stalled processing after 15 minutes or on the next launch.
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.
 - Stores app settings, named locations, and API keys in a versioned, backed-up `config.json`, mirrors it beside iCloud Drive exports, and restores it when no local config exists.
-- Treats local data as authoritative: iCloud note exports are not imported, and deleting a note removes its local audio and exports.
+- Treats local data as authoritative: iCloud note exports are not imported, and deleting a note removes its local audio and exports. A failed deletion keeps the note available to retry; pending audio cleanup retries on launch without restoring deliberately deleted notes.
+- Reports unsaved note changes with a persistent retry action. iCloud exports use saved metadata, and sharing waits for changes to save.
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
 - Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback, and alerts when ElevenLabs could not be used; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
 - Generates summaries only for recordings longer than 20 seconds.
@@ -35,7 +36,7 @@
 - Start Recording begins with the selected event attached; a widget launch starts immediately without setup.
 - Shows an error and returns home when recording cannot start.
 - Records without a fixed time limit and shows a live waveform, elapsed time, pause/resume, finish, and discard controls.
-- Finishing opens the **Note Screen** only after the note is saved; a failed save preserves the audio and allows Finish to be retried. Discarding deletes the recording and returns Home.
+- Finishing opens the **Note Screen** only after the note is saved; a failed save preserves the audio and allows Finish to be retried. Discarding returns Home only after deletion is saved; a failed discard keeps the stopped audio and controls available to retry or finish.
 - Opening a note link while recording keeps the recording on screen; only an explicit discard deletes active audio, and discarding during microphone permission prevents recording from starting later.
 - Recording controls provide haptic feedback when enabled in Settings.
 - Continues with the screen locked or app backgrounded, pauses for audio interruptions, and recovers from route changes when the microphone becomes available.
@@ -77,7 +78,7 @@
 - Calendar settings can prefer direct Google Calendar links, with an exact native event view as fallback.
 - Reminder settings control delivery, Live Activities, and the global pre-event lead time.
 - Reminder Benchmark runs the production parser against grouped on-device accuracy, grounding, feedback, and fuzzy-matching cases.
-- Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export.
+- Delete All Entries requires confirmation and removes every note, recording, and iCloud Drive export; if a deletion fails, reports it in Settings and retains the affected notes for retry.
 
 # Lock Screen and Dynamic Island
 

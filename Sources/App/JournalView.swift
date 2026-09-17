@@ -21,6 +21,15 @@ struct JournalView: View {
 				.listRowBackground(AppStyle.background)
 				.listRowSeparator(.hidden)
 
+				if store.hasUnsavedNoteChanges {
+					Button("Note changes not saved. Try Again") {
+						Task { await store.retrySavingChanges() }
+					}
+					.font(.footnote)
+					.foregroundStyle(AppStyle.accent)
+					.listRowBackground(AppStyle.background)
+					.listRowSeparator(.hidden)
+				}
 				if store.isLoading {
 					ProgressView("Opening journal")
 						.listRowBackground(AppStyle.background)
@@ -107,7 +116,7 @@ struct JournalView: View {
 			presenting: entryPendingDeletion
 		) { entry in
 			Button("Delete", role: .destructive) {
-				store.deleteEntry(id: entry.id)
+				Task { await store.deleteEntry(id: entry.id) }
 			}
 			Button("Cancel", role: .cancel) {}
 		} message: { _ in

@@ -23,7 +23,7 @@ struct RecordView: View {
 	}
 
 	private var shownDuration: TimeInterval {
-		isVisualDemo ? 113 : recorder.duration
+		isVisualDemo ? 113 : session.duration
 	}
 
 	private var events: [JournalCalendarEvent] {
@@ -78,14 +78,24 @@ struct RecordView: View {
 				selectClosestEvent()
 			}
 		}
+		#if DEBUG
+		.task {
+			guard isVisualDemo else { return }
+			try? await Task.sleep(for: .milliseconds(600))
+			let arguments = ProcessInfo.processInfo.arguments
+			if arguments.contains("-demo-save-error") {
+				session.saveErrorMessage = "Your audio is still on this device. Try Finish again. The note couldn’t be written."
+			}
+			if arguments.contains("-demo-discard-error") {
+				session.discardErrorMessage = "The recording hasn’t been discarded. Its audio is still on this device. Try discarding again, or Finish to save it."
+			}
+		}
+		#endif
 		.alert("Recording unavailable", isPresented: Binding(
 			get: { session.errorMessage != nil },
 			set: { if !$0 { session.errorMessage = nil } }
 		)) {
-			Button("Close") {
-				session.discard()
-				onClose()
-			}
+			Button("Close", action: cancel)
 		} message: {
 			Text(session.errorMessage ?? "")
 		}
@@ -96,6 +106,15 @@ struct RecordView: View {
 			Button("OK", role: .cancel) { session.saveErrorMessage = nil }
 		} message: {
 			Text(session.saveErrorMessage ?? "")
+		}
+		.alert("Couldn’t discard recording", isPresented: Binding(
+			get: { session.discardErrorMessage != nil },
+			set: { if !$0 { session.discardErrorMessage = nil } }
+		)) {
+			Button("Try Again", action: cancel)
+			Button("Keep Audio", role: .cancel) { session.discardErrorMessage = nil }
+		} message: {
+			Text(session.discardErrorMessage ?? "")
 		}
 		.sheet(isPresented: $showsDatePicker) {
 			NavigationStack {
@@ -229,7 +248,7 @@ struct RecordView: View {
 				.padding(.top, 12)
 				.offset(y: -40)
 
-			if let statusMessage = recorder.statusMessage {
+			if let statusMessage = session.statusMessage {
 				Text(statusMessage)
 					.font(.system(size: 14, weight: .medium))
 					.foregroundStyle(AppStyle.secondary)
@@ -261,7 +280,7 @@ struct RecordView: View {
 						.shadow(color: AppStyle.accent.opacity(0.38), radius: 18, y: 7)
 				}
 				.buttonStyle(.plain)
-				.disabled(!isVisualDemo && (!session.canFinish || session.isFinishing))
+				.disabled(!isVisualDemo && (!session.canFinish || session.isCommitting))
 				.accessibilityLabel("Finish recording")
 			}
 			.padding(.bottom, 63)
@@ -280,7 +299,7 @@ struct RecordView: View {
 					.glassEffect(.regular.tint(.red.opacity(0.12)).interactive(), in: Circle())
 			}
 			.buttonStyle(.plain)
-			.disabled(session.isFinishing)
+			.disabled(session.isCommitting)
 			.accessibilityLabel("Discard recording")
 			.padding(.top, 18)
 		}
@@ -369,9 +388,11 @@ struct RecordView: View {
 	}
 
 	private func cancel() {
-		session.discard()
-		notification(.warning)
-		onClose()
+		Task {
+			guard await session.discard() else { return }
+			notification(.warning)
+			onClose()
+		}
 	}
 
 	private func togglePause() {

@@ -85,9 +85,23 @@ struct SettingsView: View {
 		.onChange(of: draft) { _, newValue in store.updateSettings(newValue) }
 		.alert("Delete the journal?", isPresented: $showsClearConfirmation) {
 			Button("Cancel", role: .cancel) {}
-			Button("Delete all", role: .destructive) { store.clearJournal() }
+			Button("Delete all", role: .destructive) { Task { await store.clearJournal() } }
 		} message: {
 			Text("This permanently deletes every note, recording, and iCloud Drive export.")
+		}
+		.alert("Journal storage", isPresented: Binding(
+			get: { store.storageErrorMessage != nil },
+			set: { if !$0 { store.storageErrorMessage = nil } }
+		)) {
+			if store.hasUnsavedNoteChanges {
+				Button("Try Saving Again") {
+					store.storageErrorMessage = nil
+					Task { await store.retrySavingChanges() }
+				}
+			}
+			Button("OK", role: .cancel) { store.storageErrorMessage = nil }
+		} message: {
+			Text(store.storageErrorMessage ?? "")
 		}
 		.alert("Calendar access is off", isPresented: $showsCalendarAccessAlert) {
 			Button("Not now", role: .cancel) {}

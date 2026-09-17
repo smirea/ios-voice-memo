@@ -11,7 +11,8 @@ enum RecordingContractChecks {
 		do {
 			try await run()
 			try await runCaptureStateChecks()
-			print("RECORDING CONTRACT: startup cancellation, route/pause races, interruption recovery, reset preservation, and stale callbacks passed")
+			try await runDurabilityChecks()
+			print("RECORDING CONTRACT: startup cancellation, route/pause races, interruption recovery, reset preservation, stale callbacks, durable finish/discard retries, and cancelled permission after failed discard passed")
 			fflush(stdout)
 		} catch {
 			fatalError("RECORDING CONTRACT: \(error)")
@@ -35,7 +36,7 @@ enum RecordingContractChecks {
 		session.present(startsImmediately: true)
 		try expect(session.context?.id == originalContext, "Opening the recorder again must preserve its session")
 		try expect(permission.requests.count == 1, "One session must not create competing microphone requests")
-		session.discard()
+		await session.discard()
 		permission.resolve(0, granted: true)
 		await cancelledStart.value
 		await store.waitForPendingWrites()
@@ -51,12 +52,12 @@ enum RecordingContractChecks {
 		await store.waitForPendingWrites()
 		try expect(session.errorMessage != nil && session.context != nil, "A denied microphone must keep the error visible until acknowledged")
 
-		session.discard()
+		await session.discard()
 
 		session.present(startsImmediately: true)
 		try await permission.waitForRequest(3)
 		let oldStart = session.startupTask!
-		session.discard()
+		await session.discard()
 		session.present(startsImmediately: true)
 		try await permission.waitForRequest(4)
 		let newStart = session.startupTask!
@@ -72,7 +73,7 @@ enum RecordingContractChecks {
 		try expect(session.context?.id == newContext && session.errorMessage == nil, "The old permission result must not dismiss or fail the replacement session")
 		try expect(try Data(contentsOf: pendingURL) == newPending, "The old completion must not remove the replacement session's recovery metadata")
 		try expect(!recorder.isRecording, "The old session must not start capture while the replacement awaits permission")
-		session.discard()
+		await session.discard()
 		permission.resolve(3, granted: true)
 		await newStart.value
 		await store.waitForPendingWrites()
@@ -182,6 +183,91 @@ enum RecordingContractChecks {
 		recorder.handleDeviceFinished(ObjectIdentifier(third), successfully: false)
 		try expect(recorder.state == .stopped(.encodingFailure) && !recorder.canTogglePause, "Encoder failure must stop automatic and manual reuse of the failed recorder")
 		_ = recorder.cancel()
+	}
+
+	private static func runDurabilityChecks() async throws {
+		let root = FileManager.default.temporaryDirectory
+			.appendingPathComponent("recording-durability-contract-\(UUID().uuidString)", isDirectory: true)
+		defer { try? FileManager.default.removeItem(at: root) }
+		let store = JournalStore(storageRootURL: root)
+		let backend = CaptureBackend()
+		let recorder = AudioRecorder(permissionRequest: { true }, hardware: RecordingHardware(
+			makeRecorder: { try backend.makeRecorder(at: $0) },
+			activate: { _ in }, deactivate: { _ in }), observeSession: false)
+		let session = RecordingSession(store: store, recorder: recorder)
+		session.present(startsImmediately: true)
+		await session.startupTask?.value
+		try expect(recorder.isRecording, "The capture fixture must actually enter recording")
+		let audioURL = backend.devices[0].url
+		let id = UUID(uuidString: audioURL.deletingPathExtension().lastPathComponent)!
+		let recordURL = root.appendingPathComponent("Records/\(id.uuidString).json")
+		let original = try JSONDecoder().decode(JournalRecord.self, from: Data(contentsOf: recordURL))
+		let bytes = try Data(contentsOf: audioURL)
+		let heldURL = try blockWrite(to: recordURL, root: root)
+		let failedFinish = await session.finish()
+		try expect(failedFinish == nil && session.context != nil && session.canFinish && session.saveErrorMessage != nil,
+			"A real finish write failure must retain the presentation and retryable finalized recording")
+		try expect(!recorder.isRecording && store.entries.isEmpty, "A failed finish must stop capture without publishing a saved note")
+		try expect(try Data(contentsOf: audioURL) == bytes, "Failed finish must preserve the original audio bytes")
+		try restoreWrite(at: recordURL, from: heldURL)
+		let finishedID = await session.finish()
+		try expect(finishedID == id && session.context == nil && store.entries.count == 1,
+			"Finish retry must commit exactly one note with the original capture ID")
+		try expect(store.entries[0].createdAt == original.entry?.createdAt && store.entries[0].duration >= 12,
+			"Finish retry must retain the original start date and finalized audio duration")
+		let repeatedFinish = await session.finish()
+		try expect(repeatedFinish == nil && store.entries.count == 1, "Repeated Finish must not duplicate a committed note")
+
+		session.present(startsImmediately: true)
+		await session.startupTask?.value
+		let discardedAudio = backend.devices[1].url
+		let discardedID = UUID(uuidString: discardedAudio.deletingPathExtension().lastPathComponent)!
+		let discardedRecord = root.appendingPathComponent("Records/\(discardedID.uuidString).json")
+		let discardedBytes = try Data(contentsOf: discardedAudio)
+		let heldDiscard = try blockWrite(to: discardedRecord, root: root)
+		let failedDiscard = await session.discard()
+		try expect(!failedDiscard && session.context != nil && session.canFinish && session.discardErrorMessage != nil,
+			"A failed discard tombstone must retain session ownership and explicit retry controls")
+		try expect(!recorder.isRecording && session.duration >= 12, "A failed discard must not leave the microphone running")
+		try expect(try Data(contentsOf: discardedAudio) == discardedBytes, "Audio must not be removed before deletion intent is durable")
+		try restoreWrite(at: discardedRecord, from: heldDiscard)
+		let retriedDiscard = await session.discard()
+		try expect(retriedDiscard && session.context == nil && !FileManager.default.fileExists(atPath: discardedAudio.path),
+			"Discard retry must remove audio and dismiss only after its tombstone is committed")
+		let reloaded = try await JournalRepository(rootURL: root).load()
+		try expect(reloaded.entries.map(\.id) == [id], "Relaunch must neither duplicate the finished note nor resurrect the discarded capture")
+
+		let permission = PermissionGate()
+		let pendingRecorder = AudioRecorder(permissionRequest: { await permission.request() }, observeSession: false)
+		let pendingSession = RecordingSession(store: store, recorder: pendingRecorder)
+		pendingSession.present(startsImmediately: true)
+		try await permission.waitForRequest(1)
+		let pendingTask = pendingSession.startupTask!
+		let pendingRecord = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("Records"), includingPropertiesForKeys: nil).first {
+			try JSONDecoder().decode(JournalRecord.self, from: Data(contentsOf: $0)).state == .recording
+		}!
+		let heldPending = try blockWrite(to: pendingRecord, root: root)
+		let pendingDiscard = await pendingSession.discard()
+		try expect(!pendingDiscard && pendingSession.context != nil, "A pending startup must retain its context if its tombstone cannot be written")
+		permission.resolve(0, granted: true)
+		await pendingTask.value
+		try expect(!pendingRecorder.isRecording && pendingSession.discardErrorMessage != nil,
+			"Permission granted after failed discard must never restart capture or clear its retry error")
+		try restoreWrite(at: pendingRecord, from: heldPending)
+		let pendingRetry = await pendingSession.discard()
+		try expect(pendingRetry && pendingSession.context == nil, "Pending startup discard must remain retryable after permission resolves")
+	}
+
+	private static func blockWrite(to url: URL, root: URL) throws -> URL {
+		let preserved = root.appendingPathComponent("held-\(UUID().uuidString).json")
+		try FileManager.default.moveItem(at: url, to: preserved)
+		try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+		return preserved
+	}
+
+	private static func restoreWrite(at url: URL, from preserved: URL) throws {
+		try FileManager.default.removeItem(at: url)
+		try FileManager.default.moveItem(at: preserved, to: url)
 	}
 
 	private static func interruption(_ type: AVAudioSession.InterruptionType) -> Notification {

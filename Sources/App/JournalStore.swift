@@ -13,6 +13,7 @@ final class JournalStore {
 	private(set) var isLoading = true
 	private(set) var storageLoadMessage: String?
 	var storageErrorMessage: String?
+	private(set) var hasUnsavedNoteChanges = false
 	var transcriptionAlertMessage: String?
 	var settings = JournalSettings.load()
 	let calendarSync: CalendarSync
@@ -39,6 +40,7 @@ final class JournalStore {
 	@ObservationIgnored private let repository: JournalRepository
 	@ObservationIgnored private var bootstrapTask: Task<Void, Never>?
 	@ObservationIgnored private var persistenceTask: Task<Void, Never>?
+	@ObservationIgnored private var persistenceRevision = 0
 	private let usesExternalServices: Bool
 
 	init(storageRootURL: URL? = nil) {
@@ -63,6 +65,9 @@ final class JournalStore {
 			namedLocations = NamedJournalLocation.demo
 			settings.calendarSyncEnabled = true
 			isLoading = false
+			#if DEBUG
+			hasUnsavedNoteChanges = ProcessInfo.processInfo.arguments.contains("-demo-unsaved-notes")
+			#endif
 		} else {
 			bootstrapTask = Task { [weak self] in await self?.loadJournal() }
 		}
@@ -209,17 +214,24 @@ final class JournalStore {
 		}
 	}
 
-	func cancelRecording(at url: URL) {
+	func cancelRecordingLocationCapture() {
 		recordingLocationTask?.cancel()
 		recordingLocationTask = nil
-		guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { return }
-		let previous = persistenceTask
-		persistenceTask = Task {
-			await previous?.value
-			do {
-				_ = try await repository.delete(id: id)
-				try await repository.cleanupDeletedAudio(id: id)
-			} catch { storageErrorMessage = error.localizedDescription }
+	}
+
+	func cancelRecording(at url: URL) async throws {
+		await persistenceTask?.value
+		guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else {
+			throw RepositoryError.unavailableRecord
+		}
+		_ = try await repository.delete(id: id)
+		await cleanupDeletedAudio(id: id)
+	}
+
+	private func cleanupDeletedAudio(id: UUID) async {
+		do { try await repository.cleanupDeletedAudio(id: id) }
+		catch {
+			storageErrorMessage = "Deletion was saved. Audio cleanup is pending and will retry when the app opens. " + error.localizedDescription
 		}
 	}
 
@@ -519,17 +531,19 @@ final class JournalStore {
 		entryProcessingTokens.removeValue(forKey: entryID)
 	}
 
-	func deleteEntry(id entryID: UUID) {
-		Task { await deleteEntries(ids: [entryID]) }
+	@discardableResult
+	func deleteEntry(id entryID: UUID) async -> Bool {
+		await deleteEntries(ids: [entryID])
 	}
 
-	func clearJournal() {
-		let ids = entries.map(\.id)
-		Task { await deleteEntries(ids: ids) }
+	@discardableResult
+	func clearJournal() async -> Bool {
+		await deleteEntries(ids: entries.map(\.id))
 	}
 
-	private func deleteEntries(ids: [UUID]) async {
+	private func deleteEntries(ids: [UUID]) async -> Bool {
 		await persistenceTask?.value
+		var failedCount = 0
 		for entryID in ids {
 			guard entries.contains(where: { $0.id == entryID }) else { continue }
 			do {
@@ -543,10 +557,17 @@ final class JournalStore {
 				pendingICloudDeletionReferences.formUnion(references)
 				savePendingICloudDeletions()
 				scheduleICloudDriveMirror()
-				try await repository.cleanupDeletedAudio(id: entryID)
-			} catch { storageErrorMessage = "Could not complete deletion. " + error.localizedDescription }
+				await cleanupDeletedAudio(id: entryID)
+			} catch { failedCount += 1 }
 		}
-		await refreshReminderSchedule()
+		if failedCount > 0 {
+			storageErrorMessage = "Couldn’t delete \(failedCount == 1 ? "one note" : "\(failedCount) notes"). Their audio is still on this device. Try deleting them again."
+		}
+		if hasUnsavedNoteChanges, await repository.committedEntries() == entries {
+			hasUnsavedNoteChanges = false
+		}
+		if usesExternalServices { Task { await refreshReminderSchedule() } }
+		return failedCount == 0
 	}
 
 	func temporaryReminderFeedbackURL() -> URL {
@@ -743,16 +764,33 @@ final class JournalStore {
 		namedLocations[index].aliases.append(coordinate)
 	}
 
+	func retrySavingChanges() async {
+		persist()
+		await persistenceTask?.value
+	}
+
+	func committedEntriesForExport() async -> [JournalEntry] {
+		if isDemoMode { return entries }
+		await persistenceTask?.value
+		return await repository.committedEntries()
+	}
+
 	private func persist() {
 		guard !isDemoMode else { return }
+		persistenceRevision += 1
+		let revision = persistenceRevision
 		let snapshot = entries
 		let previous = persistenceTask
 		persistenceTask = Task {
 			await previous?.value
 			do {
 				try await repository.save(snapshot)
+				if persistenceRevision == revision { hasUnsavedNoteChanges = false }
 				scheduleICloudDriveMirror()
-			} catch { storageErrorMessage = "Could not save note changes. " + error.localizedDescription }
+			} catch {
+				hasUnsavedNoteChanges = true
+				storageErrorMessage = "Note changes haven’t been saved. Try saving again. " + error.localizedDescription
+			}
 		}
 	}
 
@@ -760,7 +798,6 @@ final class JournalStore {
 		guard !isDemoMode, usesExternalServices, !isLoading, !isConfigurationRestorePending else { return }
 		iCloudRevision += 1
 		let revision = iCloudRevision
-		let entries = entries
 		let recordingsURL = recordingsURL
 		let configuration = AppConfiguration(
 			settings: settings,
@@ -770,6 +807,7 @@ final class JournalStore {
 		let mirror = iCloudDriveMirror
 		let deletedRecordingReferences = pendingICloudDeletionReferences
 		Task {
+			let entries = await repository.committedEntries()
 			let completedDeletions = await mirror.sync(
 				entries: entries,
 				recordingsURL: recordingsURL,
