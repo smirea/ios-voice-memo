@@ -45,8 +45,9 @@ enum ReminderPresentationContractChecks {
 		guard cleanup || index != nil else { return }
 		let prefix = "DEBUG-reminder-preview-ticket16"
 		let live = ReminderActivityOperations.live
+		let sources = Set((1...4).compactMap { UUID(uuidString: "00000000-0000-4000-8000-00000000160\($0)") })
 		let fixtures = live.existing().filter {
-			$0.isLive && $0.attributes.eventKey.hasPrefix(prefix + "::") && $0.attributes.calendarIdentifier == prefix
+			$0.isLive && $0.attributes.calendarIdentifier == prefix && sources.contains($0.attributes.sourceEntryID)
 		}
 		for fixture in fixtures { await live.end(fixture.id) }
 		previewLog("cleanup ended \(fixtures.count)")
@@ -213,7 +214,8 @@ enum ReminderPresentationContractChecks {
 		let tied = [occurrence("zeta", hours: 2), occurrence("alpha", hours: 2), occurrence("beta", hours: 2)]
 		let backend = Backend()
 		_ = await sync(ReminderActivityManager(operations: backend.operations), tied)
-		try expect(backend.requests.map(\.item.attributes.eventTitle) == ["alpha", "beta"], "Equal trigger/start groups must use stable occurrence-key ordering")
+		let expectedTitles = tied.sorted { $0.eventKey < $1.eventKey }.prefix(2).map(\.event.title)
+		try expect(backend.requests.map(\.item.attributes.eventTitle) == expectedTitles, "Equal trigger/start groups must use stable occurrence-key ordering")
 		let tiedRules = [occurrence("tied-rules", text: "First candidate"), occurrence("tied-rules", text: "Second candidate")]
 		let firstOrder = Backend(), reverseOrder = Backend()
 		_ = await sync(ReminderActivityManager(operations: firstOrder.operations), tiedRules)

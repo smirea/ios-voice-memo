@@ -240,16 +240,27 @@ enum ReminderEngine {
 		var incompleteReminderIDs: Set<UUID> = []
 		var consumedAtByReminderID: [UUID: Date] = [:]
 		var outcome: ModelProcessingOutcome = .complete
-		let orderedEvents = events.sorted { $0.startDate < $1.startDate }
+		let orderedEvents = Set(events).sorted {
+			$0.startDate == $1.startDate ? $0.focusKey < $1.focusKey : $0.startDate < $1.startDate
+		}
+		let groupedEvents = Dictionary(grouping: orderedEvents, by: \.focusKey)
+		let uniqueEvents = orderedEvents.filter { groupedEvents[$0.focusKey]?.count == 1 }
+		let ambiguousEvents = orderedEvents.filter { groupedEvents[$0.focusKey]?.count != 1 }
+		let ambiguousOutcome = ModelProcessingOutcome.failed("Some reminders could not be matched to a unique calendar occurrence.")
 
 		for entry in entries {
 			for reminder in entry.reminders where reminder.isActive(at: now) {
 				try Task.checkCancellation()
 				if reminder.occurrencePolicy == .nextMatch, let pinned = reminder.resolvedOccurrence {
-					let exact = orderedEvents.filter {
-						$0.calendarIdentifier == pinned.calendarIdentifier && $0.focusKey == pinned.focusKey
+					let current: JournalCalendarEvent?
+					switch CalendarOccurrenceIdentity.match(for: pinned, among: orderedEvents) {
+					case let .matched(event): current = event
+					case .missing: current = nil
+					case .ambiguous:
+						incompleteReminderIDs.insert(reminder.id)
+						outcome = ambiguousOutcome
+						continue
 					}
-					let current = exact.count == 1 ? exact[0] : nil
 					if let current { resolvedOccurrencesByReminderID[reminder.id] = current }
 					let latest = current ?? pinned
 					if latest.endDate < now {
@@ -259,14 +270,21 @@ enum ReminderEngine {
 					}
 					continue
 				}
-				let eligibleOccurrences = orderedEvents.filter { reminder.allows($0, at: now) }
+				let eligibleOccurrences = uniqueEvents.filter { reminder.allows($0, at: now) }
+				let ambiguousOccurrences = ambiguousEvents.filter { reminder.allows($0, at: now) }
 				let matchedEvents: [JournalCalendarEvent]
+				let potentialAmbiguities: [JournalCalendarEvent]
 
 				switch reminder.selector {
 				case let .series(series):
 					matchedEvents = eligibleOccurrences.filter { series.matches($0) }
+					potentialAmbiguities = ambiguousOccurrences.filter { series.matches($0) }
 				case let .fuzzy(selector):
-					let exampleCandidates = orderedEvents.filter { $0.endDate < now || reminder.allows($0, at: now) }
+					potentialAmbiguities = ambiguousOccurrences.filter {
+						satisfiesConstraints(selector: selector, event: $0)
+							&& (exactNamedTargetMatch(selector: selector, event: $0) || hasSemanticAnchor(selector: selector, event: $0))
+					}
+					let exampleCandidates = uniqueEvents.filter { $0.endDate < now || reminder.allows($0, at: now) }
 					let result = try await match(selector: selector, candidates: exampleCandidates, modelIsAvailable: modelIsAvailable, services: services)
 					let decisions = result.decisions
 					if !result.outcome.isComplete {
@@ -281,6 +299,13 @@ enum ReminderEngine {
 						selector: selector,
 						decisions: decisions
 					)
+				}
+
+				if let earliestAmbiguity = potentialAmbiguities.first,
+					reminder.occurrencePolicy == .everyMatch
+						|| (matchedEvents.first.map({ earliestAmbiguity.startDate <= $0.startDate }) ?? true) {
+					incompleteReminderIDs.insert(reminder.id)
+					outcome = ambiguousOutcome
 				}
 
 				let selected: [JournalCalendarEvent]
@@ -1102,11 +1127,7 @@ enum ReminderEngine {
 				)
 			)
 		})
-		let eligibleCandidates = candidates.filter {
-			guard selector.timeBucket.contains($0.startDate) else { return false }
-			guard let requiredLocation = selector.locationDescription else { return true }
-			return $0.location?.reminderNormalized.contains(requiredLocation.reminderNormalized) == true
-		}
+		let eligibleCandidates = candidates.filter { satisfiesConstraints(selector: selector, event: $0) }
 		let exactMatches = eligibleCandidates.filter {
 			exactNamedTargetMatch(selector: selector, event: $0)
 		}
@@ -1169,6 +1190,12 @@ enum ReminderEngine {
 			}
 		}
 		return (decisions, .complete)
+	}
+
+	private static func satisfiesConstraints(selector: FuzzyEventSelector, event: JournalCalendarEvent) -> Bool {
+		guard selector.timeBucket.contains(event.startDate) else { return false }
+		guard let requiredLocation = selector.locationDescription else { return true }
+		return event.location?.reminderNormalized.contains(requiredLocation.reminderNormalized) == true
 	}
 
 	private static func exactNamedTargetMatch(

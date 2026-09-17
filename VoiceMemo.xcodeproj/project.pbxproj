@@ -89,6 +89,11 @@
 		A10000000000000000000051 /* ReminderPresentationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000051 /* ReminderPresentationContractChecks.swift */; };
 		A10000000000000000000053 /* RecordingPresentationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000053 /* RecordingPresentationContractChecks.swift */; };
 		A10000000000000000000052 /* RecordingActivityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000052 /* RecordingActivityContractChecks.swift */; };
+		A10000000000000000000054 /* CalendarOccurrenceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000054 /* CalendarOccurrenceIdentity.swift */; };
+		A10000000000000000000055 /* CalendarOccurrenceContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000055 /* CalendarOccurrenceContractChecks.swift */; };
+		A10000000000000000000056 /* ReminderOccurrenceContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000056 /* ReminderOccurrenceContractChecks.swift */; };
+		A10000000000000000000057 /* CalendarEventNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000057 /* CalendarEventNavigation.swift */; };
+		A10000000000000000000058 /* CalendarNavigationContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000058 /* CalendarNavigationContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -200,6 +205,11 @@
 		B10000000000000000000051 /* ReminderPresentationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderPresentationContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000053 /* RecordingPresentationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingPresentationContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000052 /* RecordingActivityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingActivityContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000054 /* CalendarOccurrenceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarOccurrenceIdentity.swift; sourceTree = "<group>"; };
+		B10000000000000000000055 /* CalendarOccurrenceContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarOccurrenceContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000056 /* ReminderOccurrenceContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderOccurrenceContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000057 /* CalendarEventNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventNavigation.swift; sourceTree = "<group>"; };
+		B10000000000000000000058 /* CalendarNavigationContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarNavigationContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -288,6 +298,11 @@
 				B1000000000000000000004F /* ReminderBackfillContractChecks.swift */,
 				B10000000000000000000050 /* ReminderDeliveryContractChecks.swift */,
 				B10000000000000000000051 /* ReminderPresentationContractChecks.swift */,
+				B10000000000000000000054 /* CalendarOccurrenceIdentity.swift */,
+				B10000000000000000000055 /* CalendarOccurrenceContractChecks.swift */,
+				B10000000000000000000056 /* ReminderOccurrenceContractChecks.swift */,
+				B10000000000000000000057 /* CalendarEventNavigation.swift */,
+				B10000000000000000000058 /* CalendarNavigationContractChecks.swift */,
 				B10000000000000000000053 /* RecordingPresentationContractChecks.swift */,
 				B10000000000000000000052 /* RecordingActivityContractChecks.swift */,
 				B1000000000000000000004A /* ReminderContextContractChecks.swift */,
@@ -552,6 +567,11 @@
 				A1000000000000000000004F /* ReminderBackfillContractChecks.swift in Sources */,
 				A10000000000000000000050 /* ReminderDeliveryContractChecks.swift in Sources */,
 				A10000000000000000000051 /* ReminderPresentationContractChecks.swift in Sources */,
+				A10000000000000000000054 /* CalendarOccurrenceIdentity.swift in Sources */,
+				A10000000000000000000055 /* CalendarOccurrenceContractChecks.swift in Sources */,
+				A10000000000000000000056 /* ReminderOccurrenceContractChecks.swift in Sources */,
+				A10000000000000000000057 /* CalendarEventNavigation.swift in Sources */,
+				A10000000000000000000058 /* CalendarNavigationContractChecks.swift in Sources */,
 				A10000000000000000000053 /* RecordingPresentationContractChecks.swift in Sources */,
 				A10000000000000000000052 /* RecordingActivityContractChecks.swift in Sources */,
 				A1000000000000000000004A /* ReminderContextContractChecks.swift in Sources */,

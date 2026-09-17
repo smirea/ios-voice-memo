@@ -11,6 +11,7 @@ struct EntryView: View {
 	@State private var playback = AudioPlayback()
 	@State private var presentedCalendarEvent: PresentedCalendarEvent?
 	@State private var isMissingCalendarEventAlertPresented = false
+	@State private var calendarOpenID = UUID()
 	@State private var showsReminderFeedback = false
 	@State private var showsNoteActions = false
 	@State private var sharedEntry: JournalEntryExport?
@@ -240,7 +241,10 @@ struct EntryView: View {
 				showsReminderFeedback = true
 			}
 		}
-		.onDisappear { playback.stop() }
+		.onDisappear {
+			calendarOpenID = UUID()
+			playback.stop()
+		}
 		.sheet(item: $presentedCalendarEvent) { presentedEvent in
 			CalendarEventDetail(event: presentedEvent.event)
 		}
@@ -253,7 +257,7 @@ struct EntryView: View {
 		.alert("Event unavailable", isPresented: $isMissingCalendarEventAlertPresented) {
 			Button("OK", role: .cancel) {}
 		} message: {
-			Text("This event is no longer available in the calendars on this iPhone.")
+			Text("This exact event occurrence couldn’t be found in its original calendar on this iPhone.")
 		}
 		.accessibilityAction(.escape) { dismiss() }
 	}
@@ -371,17 +375,22 @@ struct EntryView: View {
 	}
 
 	private func openCalendarEvent(_ event: JournalCalendarEvent) {
-		let resolvedEvent = store.calendarSync.resolve(event)
-		if store.settings.preferredCalendarApp == .google,
-			let providerURL = event.providerURL
-				?? resolvedEvent.flatMap(store.calendarSync.providerURL(for:)) {
-			UIApplication.shared.open(providerURL)
-			return
-		}
-		if let resolvedEvent {
-			presentedCalendarEvent = PresentedCalendarEvent(event: resolvedEvent)
-		} else {
-			isMissingCalendarEventAlertPresented = true
+		let requestID = UUID()
+		calendarOpenID = requestID
+		let resolved = store.calendarSync.resolve(event)
+		Task {
+			let destination = await CalendarEventNavigation.destination(
+				stored: event, resolved: resolved?.snapshot, preferredApp: store.settings.preferredCalendarApp,
+				openURL: { await UIApplication.shared.open($0) },
+				isCurrent: { calendarOpenID == requestID && store.entry(id: entry.id)?.calendarEvent == event }
+			)
+			guard !Task.isCancelled, calendarOpenID == requestID, store.entry(id: entry.id)?.calendarEvent == event else { return }
+			switch destination {
+			case .native:
+				if let resolved { presentedCalendarEvent = PresentedCalendarEvent(event: resolved.event) }
+			case .unavailable: isMissingCalendarEventAlertPresented = true
+			case .provider, .superseded: break
+			}
 		}
 	}
 }

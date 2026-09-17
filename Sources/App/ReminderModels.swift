@@ -59,17 +59,18 @@ struct EventSeriesReference: Codable, Hashable, Sendable {
 	}
 
 	func matches(_ event: JournalCalendarEvent, calendar: Calendar = .current) -> Bool {
+		guard !calendarIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+			event.calendarIdentifier == calendarIdentifier else { return false }
 		if let externalIdentifier,
-			!externalIdentifier.isEmpty,
-			event.externalIdentifier == externalIdentifier {
-			return true
+			!externalIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+			let candidateIdentifier = event.externalIdentifier,
+			!candidateIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+			return candidateIdentifier == externalIdentifier
 		}
 
-		guard event.title.reminderNormalized == eventTitle.reminderNormalized else { return false }
-		let sameCalendar = event.calendarIdentifier == calendarIdentifier
-			|| event.calendarTitle.reminderNormalized == calendarTitle.reminderNormalized
-		guard sameCalendar else { return false }
-
+		let title = CalendarOccurrenceIdentity.normalizedTitle(eventTitle)
+		guard !title.isEmpty, CalendarOccurrenceIdentity.normalizedTitle(event.title) == title,
+			(0..<1_440).contains(startMinuteOfDay) else { return false }
 		let components = calendar.dateComponents([.hour, .minute], from: event.startDate)
 		let minute = (components.hour ?? 0) * 60 + (components.minute ?? 0)
 		let timeDistance = min(abs(minute - startMinuteOfDay), 1_440 - abs(minute - startMinuteOfDay))
@@ -210,7 +211,7 @@ struct EventReminderOccurrence: Identifiable, Hashable, Sendable {
 
 extension JournalCalendarEvent {
 	var focusKey: String {
-		"\(id)::\(Int(startDate.timeIntervalSince1970))"
+		CalendarOccurrenceIdentity.focusKey(for: self)
 	}
 }
 

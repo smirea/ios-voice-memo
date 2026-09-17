@@ -142,6 +142,7 @@ final class ReminderActivityManager {
 		guard !Task.isCancelled, generation >= self.generation, isCurrent() else { return .init() }
 		let reason = unavailableReason(settings: settings)
 		let sourcesByID = Dictionary(sources.map { ($0.entry.id, $0) }, uniquingKeysWith: { _, latest in latest })
+		let uniqueEvents = Array(Set(events))
 		var retained: [DesiredReminderActivity] = []
 		if reason == nil, settings.calendarSyncEnabled {
 			for existing in operations.existing() where existing.isLive {
@@ -149,7 +150,7 @@ final class ReminderActivityManager {
 				guard attributes.descriptorVersion == 1, !attributes.contributors.isEmpty,
 					let calendarID = attributes.calendarIdentifier,
 					settings.includedCalendarIdentifiers?.contains(calendarID) ?? true else { continue }
-				let matches = events.filter { $0.focusKey == attributes.eventKey && $0.calendarIdentifier == calendarID }
+				let matches = uniqueEvents.filter { $0.focusKey == attributes.eventKey && $0.calendarIdentifier == calendarID }
 				guard matches.count == 1 else { continue }
 				let event = matches[0]
 				let occurrences = attributes.contributors.compactMap { contributor -> EventReminderOccurrence? in

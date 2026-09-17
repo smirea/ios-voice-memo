@@ -21,7 +21,7 @@
 - Gives permanent and feedback recording priority over transcription and on-device analysis, including weekly reviews and reminder matching. Optional work pauses through recording interruptions and user pauses, then resumes after capture stops; timed-out native work cannot overlap its replacement.
 - Generates summaries only for recordings longer than 20 seconds.
 - Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md). Saves resolved occurrences before scheduling them, and discards obsolete results after note, calendar, or delivery-setting changes.
-- Preserves reminder identity and manual removals through reprocessing. One-time reminders stay pinned through calendar gaps and retire after their selected occurrence ends; reprocessing or temporary omission cannot re-arm them, but a distinct new voice instruction can create a fresh cue.
+- Preserves reminder identity and manual removals through reprocessing. One-time reminders stay pinned through calendar gaps, follow provable moves of the same occurrence within its calendar, and retire after it ends; reprocessing or temporary omission cannot re-arm them, but a distinct new voice instruction can create a fresh cue.
 - Schedules reminders only for occurrences starting within their validity period, including an occurrence exactly at expiration; an out-of-window pin stays saved without moving to another event.
 - Matches named event targets by complete names, ignoring case, accents, and punctuation; approximate titles require on-device semantic confirmation.
 - Captures each recording's original coordinates and city when available, then resolves shared place names using the behavior in [`docs/location-model.md`](docs/location-model.md).
@@ -40,7 +40,7 @@
 - Opens event setup instantly from Home using cached events, with a tappable date and the included events for that day in chronological order.
 - Explains and disables event attachment when Calendar sync is off or the selected day has no events.
 - Selects an ongoing timed event by default, otherwise the event closest to the current time.
-- Turning **Attached to event** off clears, shrinks, and dims the list; tapping an event selects it for the new note.
+- Turning **Attached to event** off clears, shrinks, and dims the list; tapping an event selects that exact occurrence for the new note, including repeated events sharing an identifier. Ambiguous occurrences are unavailable; recording waits for a valid selection or attachment to be turned off.
 - Start Recording begins with the selected event attached; a widget launch starts immediately without setup.
 - Shows an error and returns home when recording cannot start.
 - Records without a fixed time limit and shows a live waveform, elapsed time, pause/resume, finish, and discard controls.
@@ -58,7 +58,7 @@
 - Has no visible back button and uses the native leading-edge back swipe.
 - Shows a saved place name or the captured city with the compact date, truncating long names; without location it shows `Voice memo` and omits the map.
 - Shows an attached event below the header with a calendar icon.
-- Tapping an attached event opens that exact event using its provider link when available, otherwise in a native event detail view.
+- Tapping an attached event resolves the exact occurrence in its original calendar; missing or ambiguous events show an unavailable message. Uses a current provider link for nonrecurring events when preferred, with native detail as fallback; recurring events use native detail because attached links may target the whole series.
 - Shows the generated title, processing status, and audio controls with waveform progress and remaining time; playback stops on exit.
 - Prepares the waveform without delaying playback, reuses recently viewed waveforms, and pauses waveform work while recording or after leaving a note.
 - Playback pauses for interruptions or disconnected outputs, waits for an explicit Play afterward, and restores its position without autoplay after an audio-system reset.

@@ -10,7 +10,7 @@ struct RecordView: View {
 	private var recorder: AudioRecorder { session.recorder }
 	@State private var isAttachedToEvent = false
 	@State private var eventAttachmentWasChanged = false
-	@State private var selectedEventID: String?
+	@State private var selectedEventKey: String?
 	@State private var selectedDate = Date.now
 	@State private var showsDatePicker = false
 
@@ -27,12 +27,12 @@ struct RecordView: View {
 	}
 
 	private var events: [JournalCalendarEvent] {
-		store.calendarSync.events(on: selectedDay)
+		store.settings.calendarSyncEnabled ? store.calendarSync.events(on: selectedDay) : []
 	}
 
 	private var selectedCalendarEvent: JournalCalendarEvent? {
-		guard isAttachedToEvent, let selectedEventID else { return nil }
-		return events.first { $0.id == selectedEventID }
+		guard isAttachedToEvent, let selectedEventKey else { return nil }
+		return RecordingEventSelection.event(for: selectedEventKey, in: events)
 	}
 
 	private var selectedDay: Date {
@@ -63,16 +63,27 @@ struct RecordView: View {
 			if isAttached {
 				selectClosestEvent()
 			} else {
-				selectedEventID = nil
+				selectedEventKey = nil
+			}
+		}
+		.onChange(of: store.settings.calendarSyncEnabled) { _, enabled in
+			if !enabled {
+				isAttachedToEvent = false
+				selectedEventKey = nil
 			}
 		}
 		.onChange(of: events) { _, _ in
-			guard !eventAttachmentWasChanged else {
-				if isAttachedToEvent, selectedEventID == nil {
-					selectClosestEvent()
-				}
+			guard store.settings.calendarSyncEnabled, !events.isEmpty else {
+				isAttachedToEvent = false
+				selectedEventKey = nil
 				return
 			}
+			if selectedEventKey != nil, selectedCalendarEvent == nil {
+				selectedEventKey = nil
+				eventAttachmentWasChanged = true
+				return
+			}
+			guard !eventAttachmentWasChanged else { return }
 			isAttachedToEvent = store.settings.calendarSyncEnabled && !events.isEmpty
 			if isAttachedToEvent {
 				selectClosestEvent()
@@ -198,6 +209,7 @@ struct RecordView: View {
 					.shadow(color: AppStyle.accent.opacity(0.34), radius: 18, y: 8)
 			}
 			.buttonStyle(.plain)
+			.disabled(isAttachedToEvent && selectedCalendarEvent == nil)
 			.padding(.horizontal, 24)
 			.padding(.bottom, 28)
 		}
@@ -212,18 +224,26 @@ struct RecordView: View {
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.padding(.vertical, 20)
 		} else {
+			let rows = RecordingEventSelection.rows(in: events)
+			let lastKey = rows.last?.id
 			LazyVStack(spacing: 0) {
-				ForEach(events) { event in
+				ForEach(rows) { row in
+					let event = row.event
+					let unavailable = !row.isAvailable
 					Button {
-						selectedEventID = event.id
+						eventAttachmentWasChanged = true
+						selectedEventKey = row.id
 					} label: {
 						EventSelectionRow(
 							event: event,
-							isSelected: selectedEventID == event.id
+							isSelected: selectedEventKey == row.id,
+							isUnavailable: unavailable
 						)
 					}
 					.buttonStyle(.plain)
-					if event.id != events.last?.id {
+					.disabled(unavailable)
+					.accessibilityValue(unavailable ? "Event unavailable" : (selectedEventKey == row.id ? "Selected" : "Not selected"))
+					if row.id != lastKey {
 						Divider().overlay(Color.white.opacity(0.14))
 					}
 				}
@@ -330,7 +350,7 @@ struct RecordView: View {
 	private func prepareEventSelection() {
 		eventAttachmentWasChanged = false
 		isAttachedToEvent = false
-		selectedEventID = nil
+		selectedEventKey = nil
 		isAttachedToEvent = store.settings.calendarSyncEnabled && !events.isEmpty
 		if isAttachedToEvent {
 			selectClosestEvent()
@@ -338,20 +358,7 @@ struct RecordView: View {
 	}
 
 	private func selectClosestEvent() {
-		let now = eventSelectionReferenceDate
-		let currentTimedEvents = events.filter {
-			!$0.isAllDay && $0.startDate <= now && now <= $0.endDate
-		}
-		if let currentEvent = currentTimedEvents.max(by: { $0.startDate < $1.startDate }) {
-			selectedEventID = currentEvent.id
-			return
-		}
-
-		let timedEvents = events.filter { !$0.isAllDay }
-		let candidates = timedEvents.isEmpty ? events : timedEvents
-		selectedEventID = candidates.min { lhs, rhs in
-			eventDistance(lhs, from: now) < eventDistance(rhs, from: now)
-		}?.id
+		selectedEventKey = RecordingEventSelection.closestKey(in: events, at: eventSelectionReferenceDate)
 	}
 
 	private var eventSelectionReferenceDate: Date {
@@ -365,17 +372,8 @@ struct RecordView: View {
 		) ?? selectedDate
 	}
 
-	private func eventDistance(_ event: JournalCalendarEvent, from date: Date) -> TimeInterval {
-		if date >= event.startDate, date <= event.endDate {
-			return 0
-		}
-		if date < event.startDate {
-			return event.startDate.timeIntervalSince(date)
-		}
-		return date.timeIntervalSince(event.endDate)
-	}
-
 	private func startRecording() {
+		guard !isAttachedToEvent || selectedCalendarEvent != nil else { return }
 		session.start(calendarEvent: selectedCalendarEvent)
 	}
 
@@ -414,6 +412,7 @@ struct RecordView: View {
 private struct EventSelectionRow: View {
 	let event: JournalCalendarEvent
 	let isSelected: Bool
+	let isUnavailable: Bool
 
 	private var timeText: String {
 		if event.isAllDay {
@@ -437,6 +436,11 @@ private struct EventSelectionRow: View {
 					.font(.system(size: 13, weight: .medium))
 					.foregroundStyle(AppStyle.secondary)
 					.lineLimit(1)
+				if isUnavailable {
+					Text("Event unavailable")
+						.font(.caption)
+						.foregroundStyle(AppStyle.secondary)
+				}
 			}
 
 			Spacer(minLength: 8)
@@ -447,5 +451,42 @@ private struct EventSelectionRow: View {
 		}
 		.padding(.vertical, 15)
 		.contentShape(Rectangle())
+	}
+}
+
+enum RecordingEventSelection {
+	struct Row: Identifiable {
+		let id: String
+		let event: JournalCalendarEvent
+		let isAvailable: Bool
+	}
+
+	static func event(for key: String, in events: [JournalCalendarEvent]) -> JournalCalendarEvent? {
+		let matches = Set(events.filter { $0.focusKey == key })
+		return matches.count == 1 ? matches.first : nil
+	}
+
+	static func rows(in events: [JournalCalendarEvent]) -> [Row] {
+		let snapshots = events.map { (key: $0.focusKey, event: $0) }
+		let counts = Dictionary(grouping: snapshots, by: \.key).mapValues { Set($0.map(\.event)).count }
+		var keys: Set<String> = []
+		return snapshots.compactMap {
+			guard keys.insert($0.key).inserted else { return nil }
+			return Row(id: $0.key, event: $0.event, isAvailable: counts[$0.key] == 1)
+		}
+	}
+
+	static func closestKey(in events: [JournalCalendarEvent], at now: Date) -> String? {
+		let events = rows(in: events).filter(\.isAvailable).map(\.event)
+		let ongoing = events.filter { !$0.isAllDay && $0.startDate <= now && now <= $0.endDate }
+		if let current = ongoing.max(by: { $0.startDate < $1.startDate }) { return current.focusKey }
+		let timed = events.filter { !$0.isAllDay }
+		return (timed.isEmpty ? events : timed).min { distance($0, from: now) < distance($1, from: now) }?.focusKey
+	}
+
+	private static func distance(_ event: JournalCalendarEvent, from date: Date) -> TimeInterval {
+		if date < event.startDate { return event.startDate.timeIntervalSince(date) }
+		if date > event.endDate { return date.timeIntervalSince(event.endDate) }
+		return 0
 	}
 }

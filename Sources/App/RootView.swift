@@ -145,6 +145,11 @@ struct RootView: View {
 			}
 			#endif
 			await store.refreshCalendar()
+			#if DEBUG
+			if store.isDemoMode, ProcessInfo.processInfo.arguments.contains("-demo-calendar-occurrences") {
+				recordingSession.present(startsImmediately: false)
+			}
+			#endif
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .NSUbiquityIdentityDidChange)) { _ in
 			store.retryCloudSync()

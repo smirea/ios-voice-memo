@@ -26,6 +26,7 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		case location
 		case notes
 		case isRecurring
+		case occurrenceDate
 	}
 
 	var id: String
@@ -41,6 +42,7 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 	var location: String?
 	var notes: String?
 	var isRecurring: Bool
+	var occurrenceDate: Date?
 
 	init(
 		id: String,
@@ -55,7 +57,8 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		isAllDay: Bool,
 		location: String? = nil,
 		notes: String? = nil,
-		isRecurring: Bool = false
+		isRecurring: Bool = false,
+		occurrenceDate: Date? = nil
 	) {
 		self.id = id
 		self.localIdentifier = localIdentifier
@@ -70,6 +73,7 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		self.location = location
 		self.notes = notes
 		self.isRecurring = isRecurring
+		self.occurrenceDate = occurrenceDate
 	}
 
 	init(from decoder: Decoder) throws {
@@ -87,6 +91,7 @@ struct JournalCalendarEvent: Codable, Hashable, Identifiable, Sendable {
 		location = try container.decodeIfPresent(String.self, forKey: .location)
 		notes = try container.decodeIfPresent(String.self, forKey: .notes)
 		isRecurring = try container.decodeIfPresent(Bool.self, forKey: .isRecurring) ?? false
+		occurrenceDate = try container.decodeIfPresent(Date.self, forKey: .occurrenceDate)
 	}
 }
 
