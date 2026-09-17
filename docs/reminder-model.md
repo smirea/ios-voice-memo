@@ -119,8 +119,10 @@ Resolution happens after parsing:
 4. Match series using stored identifiers and cached fallbacks.
 5. Resolve specific multiword event names directly against candidate titles.
 6. Require a lexical event-type anchor, then ask the model to classify each remaining fuzzy candidate independently.
-7. Treat omitted, invalid, or uncertain fuzzy classifications as nonmatches.
+7. Treat uncertain completed fuzzy classifications as nonmatches. Unavailable or failed classification remains incomplete, preserves known deterministic matches, and does not create a negative example or choose a new one-time pin past an unknown candidate.
 8. Materialize either the first match or every match according to the occurrence policy.
+
+Resolution reads committed notes and excludes notes with pending source edits. A source revision and the original reminder set guard each atomic pin/example save; unrelated location changes do not invalidate it. A failed pin save prevents delivery for that note and can be retried. Obsolete results are discarded after relevant source, calendar, or delivery-setting changes.
 
 Recurring EventKit events prefer their external identifier because it is shared by occurrences. Calendar identifier, normalized title, and approximate start time form the fallback. Separately-created events such as Meetup imports are handled through fuzzy matching.
 
@@ -158,7 +160,7 @@ Settings provide:
 - a Live Activities toggle;
 - a global lead-time picker.
 
-Rules remain stored when delivery is disabled.
+Rules remain stored when delivery is disabled. One owned reconciliation serializes activity updates, removals, and requests; a canceled or replaced pass cannot publish after a newer pass. Derived pin-save errors retire when reminders are disabled, while unsaved source edits remain retryable.
 
 ## Evaluation
 

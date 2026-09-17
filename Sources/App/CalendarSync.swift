@@ -33,7 +33,19 @@ enum PreferredCalendarApp: String, Codable, CaseIterable, Identifiable {
 @Observable
 final class CalendarSync {
 	private(set) var calendars: [CalendarSource] = []
-	private(set) var events: [JournalCalendarEvent] = []
+	private(set) var events: [JournalCalendarEvent] = [] {
+		didSet {
+			guard events != oldValue else { return }
+			revision += 1
+			onEventsChanged?()
+		}
+	}
+	private(set) var revision = 0
+	@ObservationIgnored var onEventsChanged: (() -> Void)?
+
+	#if DEBUG
+	func setEventsForContract(_ events: [JournalCalendarEvent]) { self.events = events }
+	#endif
 
 	@ObservationIgnored private let eventStore = EKEventStore()
 	@ObservationIgnored private let isDemoMode: Bool

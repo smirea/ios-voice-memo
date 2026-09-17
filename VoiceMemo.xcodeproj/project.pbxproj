@@ -59,6 +59,9 @@
 		A10000000000000000000033 /* ServiceAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000033 /* ServiceAdmission.swift */; };
 		A10000000000000000000034 /* ServiceAdmissionContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000034 /* ServiceAdmissionContractChecks.swift */; };
 		A10000000000000000000035 /* ProcessingReliabilityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000035 /* ProcessingReliabilityContractChecks.swift */; };
+		A10000000000000000000036 /* ReminderSchedulingContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000036 /* ReminderSchedulingContractChecks.swift */; };
+		A10000000000000000000037 /* ReminderSourceRepositoryContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000037 /* ReminderSourceRepositoryContractChecks.swift */; };
+		A10000000000000000000038 /* ReminderActivityContractChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000038 /* ReminderActivityContractChecks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -140,6 +143,9 @@
 		B10000000000000000000033 /* ServiceAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceAdmission.swift; sourceTree = "<group>"; };
 		B10000000000000000000034 /* ServiceAdmissionContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceAdmissionContractChecks.swift; sourceTree = "<group>"; };
 		B10000000000000000000035 /* ProcessingReliabilityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingReliabilityContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000036 /* ReminderSchedulingContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSchedulingContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000037 /* ReminderSourceRepositoryContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderSourceRepositoryContractChecks.swift; sourceTree = "<group>"; };
+		B10000000000000000000038 /* ReminderActivityContractChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderActivityContractChecks.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -184,6 +190,9 @@
 				B1000000000000000000002D /* AudioFinalizationContractChecks.swift */,
 				B10000000000000000000033 /* ServiceAdmission.swift */,
 				B10000000000000000000034 /* ServiceAdmissionContractChecks.swift */,
+				B10000000000000000000036 /* ReminderSchedulingContractChecks.swift */,
+				B10000000000000000000037 /* ReminderSourceRepositoryContractChecks.swift */,
+				B10000000000000000000038 /* ReminderActivityContractChecks.swift */,
 				B10000000000000000000035 /* ProcessingReliabilityContractChecks.swift */,
 				B10000000000000000000032 /* ProcessingRepositoryContractChecks.swift */,
 				B10000000000000000000031 /* ProcessingWorkerContractChecks.swift */,
@@ -417,6 +426,9 @@
 				A1000000000000000000002D /* AudioFinalizationContractChecks.swift in Sources */,
 				A10000000000000000000033 /* ServiceAdmission.swift in Sources */,
 				A10000000000000000000034 /* ServiceAdmissionContractChecks.swift in Sources */,
+				A10000000000000000000036 /* ReminderSchedulingContractChecks.swift in Sources */,
+				A10000000000000000000037 /* ReminderSourceRepositoryContractChecks.swift in Sources */,
+				A10000000000000000000038 /* ReminderActivityContractChecks.swift in Sources */,
 				A10000000000000000000035 /* ProcessingReliabilityContractChecks.swift in Sources */,
 				A10000000000000000000032 /* ProcessingRepositoryContractChecks.swift in Sources */,
 				A10000000000000000000031 /* ProcessingWorkerContractChecks.swift in Sources */,

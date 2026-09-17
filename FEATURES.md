@@ -11,13 +11,13 @@
 - Mirrors completed recordings to `iCloud Drive/MyVoiceMemo` as matching `YYYY-MM-DD_<city>__<UUID>.m4a` and `.json` files, backfills existing notes, and replaces temporary `Unknown` city names once resolved.
 - Stores app settings, named locations, and API keys in a versioned, backed-up `config.json`, mirrors it beside iCloud Drive exports, and restores it when no local config exists.
 - Treats local data as authoritative: iCloud note exports are not imported, and deleting a note removes its local audio and exports. A failed deletion keeps the note available to retry; pending audio cleanup retries on launch without restoring deliberately deleted notes.
-- Reports unsaved note changes with a persistent retry action. iCloud exports use saved metadata, and sharing waits for changes to save.
+- Reports unsaved note changes with a persistent retry action. A failed note save does not block saving or sharing other notes. iCloud exports use saved metadata, and sharing waits for that note’s changes to save.
 - Stores each note's transcript, title, summary, location, attached event, reminders, feedback transcripts, and model provenance in its JSON export.
 - Prefers ElevenLabs transcription when enabled and reachable while Apple Speech supplies live partials and automatic fallback, and alerts when ElevenLabs could not be used; titles, summaries, reminders, and weekly reviews remain on-device and address the note owner as **you**.
 - Saves processing progress per note and resumes the unfinished stage after a restart. Keeps completed transcript and analysis during reprocessing, labels incomplete transcript text, and offers Retry for failed stages without treating partial results as complete.
 - Gives permanent and feedback recording priority over transcription and on-device analysis, including weekly reviews and reminder matching. Optional work pauses through recording interruptions and user pauses, then resumes after capture stops; timed-out native work cannot overlap its replacement.
 - Generates summaries only for recordings longer than 20 seconds.
-- Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md).
+- Extracts event-specific reminders from event-attached recordings using the behavior defined in [`docs/reminder-model.md`](docs/reminder-model.md). Saves resolved occurrences before scheduling them, and discards obsolete results after note, calendar, or delivery-setting changes.
 - Captures each recording's original coordinates and city when available, then resolves shared place names using the behavior in [`docs/location-model.md`](docs/location-model.md).
 - Silently refreshes and caches included events from one month ago through three months ahead when the app opens or returns to the foreground, at most once per day, without changing calendar data.
 

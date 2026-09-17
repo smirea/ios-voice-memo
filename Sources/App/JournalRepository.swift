@@ -255,9 +255,9 @@ actor JournalRepository {
 		return records[id]!
 	}
 
-	func claimProcessing(now: Date = .now) throws -> ProcessingWork? {
+	func claimProcessing(now: Date = .now, excluding excludedIDs: Set<UUID> = []) throws -> ProcessingWork? {
 		let candidates = records.values.filter { record in
-			guard record.state == .saved, let job = record.processing else { return false }
+			guard record.state == .saved, !excludedIDs.contains(record.id), let job = record.processing else { return false }
 			return job.status == .queued || ((job.status == .failed || job.status == .partial) && job.retryAfter.map { $0 <= now } == true)
 		}.sorted { ($0.processing!.requestedAt, $0.id.uuidString) < ($1.processing!.requestedAt, $1.id.uuidString) }
 		guard var record = candidates.first, var job = record.processing else { return nil }
@@ -274,9 +274,9 @@ actor JournalRepository {
 		return ProcessingWork(lease: lease, record: records[record.id]!)
 	}
 
-	func nextProcessingRetry() -> Date? {
+	func nextProcessingRetry(excluding excludedIDs: Set<UUID> = []) -> Date? {
 		records.values.compactMap { record -> Date? in
-			guard record.state == .saved, let job = record.processing else { return nil }
+			guard record.state == .saved, !excludedIDs.contains(record.id), let job = record.processing else { return nil }
 			if job.status == .queued { return .distantPast }
 			return job.status == .failed || job.status == .partial ? job.retryAfter : nil
 		}.min()
@@ -288,6 +288,7 @@ actor JournalRepository {
 		record.entry?.transcript = result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
 		record.entry?.transcriptModel = result.modelName
 		record.processing?.partialTranscript = nil
+		record.inputRevision += 1
 		advance(&record, after: .transcribe)
 		try write(record)
 		return records[record.id]!
@@ -312,10 +313,32 @@ actor JournalRepository {
 			record.entry?.reminders = result.reminders
 			record.entry?.reminderModel = result.modelName
 		}
+		if result != nil { record.inputRevision += 1 }
 		advance(&record, after: .reminders)
 		if result == nil || result?.outcome == .skipped { record.processing?.skippedStages.insert(.reminders) }
 		try write(record)
 		return records[record.id]!
+	}
+
+	func commitReminderResolution(_ updates: [ReminderResolutionUpdate], source: JournalRecord) throws -> JournalRecord {
+		try Task.checkCancellation()
+		guard var record = records[source.id], record.state == .saved,
+			record.inputRevision == source.inputRevision, var entry = record.entry,
+			entry.reminders == source.entry?.reminders else { throw RepositoryError.staleProcessing }
+		for update in updates {
+			guard let index = entry.reminders.firstIndex(where: { $0.id == update.reminderID }) else {
+				throw RepositoryError.staleProcessing
+			}
+			if let occurrence = update.occurrence { entry.reminders[index].resolvedOccurrence = occurrence }
+			if let examples = update.examples, case var .fuzzy(selector) = entry.reminders[index].selector {
+				selector.examples = examples
+				entry.reminders[index].selector = .fuzzy(selector)
+			}
+		}
+		guard entry != record.entry else { return record }
+		record.entry = entry
+		try write(record)
+		return records[source.id]!
 	}
 
 	func savePartial(_ progress: TranscriptionProgress, lease: ProcessingLease) throws -> JournalRecord {
@@ -377,7 +400,7 @@ actor JournalRepository {
 			record.processing?.inputRevision = record.inputRevision
 			record.processing?.attemptID = nil
 			if record.processing?.status == .running { record.processing?.status = .queued }
-		case .location, .reminderResolution: break
+		case .location: break
 		}
 		try write(record)
 		return records[id]!
@@ -395,6 +418,7 @@ actor JournalRepository {
 
 	private func advance(_ record: inout JournalRecord, after stage: ProcessingStage) {
 		guard var job = record.processing else { return }
+		job.inputRevision = record.inputRevision
 		job.completedStages.insert(stage)
 		job.skippedStages.remove(stage)
 		job.attemptID = nil

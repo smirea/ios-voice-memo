@@ -64,7 +64,7 @@ struct EntryView: View {
 				.padding(.top, 10)
 				.entryListRow()
 
-				if store.hasUnsavedNoteChanges {
+				if store.hasUnsavedChanges(for: entry.id) {
 					Button("Note changes not saved. Try Again") {
 						Task { await store.retrySavingChanges() }
 					}
@@ -314,13 +314,10 @@ struct EntryView: View {
 				setNoteActionsPresented(false)
 				Task { @MainActor in
 					try? await Task.sleep(for: .milliseconds(250))
-					let savedEntries = await store.committedEntriesForExport()
-					guard !store.hasUnsavedNoteChanges else {
-						store.storageErrorMessage = "Save your note changes before sharing. Try saving again."
-						return
+					do {
+						let savedEntry = try await store.committedEntryForExport(id: entry.id)
+						sharedEntry = try JournalEntryExport(entry: savedEntry)
 					}
-					guard let savedEntry = savedEntries.first(where: { $0.id == entry.id }) else { return }
-					do { sharedEntry = try JournalEntryExport(entry: savedEntry) }
 					catch { store.storageErrorMessage = "Couldn’t prepare the note for sharing. " + error.localizedDescription }
 				}
 			} label: {

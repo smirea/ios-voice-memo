@@ -88,6 +88,12 @@ struct ReminderParsingResult: Sendable {
 	var outcome: ModelProcessingOutcome = .complete
 }
 
+struct ReminderResolutionUpdate: Sendable {
+	var reminderID: UUID
+	var occurrence: JournalCalendarEvent?
+	var examples: [ReminderMatchExample]?
+}
+
 struct ReminderResolutionResult: Sendable {
 	var occurrences: [EventReminderOccurrence]
 	var examplesByReminderID: [UUID: [ReminderMatchExample]]

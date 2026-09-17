@@ -139,7 +139,11 @@ enum JournalEdit: Sendable {
 	case location(JournalLocation)
 	case feedback(ReminderFeedback)
 	case removeReminder(UUID, ReminderFeedback)
-	case reminderResolution(UUID, JournalCalendarEvent?, [ReminderMatchExample]?)
+
+	var changesReminderSource: Bool {
+		if case .location = self { return false }
+		return true
+	}
 
 	func apply(to entry: inout JournalEntry) {
 		switch self {
@@ -149,13 +153,7 @@ enum JournalEdit: Sendable {
 		case let .removeReminder(id, feedback):
 			entry.reminders.removeAll { $0.id == id }
 			if !entry.reminderFeedback.contains(where: { $0.id == feedback.id }) { entry.reminderFeedback.append(feedback) }
-		case let .reminderResolution(id, occurrence, examples):
-			guard let index = entry.reminders.firstIndex(where: { $0.id == id }) else { return }
-			if let occurrence { entry.reminders[index].resolvedOccurrence = occurrence }
-			if let examples, case var .fuzzy(selector) = entry.reminders[index].selector {
-				selector.examples = examples
-				entry.reminders[index].selector = .fuzzy(selector)
-			}
+
 		}
 	}
 }

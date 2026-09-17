@@ -25,7 +25,17 @@ final class JournalStore {
 	private let recordingsURL: URL
 	private let configurationURL: URL
 	@ObservationIgnored private let iCloudDriveMirror = ICloudDriveMirror()
-	@ObservationIgnored private let reminderActivityManager = ReminderActivityManager()
+	@ObservationIgnored private let reminderActivityManager: ReminderActivityManager
+	private let reminderResolver: @Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult
+	private let reminderSchedulingEnabled: Bool
+	@ObservationIgnored private var reminderScheduleTask: Task<Void, Never>?
+	@ObservationIgnored private var reminderScheduleGeneration = 0
+	@ObservationIgnored private var pendingDeletionIDs = Set<UUID>()
+	@ObservationIgnored private var failedNoteSaveIDs = Set<UUID>()
+	@ObservationIgnored private var failedReminderSaveIDs = Set<UUID>()
+	private var pendingSourceIDs: Set<UUID> {
+		Set(pendingEdits.filter { $0.edit.changesReminderSource }.map(\.entryID)).union(pendingDeletionIDs)
+	}
 	@ObservationIgnored private var iCloudRevision = 0
 	@ObservationIgnored private var pendingICloudDeletionReferences = Set<String>()
 	private(set) var processingStates: [UUID: EntryProcessing] = [:]
@@ -54,6 +64,7 @@ final class JournalStore {
 	#if DEBUG
 	var processingIdleCheckpoint: (() async -> Void)?
 	var processingDeadlineOverride: TimeInterval?
+	var deletionIntentCheckpoint: (() async -> Void)?
 	#endif
 	@ObservationIgnored private var recordingLocationTask: Task<JournalLocation?, Never>?
 	@ObservationIgnored private var entryLocationTasks: [UUID: Task<Void, Never>] = [:]
@@ -64,11 +75,17 @@ final class JournalStore {
 	@ObservationIgnored private var persistenceTask: Task<Void, Never>?
 	private let usesExternalServices: Bool
 
-	init(storageRootURL: URL? = nil, processingServices: ProcessingServices? = nil) {
+	init(storageRootURL: URL? = nil, processingServices: ProcessingServices? = nil,
+		reminderResolver: (@Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult)? = nil,
+		reminderActivityManager: ReminderActivityManager? = nil) {
+		self.reminderActivityManager = reminderActivityManager ?? ReminderActivityManager()
+		self.reminderResolver = reminderResolver ?? { await ReminderEngine.resolve(entries: $0, events: $1, now: $2) }
+		reminderSchedulingEnabled = storageRootURL == nil || reminderResolver != nil || reminderActivityManager != nil
 		self.processingServices = processingServices ?? .live
 		processingEnabled = storageRootURL == nil || processingServices != nil
 		isDemoMode = storageRootURL == nil && ProcessInfo.processInfo.arguments.contains("-demo")
 		usesExternalServices = storageRootURL == nil
+		if storageRootURL != nil { settings = JournalSettings() }
 		let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 		rootURL = storageRootURL ?? applicationSupport.appendingPathComponent("MyVoiceMemo", isDirectory: true)
 		recordingsURL = rootURL.appendingPathComponent("Recordings", isDirectory: true)
@@ -120,6 +137,7 @@ final class JournalStore {
 		} else {
 			bootstrapTask = Task { [weak self] in await self?.loadJournal() }
 		}
+		calendarSync.onEventsChanged = { [weak self] in self?.requestReminderSchedule() }
 	}
 
 	func waitUntilLoaded() async throws {
@@ -140,7 +158,7 @@ final class JournalStore {
 				settings = configuration.settings
 				namedLocations = configuration.locations
 				elevenLabsAPIKey = configuration.elevenLabsAPIKey
-				settings.save()
+				if usesExternalServices { settings.save() }
 			} else if usesExternalServices {
 				isConfigurationRestorePending = true
 			}
@@ -338,7 +356,10 @@ final class JournalStore {
 		await ServiceAdmission.model.setSuspended(suspended, revision: revision)
 		await ServiceAdmission.speech.setSuspended(suspended, revision: revision)
 		guard revision == admissionPolicyRevision else { return }
-		if !processingSuspended { kickProcessing() }
+		if !processingSuspended {
+			kickProcessing()
+			requestReminderSchedule()
+		}
 	}
 
 	private func preemptProcessing() {
@@ -377,15 +398,16 @@ final class JournalStore {
 		while !Task.isCancelled, !processingSuspended {
 			let work: ProcessingWork
 			do {
-				guard let next = try await repository.claimProcessing() else {
+				guard let next = try await repository.claimProcessing(excluding: pendingSourceIDs) else {
 					#if DEBUG
 					await processingIdleCheckpoint?()
 					#endif
 					break
 				}
-				if Task.isCancelled || processingSuspended {
+				if Task.isCancelled || processingSuspended || pendingSourceIDs.contains(next.lease.entryID) {
 					if let record = try? await repository.pauseProcessing(next.lease) { publish(record) }
-					break
+					if Task.isCancelled || processingSuspended { break }
+					continue
 				}
 				work = next
 			} catch {
@@ -536,7 +558,7 @@ final class JournalStore {
 
 	private func scheduleProcessingRetry() async {
 		guard processingEnabled, !processingSuspended, processingWorker == nil,
-			let next = await repository.nextProcessingRetry(), processingWorker == nil, !processingSuspended else { return }
+			let next = await repository.nextProcessingRetry(excluding: pendingSourceIDs), processingWorker == nil, !processingSuspended else { return }
 		retryWakeTask?.cancel()
 		retryWakeTask = Task { [weak self] in
 			try? await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow)))
@@ -572,10 +594,13 @@ final class JournalStore {
 	}
 
 	func reprocessEntry(id entryID: UUID) {
+		invalidateReminderSchedule()
+		if activeLease?.entryID == entryID { activeStage?.cancel() }
 		Task {
 			do {
 				let record = try await repository.requestProcessing(id: entryID)
 				publish(record)
+				requestReminderSchedule()
 				cancelObsoleteStage()
 				storageSuspended = false
 				kickProcessing()
@@ -604,10 +629,16 @@ final class JournalStore {
 	}
 
 	func publish(_ record: JournalRecord) {
+		let previous = committedRecords[record.id]
 		if record.state == .deleted { deletedEntryIDs.insert(record.id); entries.removeAll { $0.id == record.id } }
 		if record.state != .deleted, deletedEntryIDs.contains(record.id) { return }
 		guard record.revision >= (committedRecords[record.id]?.revision ?? -1) else { return }
 		committedRecords[record.id] = record
+		defer {
+			if previous?.inputRevision != record.inputRevision || previous?.state != record.state {
+				requestReminderSchedule()
+			}
+		}
 		processingStates[record.id] = record.processing
 		entryProcessingPhases[record.id] = record.processing?.phase
 		guard record.state == .saved, var entry = record.entry else { return }
@@ -646,6 +677,17 @@ final class JournalStore {
 	}
 
 	private func deleteEntries(ids: [UUID]) async -> Bool {
+		pendingDeletionIDs.formUnion(ids)
+		if let lease = activeLease, pendingDeletionIDs.contains(lease.entryID) { activeStage?.cancel() }
+		requestReminderSchedule()
+		defer {
+			pendingDeletionIDs.subtract(ids)
+			requestReminderSchedule()
+			kickProcessing()
+		}
+		#if DEBUG
+		await deletionIntentCheckpoint?()
+		#endif
 		await persistenceTask?.value
 		var failedCount = 0
 		for entryID in ids {
@@ -656,7 +698,9 @@ final class JournalStore {
 				pendingEdits.removeAll { $0.entryID == entryID }
 				deletedEntryIDs.insert(entryID)
 				processingStates.removeValue(forKey: entryID)
-				if pendingEdits.isEmpty { hasUnsavedNoteChanges = false }
+				failedNoteSaveIDs.remove(entryID)
+				failedReminderSaveIDs.remove(entryID)
+				updateUnsavedNoteStatus()
 				entryProcessingPhases.removeValue(forKey: entryID)
 				entryLocationTasks.removeValue(forKey: entryID)?.cancel()
 				entries.removeAll { $0.id == entryID }
@@ -669,10 +713,7 @@ final class JournalStore {
 		if failedCount > 0 {
 			storageErrorMessage = "Couldn’t delete \(failedCount == 1 ? "one note" : "\(failedCount) notes"). Their audio is still on this device. Try deleting them again."
 		}
-		if hasUnsavedNoteChanges, await repository.committedEntries() == entries {
-			hasUnsavedNoteChanges = false
-		}
-		if usesExternalServices { Task { await refreshReminderSchedule() } }
+		updateUnsavedNoteStatus()
 		return failedCount == 0
 	}
 
@@ -693,7 +734,7 @@ final class JournalStore {
 		guard entries.contains(where: { $0.id == entryID }) else { throw ReminderFeedbackError.entryUnavailable }
 		persist(.feedback(ReminderFeedback(kind: .voice, text: text)), entryID: entryID)
 		await persistenceTask?.value
-		guard !hasUnsavedNoteChanges else { throw RepositoryError.unsavedChanges }
+		guard !hasUnsavedChanges(for: entryID) else { throw RepositoryError.unsavedChanges }
 		kickProcessing()
 	}
 
@@ -716,11 +757,21 @@ final class JournalStore {
 	}
 
 	func updateSettings(_ settings: JournalSettings) {
+		let calendarScopeChanged = applySettings(settings)
+		commitConfiguration()
+		if usesExternalServices, calendarScopeChanged { Task { await refreshCalendar(force: true) } }
+	}
+
+	@discardableResult
+	private func applySettings(_ settings: JournalSettings) -> Bool {
 		let calendarScopeChanged = self.settings.calendarSyncEnabled != settings.calendarSyncEnabled
 			|| self.settings.includedCalendarIdentifiers != settings.includedCalendarIdentifiers
+		let reminderSourceChanged = self.settings.eventRemindersEnabled != settings.eventRemindersEnabled
+		let scheduleChanged = self.settings.reminderDelivery != settings.reminderDelivery
 		self.settings = settings
-		commitConfiguration()
-		Task { await refreshCalendar(force: calendarScopeChanged) }
+		if reminderSourceChanged, activeLease?.stage == .reminders { activeStage?.cancel() }
+		if scheduleChanged { requestReminderSchedule() }
+		return calendarScopeChanged
 	}
 
 	func setShowModelNames(_ showModelNames: Bool) {
@@ -745,7 +796,7 @@ final class JournalStore {
 		await bootstrapTask?.value
 		guard settings.calendarSyncEnabled else {
 			calendarSync.clear()
-			await reminderActivityManager.endAll()
+			await refreshReminderSchedule()
 			return
 		}
 		await calendarSync.refresh(
@@ -756,35 +807,92 @@ final class JournalStore {
 	}
 
 	func refreshReminderSchedule(now: Date = .now) async {
-		#if DEBUG
-		if isDemoMode, ProcessInfo.processInfo.arguments.contains("-demo-reminder-matching-unavailable") { return }
-		#endif
-		guard settings.calendarSyncEnabled, settings.eventRemindersEnabled else {
-			await reminderActivityManager.endAll()
+		requestReminderSchedule(now: now)
+		await reminderScheduleTask?.value
+	}
+
+	private func invalidateReminderSchedule() {
+		reminderScheduleGeneration += 1
+		reminderScheduleTask?.cancel()
+		reminderActivityManager.invalidate(generation: reminderScheduleGeneration)
+	}
+
+	private func requestReminderSchedule(now: Date = .now) {
+		invalidateReminderSchedule()
+		let generation = reminderScheduleGeneration
+		guard reminderSchedulingEnabled, !isLoading, !isDemoMode else { return }
+		reminderScheduleTask = Task { [weak self] in
+			await self?.reconcileReminderSchedule(generation: generation, now: now)
+		}
+	}
+
+	private func reconcileReminderSchedule(generation: Int, now: Date) async {
+		let delivery = settings.reminderDelivery
+		let snapshotSettings = settings
+		let calendarRevision = calendarSync.revision
+		let events = calendarSync.events.filter { delivery.calendars?.contains($0.calendarIdentifier) ?? true }
+		let sources = committedRecords.values.filter {
+			$0.state == .saved && !pendingSourceIDs.contains($0.id) && !deletedEntryIDs.contains($0.id)
+		}.sorted { $0.id.uuidString < $1.id.uuidString }
+		let isCurrent: @MainActor () -> Bool = { [weak self] in
+			guard let self else { return false }
+			return self.reminderScheduleGeneration == generation
+				&& self.settings.reminderDelivery == delivery && self.calendarSync.revision == calendarRevision
+		}
+		guard isCurrent(), !Task.isCancelled else { return }
+		guard delivery.calendarEnabled, delivery.remindersEnabled else {
+			failedReminderSaveIDs.removeAll()
+			reminderSchedulingMessage = nil
+			updateUnsavedNoteStatus()
+			await reminderActivityManager.endAll(generation: generation, isCurrent: isCurrent)
 			return
 		}
-		let result = await ReminderEngine.resolve(entries: entries, events: calendarSync.events, now: now)
-		guard !Task.isCancelled, result.outcome != .cancelled else { return }
+		if !delivery.activitiesEnabled {
+			await reminderActivityManager.endAll(generation: generation, isCurrent: isCurrent)
+			guard isCurrent(), !Task.isCancelled else { return }
+		}
+		let result = await reminderResolver(sources.compactMap(\.entry), events, now)
+		guard isCurrent(), !Task.isCancelled, result.outcome != .cancelled else { return }
 		switch result.outcome {
 		case .unavailable: reminderSchedulingMessage = "Some reminders could not be matched because on-device analysis is unavailable."
 		case let .failed(message): reminderSchedulingMessage = message
 		default: reminderSchedulingMessage = nil
 		}
-
-		for entry in entries {
-			for reminder in entry.reminders {
+		var savedEntryIDs = Set<UUID>()
+		var failedEntryIDs = Set<UUID>()
+		for source in sources {
+			guard isCurrent(), !Task.isCancelled else { return }
+			let updates = (source.entry?.reminders ?? []).compactMap { reminder -> ReminderResolutionUpdate? in
 				let occurrence = result.resolvedOccurrencesByReminderID[reminder.id]
 				let examples = result.examplesByReminderID[reminder.id]
-				var changed = occurrence != nil && occurrence != reminder.resolvedOccurrence
-				if let examples, case let .fuzzy(selector) = reminder.selector { changed = changed || examples != selector.examples }
-				if changed { persist(.reminderResolution(reminder.id, occurrence, examples), entryID: entry.id) }
+				let occurrenceChanged = occurrence != nil && occurrence != reminder.resolvedOccurrence
+				let examplesChanged = examples != nil && examples != reminder.selector.examples
+				guard occurrenceChanged || examplesChanged else { return nil }
+				return ReminderResolutionUpdate(reminderID: reminder.id, occurrence: occurrence, examples: examples)
+			}
+			do {
+				// Validate even a no-op result at the repository boundary before delivery.
+				let record = try await repository.commitReminderResolution(updates, source: source)
+				guard isCurrent(), !Task.isCancelled else { return }
+				publish(record)
+				savedEntryIDs.insert(source.id)
+				if !updates.isEmpty { scheduleICloudDriveMirror() }
+			} catch is CancellationError { return
+			} catch RepositoryError.staleProcessing { return
+			} catch {
+				guard isCurrent(), !Task.isCancelled else { return }
+				failedEntryIDs.insert(source.id)
 			}
 		}
+		guard isCurrent(), !Task.isCancelled else { return }
+		failedReminderSaveIDs = failedEntryIDs
+		updateUnsavedNoteStatus()
+		if !failedEntryIDs.isEmpty {
+			storageErrorMessage = "Reminder changes couldn’t be saved. Try saving again before those reminders can be scheduled."
+		}
 		await reminderActivityManager.synchronize(
-			occurrences: result.occurrences,
-			settings: settings,
-			now: now
-		)
+			occurrences: result.occurrences.filter { savedEntryIDs.contains($0.sourceEntryID) },
+			settings: snapshotSettings, now: now, generation: generation, isCurrent: isCurrent)
 	}
 
 
@@ -797,19 +905,21 @@ final class JournalStore {
 		guard isConfigurationRestorePending else { return }
 		let configuration = await iCloudDriveMirror.loadConfiguration()
 		guard isConfigurationRestorePending else { return }
-		if let configuration {
-			settings = configuration.settings
-			namedLocations = configuration.locations
-			elevenLabsAPIKey = configuration.elevenLabsAPIKey
-		}
+		if let configuration { applyRestoredConfiguration(configuration) }
 		isConfigurationRestorePending = false
 		commitConfiguration()
 		Task { await refreshCalendar(force: true) }
 	}
 
+	func applyRestoredConfiguration(_ configuration: AppConfiguration) {
+		applySettings(configuration.settings)
+		namedLocations = configuration.locations
+		elevenLabsAPIKey = configuration.elevenLabsAPIKey
+	}
+
 	private func commitConfiguration() {
 		isConfigurationRestorePending = false
-		settings.save()
+		if usesExternalServices { settings.save() }
 		guard !isDemoMode else { return }
 		let configuration = AppConfiguration(
 			settings: settings,
@@ -848,6 +958,32 @@ final class JournalStore {
 	func retrySavingChanges() async {
 		queuePendingWrites()
 		await persistenceTask?.value
+		await refreshReminderSchedule()
+	}
+
+	func hasUnsavedChanges(for entryID: UUID) -> Bool {
+		(isDemoMode && hasUnsavedNoteChanges) || pendingEdits.contains { $0.entryID == entryID }
+			|| failedReminderSaveIDs.contains(entryID)
+	}
+
+	private func updateUnsavedNoteStatus() {
+		hasUnsavedNoteChanges = !failedNoteSaveIDs.isEmpty || !failedReminderSaveIDs.isEmpty
+	}
+
+	func committedEntryForExport(id: UUID) async throws -> JournalEntry {
+		guard !pendingDeletionIDs.contains(id), !deletedEntryIDs.contains(id) else { throw RepositoryError.unavailableRecord }
+		if isDemoMode, let entry = entry(id: id) { return entry }
+		await persistenceTask?.value
+		while true {
+			guard !pendingDeletionIDs.contains(id), !deletedEntryIDs.contains(id) else { throw RepositoryError.unavailableRecord }
+			guard !hasUnsavedChanges(for: id) else { throw RepositoryError.unsavedChanges }
+			guard let record = await repository.record(id: id), record.state == .saved,
+				let entry = record.entry else { throw RepositoryError.unavailableRecord }
+			guard !pendingDeletionIDs.contains(id), !deletedEntryIDs.contains(id) else { throw RepositoryError.unavailableRecord }
+			guard !hasUnsavedChanges(for: id) else { throw RepositoryError.unsavedChanges }
+			if record.revision < (committedRecords[id]?.revision ?? 0) { continue }
+			return entry
+		}
 	}
 
 	func committedEntriesForExport() async -> [JournalEntry] {
@@ -858,6 +994,10 @@ final class JournalStore {
 
 	func persist(_ edit: JournalEdit, entryID: UUID) {
 		guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
+		if edit.changesReminderSource {
+			if activeLease?.entryID == entryID { activeStage?.cancel() }
+			requestReminderSchedule()
+		}
 		edit.apply(to: &entries[index])
 		guard !isDemoMode else { return }
 		pendingEdits.append(PendingJournalEdit(entryID: entryID, edit: edit))
@@ -868,22 +1008,28 @@ final class JournalStore {
 		let previous = persistenceTask
 		persistenceTask = Task {
 			await previous?.value
-			while let pending = pendingEdits.first {
+			var attempted = Set<UUID>()
+			var failedEntries = Set<UUID>()
+			while let pending = pendingEdits.first(where: { !attempted.contains($0.id) && !failedEntries.contains($0.entryID) }) {
+				attempted.insert(pending.id)
 				do {
 					let record = try await repository.apply(pending.edit, to: pending.entryID)
 					pendingEdits.removeAll { $0.id == pending.id }
+					failedNoteSaveIDs.remove(pending.entryID)
 					publish(record)
 					cancelObsoleteStage()
 					scheduleICloudDriveMirror()
 				} catch RepositoryError.unavailableRecord {
 					pendingEdits.removeAll { $0.id == pending.id }
+					failedNoteSaveIDs.remove(pending.entryID)
 				} catch {
-					hasUnsavedNoteChanges = true
+					failedEntries.insert(pending.entryID)
+					failedNoteSaveIDs.insert(pending.entryID)
+					updateUnsavedNoteStatus()
 					storageErrorMessage = "Note changes haven’t been saved. Try saving again. " + error.localizedDescription
-					return
 				}
 			}
-			hasUnsavedNoteChanges = false
+			updateUnsavedNoteStatus()
 			kickProcessing()
 		}
 	}
@@ -1018,5 +1164,21 @@ struct JournalSettings: Codable, Equatable, Sendable {
 	func save() {
 		guard let data = try? JSONEncoder().encode(self) else { return }
 		UserDefaults.standard.set(data, forKey: Self.key)
+	}
+}
+
+private struct ReminderDeliverySettings: Equatable {
+	var calendarEnabled: Bool
+	var calendars: Set<String>?
+	var remindersEnabled: Bool
+	var activitiesEnabled: Bool
+	var leadMinutes: Int
+}
+
+private extension JournalSettings {
+	var reminderDelivery: ReminderDeliverySettings {
+		ReminderDeliverySettings(calendarEnabled: calendarSyncEnabled, calendars: includedCalendarIdentifiers,
+			remindersEnabled: eventRemindersEnabled, activitiesEnabled: eventReminderLiveActivitiesEnabled,
+			leadMinutes: eventReminderLeadMinutes)
 	}
 }
