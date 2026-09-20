@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1000000000000000000005F /* ProcessingBackgroundTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000005F /* ProcessingBackgroundTasks.swift */; };
 		A10000000000000000000001 /* VoiceMemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* VoiceMemoApp.swift */; };
 		A10000000000000000000002 /* JournalModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* JournalModels.swift */; };
 		A10000000000000000000003 /* JournalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* JournalStore.swift */; };
@@ -127,6 +128,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B1000000000000000000005F /* ProcessingBackgroundTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingBackgroundTasks.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* VoiceMemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMemoApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* JournalModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalModels.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* JournalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalStore.swift; sourceTree = "<group>"; };
@@ -294,6 +296,7 @@
 				B10000000000000000000028 /* AudioSessionController.swift */,
 				B10000000000000000000027 /* RecordingContractChecks.swift */,
 				B10000000000000000000026 /* RecordingSession.swift */,
+				B1000000000000000000005F /* ProcessingBackgroundTasks.swift */,
 				B10000000000000000000003 /* JournalStore.swift */,
 				B10000000000000000000018 /* CalendarSync.swift */,
 				B10000000000000000000019 /* ReminderModels.swift */,
@@ -568,6 +571,7 @@
 				A10000000000000000000028 /* AudioSessionController.swift in Sources */,
 				A10000000000000000000027 /* RecordingContractChecks.swift in Sources */,
 				A10000000000000000000026 /* RecordingSession.swift in Sources */,
+				A1000000000000000000005F /* ProcessingBackgroundTasks.swift in Sources */,
 				A10000000000000000000003 /* JournalStore.swift in Sources */,
 				A10000000000000000000017 /* CalendarSync.swift in Sources */,
 				A10000000000000000000018 /* ReminderModels.swift in Sources */,

@@ -77,6 +77,8 @@ final class JournalStore {
 	@ObservationIgnored private var retryWakeTask: Task<Void, Never>?
 	@ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 	@ObservationIgnored private var backgroundRegistration: UUID?
+	@ObservationIgnored private let processingBackgroundTasks: ProcessingBackgroundTasks?
+	@ObservationIgnored private var backgroundJobs: [UUID: EntryProcessing] = [:]
 	@ObservationIgnored private var storageSuspended = false
 	@ObservationIgnored private var backgroundSuspended = false
 	private var capturePriorityOwners = Set<UUID>()
@@ -115,7 +117,7 @@ final class JournalStore {
 	init(storageRootURL: URL? = nil, processingServices: ProcessingServices? = nil,
 		reminderResolver: (@Sendable ([JournalEntry], [JournalCalendarEvent], Date) async -> ReminderResolutionResult)? = nil,
 		reminderActivityManager: ReminderActivityManager? = nil,
-		cloudServices: CloudServices? = nil) {
+		cloudServices: CloudServices? = nil, processingBackgroundTasks: ProcessingBackgroundTasks? = nil) {
 		self.cloudServices = cloudServices ?? .live
 		mirroringEnabled = storageRootURL == nil || cloudServices != nil
 		self.reminderActivityManager = reminderActivityManager ?? ReminderActivityManager(operations: storageRootURL == nil ? nil : .disabled)
@@ -127,6 +129,8 @@ final class JournalStore {
 		processingEnabled = storageRootURL == nil || processingServices != nil
 		isDemoMode = storageRootURL == nil && ProcessInfo.processInfo.arguments.contains("-demo")
 		usesExternalServices = storageRootURL == nil
+		self.processingBackgroundTasks = processingBackgroundTasks ??
+			(storageRootURL == nil && !isDemoMode ? ProcessingBackgroundTasks() : nil)
 		let initialSettings = storageRootURL == nil ? JournalSettings.load() : JournalSettings()
 		settings = initialSettings
 		let initialConfiguration = AppConfiguration(settings: initialSettings)
@@ -204,6 +208,15 @@ final class JournalStore {
 		}
 		calendarSync.onEventsChanged = { [weak self] in self?.requestReminderSchedule() }
 		self.reminderActivityManager.onChange = { [weak self] in self?.requestReminderSchedule() }
+		self.processingBackgroundTasks?.onLaunch = { [weak self] in self?.resumeBackgroundProcessing() }
+		self.processingBackgroundTasks?.onExpiration = { [weak self] in
+			guard let self else { return }
+			self.backgroundSuspended = true
+			let checkpoint = self.preemptProcessing()
+			self.updateServiceAdmission()
+			await checkpoint?.value
+			self.updateBackgroundProcessing()
+		}
 	}
 
 	var isIsolatedStorage: Bool { !usesExternalServices }
@@ -232,6 +245,7 @@ final class JournalStore {
 			}
 			committedRecords = records
 			processingStates = processing
+			updateBackgroundProcessing()
 			entryProcessingPhases = phases
 			deletedEntryIDs = deleted
 			entries = loaded.entries
@@ -390,6 +404,7 @@ final class JournalStore {
 		}
 		_ = try await repository.finishRecording(id: entryID)
 		if let record = await repository.record(id: entryID) { publish(record) }
+		startUserInitiatedProcessing()
 		scheduleICloudDriveMirror()
 		kickProcessing()
 		if usesExternalServices { attachRecordedLocation(to: entryID) }
@@ -398,6 +413,7 @@ final class JournalStore {
 
 	func resumeStaleProcessing(now: Date = .now) {
 		backgroundSuspended = false
+		updateBackgroundProcessing()
 		requestReminderBackfill()
 		updateServiceAdmission()
 		scheduleICloudDriveMirror(changed: false, repair: true)
@@ -462,7 +478,8 @@ final class JournalStore {
 		}
 	}
 
-	private func preemptProcessing() {
+	@discardableResult
+	private func preemptProcessing() -> Task<Void, Never>? {
 		reminderSchedulePass?.cancel()
 		reminderSchedulePending = true
 		retryWakeTask?.cancel()
@@ -471,8 +488,8 @@ final class JournalStore {
 		admittedAt = nil
 		activeStage?.cancel()
 		endBackgroundProcessing()
-		guard let lease = activeLease else { return }
-		Task {
+		guard let lease = activeLease else { return nil }
+		return Task {
 			do { publish(try await repository.pauseProcessing(lease)) }
 			catch RepositoryError.staleProcessing {}
 			catch { reportProcessingStorageError(error, entryID: lease.entryID) }
@@ -490,6 +507,9 @@ final class JournalStore {
 			processingWorker = nil
 			activeStage = nil
 			activeLease = nil
+			updateBackgroundProcessing()
+			processingBackgroundTasks?.finish(success: !processingSuspended && backgroundJobs.values.allSatisfy { $0.status == .complete })
+			backgroundJobs.removeAll()
 			endBackgroundProcessing()
 			Task { await scheduleProcessingRetry() }
 		}
@@ -501,9 +521,14 @@ final class JournalStore {
 			let work: ProcessingWork
 			do {
 				guard let next = try await repository.claimProcessing(excluding: pendingSourceIDs) else {
+					if usesExternalServices, !backgroundJobs.isEmpty, !processingSuspended { await refreshReminderSchedule() }
 					#if DEBUG
 					await processingIdleCheckpoint?()
 					#endif
+					if !processingSuspended, processingStates.contains(where: { id, job in
+						!pendingSourceIDs.contains(id) && (job.status == .queued ||
+							((job.status == .failed || job.status == .partial) && job.retryAfter.map { $0 <= .now } == true))
+					}) { continue }
 					break
 				}
 				if Task.isCancelled || processingSuspended || pendingSourceIDs.contains(next.lease.entryID) {
@@ -540,7 +565,6 @@ final class JournalStore {
 			admittedAt = nil
 			activeStage = nil
 			activeLease = nil
-			endBackgroundProcessing()
 		}
 	}
 
@@ -676,22 +700,62 @@ final class JournalStore {
 	}
 
 	private func beginBackgroundProcessing() {
-		guard usesExternalServices, let lease = activeLease else { return }
+		guard usesExternalServices, backgroundTask == .invalid, processingBackgroundTasks?.hasRuntime != true else { return }
 		let registration = UUID()
 		backgroundRegistration = registration
 		backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Process voice memo") { [weak self] in
 			Task { @MainActor [weak self] in
-				guard let self, self.activeLease == lease else { return }
-				self.expireBackgroundProcessing(lease: lease, registration: registration)
+				guard let self, self.backgroundRegistration == registration else { return }
+				self.expireBackgroundTime()
 			}
 		}
 	}
 
 	func expireBackgroundProcessing(lease: ProcessingLease, registration: UUID? = nil) {
 		guard activeLease == lease, backgroundRegistration == registration else { return }
+		expireBackgroundTime()
+	}
+
+	private func expireBackgroundTime() {
+		if processingBackgroundTasks?.hasRuntime == true { endBackgroundProcessing(); return }
 		backgroundSuspended = true
 		preemptProcessing()
 		updateServiceAdmission()
+	}
+
+	private func startUserInitiatedProcessing() {
+		backgroundSuspended = false
+		processingBackgroundTasks?.startUserInitiatedWork()
+		updateServiceAdmission()
+	}
+
+	private func resumeBackgroundProcessing() {
+		backgroundSuspended = false
+		endBackgroundProcessing()
+		Task {
+			await bootstrapTask?.value
+			await configurationBootstrapTask?.value
+			guard processingBackgroundTasks?.hasRuntime == true else { return }
+			updateBackgroundProcessing()
+			let revision = newAdmissionRevision()
+			await synchronizeServiceAdmission(revision: revision)
+			if processingWorker == nil { processingBackgroundTasks?.finish(success: false) }
+		}
+	}
+
+	private func updateBackgroundProcessing() {
+		guard let processingBackgroundTasks else { return }
+		let pending = processingStates.filter { _, job in
+			job.status == .queued || job.status == .running ||
+				((job.status == .failed || job.status == .partial) && job.retryAfter != nil)
+		}
+		let next = pending.values.map { $0.retryAfter ?? .distantPast }.min()
+		processingBackgroundTasks.scheduleRecovery(at: next, needsNetwork: settings.preferElevenLabsTranscription)
+		for (id, job) in processingStates where backgroundJobs[id] != nil || job.status == .running || job.status == .queued {
+			backgroundJobs[id] = job
+		}
+		backgroundJobs = backgroundJobs.filter { processingStates[$0.key] != nil }
+		processingBackgroundTasks.update(jobs: Array(backgroundJobs.values))
 	}
 
 	private func endBackgroundProcessing() {
@@ -708,6 +772,7 @@ final class JournalStore {
 			do {
 				let record = try await repository.requestProcessing(id: entryID)
 				publish(record)
+				startUserInitiatedProcessing()
 				requestReminderSchedule()
 				cancelObsoleteStage()
 				storageSuspended = false
@@ -720,6 +785,7 @@ final class JournalStore {
 		Task {
 			do {
 				publish(try await repository.retryProcessing(id: entryID))
+				startUserInitiatedProcessing()
 				cancelObsoleteStage()
 				storageSuspended = false
 				kickProcessing()
@@ -746,6 +812,7 @@ final class JournalStore {
 		guard record.revision >= (committedRecords[record.id]?.revision ?? -1) else { return }
 		committedRecords[record.id] = record
 		defer {
+			updateBackgroundProcessing()
 			if previous?.inputRevision != record.inputRevision || previous?.state != record.state {
 				requestReminderSchedule()
 			}
@@ -886,6 +953,7 @@ final class JournalStore {
 		}
 		publish(record)
 		cancelObsoleteStage()
+		startUserInitiatedProcessing()
 		scheduleICloudDriveMirror()
 		return saved
 	}

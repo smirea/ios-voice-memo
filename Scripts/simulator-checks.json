@@ -153,7 +153,7 @@
     {
       "name": "ProcessingReliabilityContractChecks",
       "flag": "-processing-reliability-contract-tests",
-      "marker": "PROCESSING RELIABILITY CONTRACT: persisted finite retries, admitted deadlines, capture/background ownership, native quarantine, and startup temporary cleanup passed"
+      "marker": "PROCESSING RELIABILITY CONTRACT: persisted finite retries, admitted deadlines, capture/background ownership, continued processing, scheduled recovery, native quarantine, and startup temporary cleanup passed"
     },
     {
       "name": "ReminderSchedulingContractChecks",

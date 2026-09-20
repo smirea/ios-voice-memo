@@ -16,6 +16,8 @@ The runner returns nonzero for a failed command, missing or duplicate success ma
 
 Contracts exercise production logic with fixed inputs, injected service responses, native temporary audio files, and real temporary filesystem faults. They require no microphone, calendar account, or iCloud account. Runtime tokenizer availability is reported separately; passing deterministic model substitutes does not establish native model semantic quality or physical-device performance.
 
+The processing reliability suite also injects background scheduler grants, rejection, and expiration. It checks that extended runtime survives the short UIKit deadline, canceled stages preserve results and retry budgets, scheduled recovery completes the real worker without a foreground visit, task completion happens once, stale launches are rejected, and persisted retry dates replace and coalesce system requests. These checks do not establish native background scheduling availability.
+
 ## Visual fixtures
 
 Install a Debug build and launch one fixture on the selected device:
@@ -47,6 +49,10 @@ All rows below include `-demo`. Use native UI interactions when available to ver
 The weekly chart uses saved durations grouped by recording date; it is independent of transcript length or model output. Failed feedback submissions retain their temporary audio and complete text while the sheet remains open. Explicit Cancel or Record again discards that draft; process-death feedback recovery is not promised.
 
 ## Optional native checks
+
+On a physical iPhone, save an event-attached recording long enough to exceed the short background grace period, then switch apps or lock the screen. Check the system processing progress and reopen after completion: transcription, title/summary, and reminders should be saved. Repeat with Apple Speech and ElevenLabs, with a second recording preempting processing, and with cancellation from system progress. Test a transient network failure and a later system-scheduled retry without reopening. Swiping the app away must preserve completed stages for recovery, but cannot guarantee processing while force-closed. Run these checks without an attached debugger, which can prevent normal suspension. iOS decides when deferred recovery runs; Simulator contracts cannot prove these device policies or Foundation Models availability under load.
+
+For an isolated native scheduler smoke check, launch Debug with `-demo -processing-background-native-smoke`. It registers during initialization and requests continued runtime for a synthetic 60-second transcription through the real processing worker, using temporary storage. After `BACKGROUND_NATIVE_GRANTED`, switch apps and look for `BACKGROUND_NATIVE_COMPLETED`. `BACKGROUND_NATIVE_UNAVAILABLE` or `BACKGROUND_NATIVE_INTERRUPTED` does not pass the background test. The iOS 26.5 Simulator returned scheduler error 1 (unavailable) during validation; no native progress screenshot or device completion is claimed.
 
 These checks are separate from the canonical run and report actual system API results. Use a dedicated Simulator and synthetic inputs. They do not prove physical microphone behavior, device power-loss durability, real cloud transport, or delivery of a reminder alert.
 

@@ -7,6 +7,9 @@ struct VoiceMemoApp: App {
 
 	init() {
 		_ = ProcessingTemporaryFiles.launchDate
+		#if DEBUG
+		ProcessingReliabilityContractChecks.prepareNativeBackgroundSmoke()
+		#endif
 		let store = JournalStore()
 		_store = State(initialValue: store)
 		_recordingSession = State(initialValue: RecordingSession(store: store))
@@ -57,6 +60,7 @@ struct VoiceMemoApp: App {
 					await ProcessingWorkerContractChecks.runFromLaunchArguments()
 					await ServiceAdmissionContractChecks.runFromLaunchArguments()
 					await ProcessingReliabilityContractChecks.runFromLaunchArguments()
+					await ProcessingReliabilityContractChecks.runNativeBackgroundSmoke()
 					await ReminderSchedulingContractChecks.runFromLaunchArguments()
 					await ReminderSourceRepositoryContractChecks.runFromLaunchArguments()
 					await ReminderActivityContractChecks.runFromLaunchArguments()

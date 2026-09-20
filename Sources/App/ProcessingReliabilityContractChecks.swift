@@ -3,14 +3,67 @@ import Foundation
 
 @MainActor
 enum ProcessingReliabilityContractChecks {
+	private static var nativeBackground: ProcessingBackgroundTasks?
+
+	static func prepareNativeBackgroundSmoke() {
+		guard ProcessInfo.processInfo.arguments.contains("-demo"),
+			ProcessInfo.processInfo.arguments.contains("-processing-background-native-smoke") else { return }
+		nativeBackground = ProcessingBackgroundTasks()
+	}
+
+	static func runNativeBackgroundSmoke() async {
+		guard let background = nativeBackground else { return }
+		do {
+			let root = try temporaryRoot()
+			defer { try? FileManager.default.removeItem(at: root) }
+			let entry = try seed(root)
+			let services = ProcessingServices(transcribe: { _, _, _, update in
+				try await ServiceAdmission.speech.run {
+					for passage in 1...6 {
+						try await Task.sleep(for: .seconds(10))
+						update(TranscriptionProgress(transcript: "Synthetic background passage \(passage)", modelName: "Fixture"))
+					}
+					return TranscriptionResult(transcript: "Finished the native background fixture", modelName: "Fixture")
+				}
+			}, reflect: { _, _ in ReflectionResult(headline: "Background fixture completed", modelName: "Fixture") },
+				reminders: { _ in ReminderParsingResult(reminders: [], modelName: "Fixture") })
+			let store = JournalStore(storageRootURL: root, processingServices: services, processingBackgroundTasks: background)
+			store.updateSetting(\.eventRemindersEnabled, false)
+			try await store.waitUntilLoaded()
+			await store.waitForConfigurationWritesForContract()
+			store.reprocessEntry(id: entry.id)
+			do { try await wait { background.hasRuntime } }
+			catch {
+				await store.beginCapturePriority(owner: UUID())
+				background.finish(success: false)
+				print("BACKGROUND_NATIVE_UNAVAILABLE: no system grant; device validation still required")
+				fflush(stdout)
+				return
+			}
+			print("BACKGROUND_NATIVE_GRANTED: switch apps now; synthetic processing takes 60 seconds")
+			fflush(stdout)
+			let deadline = ContinuousClock.now.advanced(by: .seconds(90))
+			while store.processingStates[entry.id]?.status != .complete, background.hasRuntime, ContinuousClock.now < deadline {
+				try await Task.sleep(for: .milliseconds(100))
+			}
+			let saved = try await JournalRepository(rootURL: root).load()
+			let complete = saved.records.first?.processing?.status == .complete
+			print(complete ? "BACKGROUND_NATIVE_COMPLETED: all stages persisted" : "BACKGROUND_NATIVE_INTERRUPTED: system runtime ended")
+			fflush(stdout)
+			background.finish(success: complete)
+		} catch { print("BACKGROUND_NATIVE_FAILED: \(error)"); fflush(stdout) }
+	}
+
 	static func runFromLaunchArguments() async {
 		guard ProcessInfo.processInfo.arguments.contains("-processing-reliability-contract-tests") else { return }
 		do {
 			try await retryChecks()
 			try await preemptionChecks()
 			try await admittedDeadlineChecks()
+			try await backgroundSchedulerChecks()
+			try await backgroundWorkerChecks()
 			try temporaryFileChecks()
-			print("PROCESSING RELIABILITY CONTRACT: persisted finite retries, admitted deadlines, capture/background ownership, native quarantine, and startup temporary cleanup passed")
+			print("PROCESSING RELIABILITY CONTRACT: persisted finite retries, admitted deadlines, capture/background ownership, continued processing, scheduled recovery, native quarantine, and startup temporary cleanup passed")
 			fflush(stdout)
 		} catch { fatalError("PROCESSING RELIABILITY CONTRACT: \(error)") }
 	}
@@ -195,6 +248,136 @@ enum ProcessingReliabilityContractChecks {
 			await native.finish("Fixture cleanup")
 			_ = try? await occupied.value
 			throw error
+		}
+	}
+
+	private static func backgroundSchedulerChecks() async throws {
+		let probe = BackgroundProbe()
+		let background = ProcessingBackgroundTasks(operations: probe.operations)
+		var launches = 0, expirations = 0
+		background.onLaunch = { launches += 1 }
+		background.onExpiration = { expirations += 1 }
+		background.startUserInitiatedWork()
+		background.startUserInitiatedWork()
+		try expect(probe.continued.count == 1, "Repeated work must share one pending background request")
+		background.finish(success: true)
+		let stale = probe.task()
+		probe.continued[0](stale)
+		try expect(probe.completions == [false] && launches == 0, "Late delivery cannot restart a completed pipeline")
+		background.startUserInitiatedWork()
+		let active = probe.task()
+		probe.continued[1](active)
+		try expect(background.hasRuntime && launches == 1, "Only the current request grants runtime")
+		stale.expire()
+		try expect(expirations == 0, "An old expiration cannot cancel a replacement")
+		let due = Date.now.addingTimeInterval(60)
+		background.scheduleRecovery(at: due, needsNetwork: true)
+		background.scheduleRecovery(at: due, needsNetwork: true)
+		try expect(probe.recoveries.count == 1, "Identical durable retries must coalesce")
+		background.scheduleRecovery(at: due.addingTimeInterval(240), needsNetwork: false)
+		try expect(probe.recoveries.last?.0 == due.addingTimeInterval(240) && probe.recoveries.last?.1 == false,
+			"Retry backoff and offline requirements must replace the scheduled request")
+		active.expire()
+		try await wait { expirations == 1 && probe.completions.count == 2 }
+		try expect(!background.hasRuntime && probe.completions.last == false, "Expiration releases runtime exactly once")
+		active.expire()
+		background.finish(success: true)
+		try expect(probe.completions.count == 2, "Expired tasks cannot complete twice or report success")
+		probe.foreground = false
+		background.startUserInitiatedWork()
+		try expect(probe.continued.count == 2, "Continued processing must be submitted from the foreground")
+		let recovery = probe.task()
+		probe.recovery?(recovery)
+		try expect(background.hasRuntime && launches == 2, "Scheduled recovery grants runtime without a foreground visit")
+		background.scheduleRecovery(at: due.addingTimeInterval(240), needsNetwork: false)
+		try expect(probe.recoveries.count == 3, "A delivered recovery request must be rescheduled while work remains")
+		background.finish(success: true)
+		background.scheduleRecovery(at: nil, needsNetwork: false)
+		try expect(probe.cancellations.contains(ProcessingBackgroundOperations.recoveryIdentifier), "An empty queue cancels recovery")
+		probe.foreground = true
+		probe.rejectSubmission = true
+		background.startUserInitiatedWork()
+		try expect(!background.hasRuntime, "Rejected submission cannot claim background runtime")
+		probe.rejectSubmission = false
+		background.startUserInitiatedWork()
+		try expect(probe.continued.count == 3, "A later explicit action can retry rejected background submission")
+		let replaced = probe.task()
+		probe.continued[2](replaced)
+		replaced.expire()
+		background.finish(success: false)
+		background.startUserInitiatedWork()
+		probe.continued[3](probe.task())
+		try await Task.sleep(for: .milliseconds(10))
+		try expect(expirations == 1 && background.hasRuntime, "An enqueued expiration cannot suspend a newer task")
+		background.finish(success: false)
+	}
+
+	private static func backgroundWorkerChecks() async throws {
+		let root = try temporaryRoot()
+		defer { try? FileManager.default.removeItem(at: root) }
+		let entry = try seed(root)
+		let probe = BackgroundProbe(), native = NativeProbe()
+		let background = ProcessingBackgroundTasks(operations: probe.operations)
+		let services = ProcessingServices(transcribe: { _, _, _, _ in
+			try await ServiceAdmission.speech.run { try await native.run() }
+		}, reflect: { _, _ in ReflectionResult(headline: "Finished in background", modelName: "Fixture") },
+			reminders: { _ in ReminderParsingResult(reminders: [], modelName: "Fixture") })
+		let store = JournalStore(storageRootURL: root, processingServices: services, processingBackgroundTasks: background)
+		store.updateSetting(\.eventRemindersEnabled, false)
+		try await store.waitUntilLoaded()
+		await store.waitForConfigurationWritesForContract()
+		do {
+			store.reprocessEntry(id: entry.id)
+			try await wait { await native.starts == 1 && probe.continued.count == 1 }
+			let continued = probe.task()
+			probe.continued[0](continued)
+			probe.foreground = false
+			let first = try lease(store, id: entry.id)
+			store.expireBackgroundProcessing(lease: first)
+			try await Task.sleep(for: .milliseconds(30))
+			try expect(try lease(store, id: entry.id) == first, "The short UIKit deadline must not pause a continued task")
+			continued.expire()
+			try await wait { store.processingStates[entry.id]?.status == .queued && probe.completions == [false] }
+			try expect(store.processingStates[entry.id]?.failedAttempts == 0 && !probe.recoveries.isEmpty,
+				"Expiration checkpoints the stage and schedules recovery without spending a failure retry")
+			await native.finish("Discard expired output")
+			try await Task.sleep(for: .milliseconds(30))
+			try expect(await native.starts == 1 && store.entry(id: entry.id)?.transcript == entry.transcript,
+				"An expired worker must remain paused and reject late text")
+			let recovery = probe.task()
+			probe.recovery?(recovery)
+			try await wait { await native.starts == 2 }
+			await native.finish("Recovered without reopening")
+			try await wait { store.processingStates[entry.id]?.status == .complete && probe.completions == [false, true] }
+			try expect(store.entry(id: entry.id)?.transcript == "Recovered without reopening" && probe.continued.count == 1,
+				"Recovery must run the unfinished pipeline without requesting foreground execution")
+			try expect(probe.progress.contains { $0.0 == 4 && $0.1 == 4 }, "Progress reaches completion only after all stages commit")
+			let loaded = try await JournalRepository(rootURL: root).load()
+			try expect(loaded.records.first?.processing?.status == .complete, "Background completion must survive relaunch")
+			try expect(await native.maximumActive == 1, "Foreground and background grants cannot create overlapping workers")
+		} catch { await native.finish("Fixture cleanup"); throw error }
+	}
+
+	@MainActor
+	private final class BackgroundProbe {
+		var foreground = true
+		var rejectSubmission = false
+		var continued: [@MainActor (ProcessingBackgroundTask) -> Void] = []
+		var recovery: (@MainActor (ProcessingBackgroundTask) -> Void)?
+		var recoveries: [(Date, Bool)] = []
+		var cancellations: [String] = []
+		var completions: [Bool] = []
+		var progress: [(Int64, Int64, String)] = []
+		var operations: ProcessingBackgroundOperations {
+			ProcessingBackgroundOperations(isForeground: { self.foreground },
+				registerRecovery: { self.recovery = $0; return true },
+				submitContinued: { _, launch in
+					if self.rejectSubmission { throw Failure("System refused runtime") }
+					self.continued.append(launch)
+				}, submitRecovery: { self.recoveries.append(($0, $1)) }, cancel: { self.cancellations.append($0) })
+		}
+		func task() -> ProcessingBackgroundTask {
+			ProcessingBackgroundTask(report: { self.progress.append(($0, $1, $2)) }, completion: { self.completions.append($0) })
 		}
 	}
 
